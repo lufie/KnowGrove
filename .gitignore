@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+main.js
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage/
+release/
+*.zip
+reading-companion-*/

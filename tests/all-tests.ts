@@ -1,0 +1,12 @@
+import "./reference-format.test";
+import "./property-system.test";
+import "./property-matrix.test";
+import "./ai-property.test";
+import "./property-taxonomy.test";
+import "./selection-comment-position.test";
+import "./knowledge-cycle.test";
+import "./knowledge-workspace.test";
+import "./research-output.test";
+import "./research-sources.test";
+import "./block-drag.test";
+import "./brand-migration.test";

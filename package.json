@@ -1,0 +1,31 @@
+{
+  "name": "obsidian-knowgrove",
+  "version": "2.2.0",
+  "description": "KnowGrove turns an Obsidian vault into a self-growing knowledge research workspace.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "check": "tsc --noEmit --skipLibCheck",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "knowledge-research",
+    "block-reference",
+    "annotation",
+    "properties",
+    "bases",
+    "ai"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.1",
+    "@types/node": "^22.15.17",
+    "esbuild": "0.25.5",
+    "obsidian": "latest",
+    "typescript": "^5.8.3"
+  }
+}
