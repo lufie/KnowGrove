@@ -178,7 +178,7 @@ export class ReadingListView extends ItemView {
       const focusButton = actions.createEl("button", {
         cls: `clickable-icon knowgrove-focus-action${focused ? " is-focused" : ""}`,
         attr: {
-          "aria-label": focused ? `取消重点关注：${file.basename}` : `设为重点关注：${file.basename}`,
+          "aria-label": focused ? `取消收藏：${file.basename}` : `收藏：${file.basename}`,
           "aria-pressed": String(focused),
         },
       });

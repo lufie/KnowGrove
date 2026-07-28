@@ -11,6 +11,7 @@ import {
 } from "../src/ai-property";
 import { createDefaultSettings } from "../src/types";
 import {
+  automaticAIContentCharacterLimit,
   buildAntigravityArguments,
   formatCLIProviderError,
   providerModelOptions,
@@ -154,6 +155,12 @@ test("provider model dropdown keeps detected defaults and exposes safe fallbacks
     id: "qoder-cli", name: "Qoder CLI", available: true, detail: "ok", configuredModel: "ultimate",
   }), ["ultimate"]);
   assert.deepEqual(providerModelOptions("glm-cli"), ["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.5-air"]);
+});
+
+test("AI content limit is automatic and conservative for unknown local models", () => {
+  assert.equal(automaticAIContentCharacterLimit("codex-cli"), 24_000);
+  assert.equal(automaticAIContentCharacterLimit("openai-compatible", "gpt-5.1"), 24_000);
+  assert.equal(automaticAIContentCharacterLimit("openai-compatible", "unknown-local-model"), 12_000);
 });
 
 test("known CLI authentication and backend errors become actionable", () => {

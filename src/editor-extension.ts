@@ -72,6 +72,7 @@ class CommentPinWidget extends WidgetType {
 }
 
 function buildDecorations(view: EditorView, plugin: KnowGrovePlugin): DecorationSet {
+  if (!plugin.settings.enableComments) return Decoration.none;
   const ranges: Array<Range<Decoration>> = [];
   const content = view.state.doc.toString();
   const sourcePath = markdownViewForEditor(plugin, view)?.file?.path;

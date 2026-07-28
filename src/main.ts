@@ -5,6 +5,7 @@ import {
   MarkdownView,
   Menu,
   Notice,
+  Platform,
   Plugin,
   TAbstractFile,
   TFile,
@@ -29,10 +30,21 @@ import type { AIBatchPromptItem, AIPropertyGeneration } from "./ai-property";
 import {
   AI_SECRET_IDS,
   LEGACY_AI_SECRET_IDS,
+  automaticAIContentCharacterLimit,
   detectAIProviders,
   providerName,
   runAIProvider,
 } from "./ai-provider";
+import { BrowserPairingModal } from "./browser-pairing-modal";
+import {
+  detectInterruptedCapture,
+  detectLinkNoteCandidate,
+  latestLinkNoteScanFiles,
+} from "./browser-capture-core";
+import {
+  BrowserCaptureServer,
+  type BrowserCaptureServerStatus,
+} from "./browser-capture-server";
 import {
   createBlockDragEditorExtension,
   createCommentEditorExtension,
@@ -125,6 +137,9 @@ import {
   repairReferenceAnchor,
 } from "./reference-repair";
 import { KnowGroveSettingTab } from "./settings";
+import { KnowGroveRuntimeManager, type RuntimeInstallProgress } from "./runtime-manager";
+import type { KnowGroveRuntimeAudit } from "./runtime-core";
+import type { BrowserCapturePageType } from "./browser-capture-core";
 import { getSelectionAnchorRect, positionSelectionCommentButton } from "./selection-comment-position";
 import { PropertyAuditModal } from "./property-audit-modal";
 import { PropertyIssueModal } from "./property-issue-modal";
@@ -206,6 +221,7 @@ import {
   initializeTrackedNoteFrontmatter,
   isManagedPropertyBaseContent,
   isPropertyGovernedPath,
+  LEGACY_FOCUS_PROPERTY_NAMES,
   localDateFromTimestamp,
   normalizePropertyDimensions,
   operationStillApplies,
@@ -357,9 +373,57 @@ export default class KnowGrovePlugin extends Plugin {
     message: "等待 AI 属性任务",
   };
   private aiBatchCancelRequested = false;
+  private browserCaptureServer?: BrowserCaptureServer;
+  private runtimeManager?: KnowGroveRuntimeManager;
+  private linkNoteScanPromise?: Promise<number>;
+  private startupLinkNoteScanTimer?: number;
 
   async onload(): Promise<void> {
     await this.loadPluginData();
+    this.runtimeManager = new KnowGroveRuntimeManager({
+      getRuntimeSettings: () => this.settings.runtime,
+      getCaptureSettings: () => this.settings.browserCapture,
+      getPluginVersion: () => this.manifest.version,
+      saveSettings: () => this.savePluginData(),
+    });
+    this.browserCaptureServer = new BrowserCaptureServer({
+      app: this.app,
+      getSettings: () => this.settings,
+      saveSettings: () => this.savePluginData(),
+      getProviders: (force) => this.getAIProviders(force),
+      runProvider: (provider, prompt) => this.runBrowserCaptureProvider(provider, prompt),
+      getSkillInstruction: (pageType) => this.getRuntimeSkillInstruction(pageType),
+      suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
+    });
+    this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
+      const nonce = typeof params.nonce === "string" ? params.nonce : "";
+      if (!nonce || !this.browserCaptureServer) {
+        new Notice("浏览器配对请求无效或已过期");
+        return;
+      }
+      new BrowserPairingModal(this.app, () => {
+        const approved = this.browserCaptureServer?.approvePairing(nonce) ?? false;
+        new Notice(approved ? "浏览器已连接 KnowGrove" : "浏览器配对请求已过期，请重新发起");
+        return approved;
+      }).open();
+    });
+    this.registerObsidianProtocolHandler("knowgrove-settings", (params) => {
+      const section = typeof params.section === "string" ? params.section : "";
+      this.openKnowGroveSettings(section);
+    });
+    if (Platform.isDesktopApp && this.settings.browserCapture.enabled) {
+      await this.browserCaptureServer.start().catch((error) => {
+        console.error("KnowGrove: failed to start browser capture server", error);
+        new Notice(`浏览器接收未启动：${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    if (Platform.isDesktopApp && this.settings.browserCapture.autoProcessLinkNotes) {
+      this.startupLinkNoteScanTimer = window.setTimeout(
+        () => void this.scanPendingLinkNotes(false),
+        1_800,
+      );
+      this.register(() => window.clearTimeout(this.startupLinkNoteScanTimer));
+    }
 
     this.registerView(READING_VIEW_TYPE, (leaf) => new ReadingListView(leaf, this));
     this.registerView(LEGACY_READING_VIEW_TYPE, (leaf) => new ReadingListView(leaf, this, LEGACY_READING_VIEW_TYPE));
@@ -368,6 +432,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerView(CREATION_ASSISTANT_VIEW_TYPE, (leaf) => new CreationAssistantView(leaf, this));
     this.addRibbonIcon("library-big", "打开阅读列表", () => void this.activateReadingView());
     this.addRibbonIcon("database-zap", "打开工作台", () => void this.activatePropertyWorkbench());
+    this.addRibbonIcon("wand-sparkles", "整理新链接文档", () => void this.scanPendingLinkNotes(true));
     this.addSettingTab(new KnowGroveSettingTab(this.app, this));
     this.registerEditorExtension(createCommentEditorExtension(this));
     this.registerEditorExtension(createBlockDragEditorExtension(this));
@@ -411,6 +476,13 @@ export default class KnowGrovePlugin extends Plugin {
       callback: () => void this.activatePropertyWorkbench(),
     });
     this.addCommand({
+      id: "check-runtime-environment",
+      name: "检查运行环境",
+      callback: () => {
+        this.openKnowGroveSettings("runtime");
+      },
+    });
+    this.addCommand({
       id: "generate-property-base",
       name: "生成并打开属性工作流 Base",
       callback: () => void this.ensureAndOpenPropertyBase(),
@@ -451,7 +523,7 @@ export default class KnowGrovePlugin extends Plugin {
     });
     this.addCommand({
       id: "toggle-current-note-focus",
-      name: "切换当前笔记的重点关注",
+      name: "切换当前笔记的收藏状态",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!this.settings.focusPropertyEnabled || !file || file.extension !== "md") return false;
@@ -463,7 +535,10 @@ export default class KnowGrovePlugin extends Plugin {
       id: "comment-and-reference-selection",
       name: "评论并引用选中内容",
       editorCheckCallback: (checking, editor, context) => {
-        if (!(context instanceof MarkdownView) || !context.file || !editor.getSelection().trim()) return false;
+        if (!this.settings.enableComments
+          || !(context instanceof MarkdownView)
+          || !context.file
+          || !editor.getSelection().trim()) return false;
         if (!checking) void this.openCommentSidebarForSelection(editor, context);
         return true;
       },
@@ -472,6 +547,7 @@ export default class KnowGrovePlugin extends Plugin {
       id: "edit-comment-at-cursor",
       name: "编辑光标处的评论",
       editorCheckCallback: (checking, editor, context) => {
+        if (!this.settings.enableComments) return false;
         if (!(context instanceof MarkdownView) || !context.file) return false;
         const record = this.findReferenceAtCursor(editor, context.file);
         if (!record) return false;
@@ -483,6 +559,7 @@ export default class KnowGrovePlugin extends Plugin {
       id: "open-current-note-comments",
       name: "打开当前文档评论侧边栏",
       checkCallback: (checking) => {
+        if (!this.settings.enableComments) return false;
         const file = this.app.workspace.getActiveFile();
         if (!file) return false;
         if (!checking) void this.openCommentSidebarForDocument(file.path);
@@ -513,9 +590,27 @@ export default class KnowGrovePlugin extends Plugin {
       name: "检查并修复评论引用",
       callback: () => void this.repairAllReferenceAnchors(true),
     });
+    this.addCommand({
+      id: "parse-current-link-note",
+      name: "解析当前链接笔记",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!Platform.isDesktopApp || !file || file.extension !== "md") return false;
+        if (!checking) void this.parseLinkNote(file, "manual");
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "organize-new-link-notes",
+      name: "整理新链接文档",
+      callback: () => void this.scanPendingLinkNotes(true),
+    });
 
     this.registerEvent(this.app.vault.on("create", (file) => {
-      if (file instanceof TFile) this.trackNewNoteInitialization(file);
+      if (file instanceof TFile) {
+        this.trackNewNoteInitialization(file);
+        this.scheduleAutomaticLinkNote(file);
+      }
       this.refreshReadingViews();
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
@@ -551,20 +646,30 @@ export default class KnowGrovePlugin extends Plugin {
       if (!(file instanceof TFile) || file.extension !== "md") return;
       if (this.settings.focusPropertyEnabled) this.addFocusMenuItem(menu, file);
       if (this.isTrackedFile(file)) this.addStatusMenuItems(menu, file);
+      if (Platform.isDesktopApp) {
+        menu.addItem((item) => item
+          .setTitle("KnowGrove：解析链接内容")
+          .setIcon("download")
+          .onClick(() => void this.parseLinkNote(file, "manual")));
+      }
     }));
     this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, context) => {
       if (!(context instanceof MarkdownView) || !context.file) return;
       if (editor.getSelection().trim()) {
-        menu.addItem((item) => item
-          .setTitle("评论并引用")
-          .setIcon("message-square-plus")
-          .onClick(() => void this.openCommentSidebarForSelection(editor, context)));
+        if (this.settings.enableComments) {
+          menu.addItem((item) => item
+            .setTitle("评论并引用")
+            .setIcon("message-square-plus")
+            .onClick(() => void this.openCommentSidebarForSelection(editor, context)));
+        }
         menu.addItem((item) => item
           .setTitle("AI 编辑选中内容")
           .setIcon("wand-sparkles")
           .onClick(() => this.openCreationRewrite(editor, context)));
       }
-      const reference = this.findReferenceAtCursor(editor, context.file);
+      const reference = this.settings.enableComments
+        ? this.findReferenceAtCursor(editor, context.file)
+        : undefined;
       if (reference) {
         menu.addItem((item) => item
           .setTitle("编辑这条评论")
@@ -576,6 +681,7 @@ export default class KnowGrovePlugin extends Plugin {
 
   onunload(): void {
     this.aiBatchCancelRequested = true;
+    void this.browserCaptureServer?.stop();
     window.clearTimeout(this.refreshTimer);
     window.clearTimeout(this.referenceRepairTimer);
     window.clearTimeout(this.blockEmbedHydrationTimer);
@@ -740,6 +846,11 @@ export default class KnowGrovePlugin extends Plugin {
   private updateSelectionCommentButton(): void {
     const actionBar = this.selectionActionBar;
     if (!actionBar) return;
+    const actionCount = Number(this.settings.enableComments) + Number(this.settings.enableBlockDragReferences);
+    if (!actionCount) {
+      this.hideSelectionCommentButton();
+      return;
+    }
     const ownerDocument = this.app.workspace.containerEl.ownerDocument;
     const selection = ownerDocument.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -818,7 +929,7 @@ export default class KnowGrovePlugin extends Plugin {
         width: ownerWindow.innerWidth,
         height: ownerWindow.innerHeight,
       },
-      this.settings.enableBlockDragReferences ? 66 : 30,
+      actionCount > 1 ? 66 : 30,
       7,
       30,
     );
@@ -832,6 +943,7 @@ export default class KnowGrovePlugin extends Plugin {
       from,
       to,
     };
+    actionBar.toggleClass("has-comment", this.settings.enableComments);
     actionBar.toggleClass("has-drag-handle", this.settings.enableBlockDragReferences);
     actionBar.hidden = false;
     actionBar.style.left = `${position.left}px`;
@@ -957,8 +1069,12 @@ export default class KnowGrovePlugin extends Plugin {
     const saved = brandMigration.value;
     const defaults = createDefaultSettings();
     const savedSettings = saved?.settings as Partial<KnowGroveSettings> | undefined;
+    const autoProcessNewNotes = savedSettings?.autoMarkNewNotes ?? defaults.autoMarkNewNotes;
     const savedAIProperties = savedSettings?.aiProperties;
+    const savedBrowserCapture = savedSettings?.browserCapture;
+    const savedRuntime = savedSettings?.runtime;
     const savedCreationStudio = savedSettings?.creationStudio;
+    const migrateLegacyFocusProperty = savedSettings?.focusPropertyName?.trim() === "重点关注";
     const savedPropertySystem = savedSettings?.propertySystem as Partial<PropertySystemSettings> | undefined;
     const savedDimensions = Array.isArray(savedPropertySystem?.dimensions) && savedPropertySystem.dimensions.length
       ? savedPropertySystem.dimensions
@@ -971,15 +1087,36 @@ export default class KnowGrovePlugin extends Plugin {
     const taxonomy = normalizePropertyTaxonomy(savedPropertySystem?.taxonomy, savedDomainValues);
     const needsRuleMigration = saved.schemaVersion !== PROPERTY_RULE_SCHEMA_VERSION
       || JSON.stringify(savedDimensions) !== JSON.stringify(dimensions);
+    const needsAutoProcessMigration = savedAIProperties?.autoEnrichNewNotes !== autoProcessNewNotes
+      || savedBrowserCapture?.autoProcessLinkNotes !== autoProcessNewNotes
+      || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
+    const needsKeepAudioSourceMigration = savedBrowserCapture?.keepAudioSource === false;
     this.data = {
       schemaVersion: PROPERTY_RULE_SCHEMA_VERSION,
       uiMigrationVersion: typeof saved.uiMigrationVersion === "number" ? saved.uiMigrationVersion : 0,
       settings: {
         ...defaults,
         ...(savedSettings ?? {}),
+        autoMarkNewNotes: autoProcessNewNotes,
+        defaultTargetFolder: "",
+        defaultTargetHeading: "评论",
+        focusPropertyName: migrateLegacyFocusProperty
+          ? defaults.focusPropertyName
+          : savedSettings?.focusPropertyName ?? defaults.focusPropertyName,
         aiProperties: {
           ...defaults.aiProperties,
           ...(savedAIProperties ?? {}),
+          autoEnrichNewNotes: autoProcessNewNotes,
+        },
+        runtime: {
+          ...defaults.runtime,
+          ...(savedRuntime ?? {}),
+        },
+        browserCapture: {
+          ...defaults.browserCapture,
+          ...(savedBrowserCapture ?? {}),
+          autoProcessLinkNotes: autoProcessNewNotes,
+          keepAudioSource: true,
         },
         creationStudio: {
           ...defaults.creationStudio,
@@ -988,6 +1125,7 @@ export default class KnowGrovePlugin extends Plugin {
         propertySystem: {
           ...defaults.propertySystem,
           ...(savedPropertySystem ?? {}),
+          initializeTrackedNotes: autoProcessNewNotes,
           excludedFolders: Array.isArray(savedPropertySystem?.excludedFolders)
             ? [...savedPropertySystem.excludedFolders]
             : [...defaults.propertySystem.excludedFolders],
@@ -1004,7 +1142,16 @@ export default class KnowGrovePlugin extends Plugin {
       references: saved.references ?? {},
     };
     this.settings = this.data.settings;
-    if (legacy || brandMigration.changed || needsRuleMigration) await this.savePluginData();
+    if (
+      legacy
+      || brandMigration.changed
+      || needsRuleMigration
+      || needsAutoProcessMigration
+      || needsKeepAudioSourceMigration
+      || migrateLegacyFocusProperty
+    ) {
+      await this.savePluginData();
+    }
     if (legacy) new Notice("KnowGrove 已导入 Reading Companion 的设置、评论与引用数据");
   }
 
@@ -1146,6 +1293,196 @@ export default class KnowGrovePlugin extends Plugin {
     await this.saveData(this.data);
   }
 
+  getBrowserCaptureStatus(): BrowserCaptureServerStatus {
+    return this.browserCaptureServer?.getStatus() ?? {
+      running: false,
+      address: `http://127.0.0.1:${this.settings.browserCapture.port}`,
+    };
+  }
+
+  async auditRuntimeEnvironment(): Promise<KnowGroveRuntimeAudit> {
+    if (!this.runtimeManager) throw new Error("运行环境管理器尚未初始化");
+    const audit = await this.runtimeManager.audit();
+    const providers = await this.getAIProviders().catch(() => []);
+    const available = providers.filter((provider) => provider.available);
+    const ai = audit.capabilities.find((capability) => capability.id === "ai");
+    if (ai && available.length) {
+      ai.status = "ready";
+      ai.detail = `已检测到 ${available.map((provider) => provider.name).slice(0, 2).join("、")}`;
+    }
+    return audit;
+  }
+
+  async installRuntimeEnvironment(
+    onProgress?: (progress: RuntimeInstallProgress) => void,
+  ): Promise<void> {
+    if (!this.runtimeManager) throw new Error("运行环境管理器尚未初始化");
+    await this.runtimeManager.install(onProgress);
+    await this.restartBrowserCaptureServer();
+  }
+
+  private async getRuntimeSkillInstruction(pageType: BrowserCapturePageType): Promise<string> {
+    const pack = await this.runtimeManager?.readSkillPack();
+    return pack?.skills[pageType].prompt ?? "";
+  }
+
+  async restartBrowserCaptureServer(): Promise<void> {
+    if (!Platform.isDesktopApp) {
+      new Notice("浏览器一键入库只支持 Obsidian 桌面版");
+      return;
+    }
+    await this.browserCaptureServer?.restart();
+  }
+
+  async resetBrowserPairing(): Promise<void> {
+    await this.browserCaptureServer?.resetPairing();
+  }
+
+  private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<void> {
+    if (!this.browserCaptureServer) return;
+    try {
+      const job = await this.browserCaptureServer.enqueueLinkNote(file, source);
+      if (source === "manual") {
+        const label = job.pageType === "video" ? "视频" : job.pageType === "audio" ? "语音" : "网页文章";
+        new Notice(`已识别为${label}，正在后台解析并写回当前笔记`, 6000);
+        void this.browserCaptureServer.waitForJob(job.id).then((completed) => {
+          new Notice(
+            completed.status === "completed"
+              ? `${label}解析完成`
+              : `${label}已保存，但处理未全部完成：${completed.error || completed.message}`,
+            completed.status === "completed" ? 5000 : 9000,
+          );
+        }).catch((error) => {
+          new Notice(error instanceof Error ? error.message : String(error), 7000);
+        });
+      }
+    } catch (error) {
+      if (source === "manual") {
+        new Notice(`无法解析：${error instanceof Error ? error.message : String(error)}`, 7000);
+      }
+    }
+  }
+
+  private scheduleAutomaticLinkNote(file: TFile): void {
+    if (!Platform.isDesktopApp || file.extension !== "md" || !this.settings.browserCapture.autoProcessLinkNotes) return;
+    const folder = normalizePath(
+      this.settings.browserCapture.watchFolder.trim()
+      || this.settings.trackedFolder.trim(),
+    ).replace(/^\/+|\/+$/g, "");
+    if (folder && file.path !== folder && !file.path.startsWith(`${folder}/`)) return;
+    const attempt = (remaining: number): void => {
+      window.setTimeout(() => {
+        const current = this.app.vault.getAbstractFileByPath(file.path);
+        if (!(current instanceof TFile)) return;
+        void this.parseLinkNote(current, "auto").catch(() => undefined);
+        if (remaining > 1) attempt(remaining - 1);
+      }, remaining === 3 ? 1_500 : 2_500);
+    };
+    attempt(3);
+  }
+
+  private automaticLinkNoteFolder(): string {
+    return normalizePath(
+      this.settings.browserCapture.watchFolder.trim()
+      || this.settings.trackedFolder.trim(),
+    ).replace(/^\/+|\/+$/g, "");
+  }
+
+  async scanPendingLinkNotes(showNotice = true): Promise<number> {
+    if (!Platform.isDesktopApp) {
+      if (showNotice) new Notice("链接内容整理只支持 Obsidian 桌面版");
+      return 0;
+    }
+    if (!this.browserCaptureServer) {
+      if (showNotice) new Notice("内容整理服务尚未初始化");
+      return 0;
+    }
+    if (this.linkNoteScanPromise) {
+      if (showNotice) new Notice("正在检查新链接文档");
+      return this.linkNoteScanPromise;
+    }
+
+    const scan = async (): Promise<number> => {
+      const folder = this.automaticLinkNoteFolder();
+      const recent = latestLinkNoteScanFiles(
+        this.app.vault.getMarkdownFiles().map((file) => ({
+          path: file.path,
+          mtime: file.stat.mtime,
+        })),
+        folder,
+        200,
+      );
+      let queued = 0;
+      for (const item of recent) {
+        if (queued >= 50) break;
+        const file = this.app.vault.getAbstractFileByPath(item.path);
+        if (!(file instanceof TFile)) continue;
+        const markdown = await this.app.vault.cachedRead(file).catch(() => "");
+        if (
+          !detectLinkNoteCandidate(markdown, file.basename)
+          && !detectInterruptedCapture(markdown)
+        ) continue;
+        try {
+          await this.browserCaptureServer!.enqueueLinkNote(file, "auto");
+          queued += 1;
+        } catch (error) {
+          console.error(`KnowGrove: failed to enqueue link note ${file.path}`, error);
+        }
+      }
+      if (showNotice) {
+        new Notice(
+          queued
+            ? `已发现 ${queued} 篇新链接文档，正在后台整理并写回原文件`
+            : "没有发现需要整理的新链接文档",
+          queued ? 6000 : 3500,
+        );
+      } else if (queued) {
+        new Notice(`KnowGrove 已自动开始整理 ${queued} 篇新链接文档`, 5000);
+      }
+      return queued;
+    };
+
+    this.linkNoteScanPromise = scan().finally(() => {
+      this.linkNoteScanPromise = undefined;
+    });
+    return this.linkNoteScanPromise;
+  }
+
+  openKnowGroveSettings(section = ""): void {
+    const settingsManager = (this.app as typeof this.app & {
+      setting: {
+        open(): void;
+        openTabById(id: string): void;
+      };
+    }).setting;
+    settingsManager.open();
+    settingsManager.openTabById(this.manifest.id);
+    if (section === "browser-capture" || section === "runtime") {
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>(
+          section === "runtime" ? ".knowgrove-runtime-settings" : ".knowgrove-browser-capture-settings",
+        )
+          ?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 120);
+    }
+  }
+
+  private async runBrowserCaptureProvider(provider: AIProviderId, prompt: string): Promise<string> {
+    const availability = await this.getAIProviders();
+    const selected = availability.find((item) => item.id === provider);
+    if (!selected?.available) throw new Error(selected?.detail || `${providerName(provider)} 当前不可用`);
+    const base = this.settings.aiProperties;
+    const useSharedConfiguration = base.provider === provider;
+    return runAIProvider({
+      ...base,
+      provider,
+      model: useSharedConfiguration ? base.model : "",
+      executablePath: useSharedConfiguration ? base.executablePath : "",
+      endpoint: useSharedConfiguration ? base.endpoint : "",
+      timeoutSeconds: Math.max(900, base.timeoutSeconds),
+    }, prompt, availability, this.getAISecret(provider));
+  }
+
   supportsAISecretStorage(): boolean {
     return Boolean((this.app as typeof this.app & { secretStorage?: unknown }).secretStorage);
   }
@@ -1200,7 +1537,11 @@ export default class KnowGrovePlugin extends Plugin {
     if (force) this.clearAIProviderDetection();
     if (this.aiProviderAvailability) return this.getCachedAIProviders() ?? [];
     if (!this.aiDetectionPromise) {
-      this.aiDetectionPromise = detectAIProviders(this.settings.aiProperties, this.supportsAISecretStorage())
+      this.aiDetectionPromise = detectAIProviders(this.settings.aiProperties, {
+        secretStorageAvailable: this.supportsAISecretStorage(),
+        anthropicApiKey: this.getAISecret("anthropic-api"),
+        openAICompatibleApiKey: this.getAISecret("openai-compatible"),
+      })
         .then((providers) => {
           this.aiProviderAvailability = providers;
           return providers;
@@ -1239,18 +1580,22 @@ export default class KnowGrovePlugin extends Plugin {
     const settings = this.settings.aiProperties;
     const dimensions = aiManagedDimensions(this.settings.propertySystem.dimensions);
     if (!dimensions.length) throw new Error("请先至少开启一个 AI 管理字段");
+    const availability = await this.getAIProviders(true);
+    const selected = availability.find((provider) => provider.id === settings.provider);
+    if (selected && !selected.available) throw new Error(selected.detail);
     const prompt = buildAIPropertyPrompt({
       path: "KnowGrove/AI-connection-test.md",
       basename: "AI 属性连接测试",
       frontmatter: { 类型: "输入资料", 状态: "待整理" },
       body: "这是一篇讨论如何使用人工智能产品改善个人知识管理、自动分类笔记和构建主题体系的测试文章。",
       dimensions,
-      maxContentCharacters: settings.maxContentCharacters,
+      maxContentCharacters: automaticAIContentCharacterLimit(
+        settings.provider,
+        settings.model,
+        selected?.configuredModel,
+      ),
       taxonomy: this.settings.propertySystem.taxonomy,
     });
-    const availability = await this.getAIProviders(true);
-    const selected = availability.find((provider) => provider.id === settings.provider);
-    if (selected && !selected.available) throw new Error(selected.detail);
     const raw = await runAIProvider(settings, prompt, availability, this.getAISecret(settings.provider));
     return parseAIPropertyResponse(raw, dimensions, { 类型: "输入资料", 状态: "待整理" }).properties;
   }
@@ -1318,7 +1663,11 @@ export default class KnowGrovePlugin extends Plugin {
       body: context.body,
       frontmatter: context.frontmatter,
       dimensions,
-      maxContentCharacters: settings.maxContentCharacters,
+      maxContentCharacters: automaticAIContentCharacterLimit(
+        settings.provider,
+        settings.model,
+        selected?.configuredModel,
+      ),
       taxonomy: this.settings.propertySystem.taxonomy,
     });
     const raw = await runAIProvider(settings, prompt, availability, this.getAISecret(settings.provider));
@@ -1636,23 +1985,32 @@ export default class KnowGrovePlugin extends Plugin {
 
   isFocusFile(file: TFile): boolean {
     if (!this.settings.focusPropertyEnabled) return false;
-    const value = this.app.metadataCache.getFileCache(file)?.frontmatter?.[this.settings.focusPropertyName];
-    return value === true || value === "true";
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    const properties = this.settings.focusPropertyName.trim() === "收藏"
+      ? [this.settings.focusPropertyName, ...LEGACY_FOCUS_PROPERTY_NAMES]
+      : [this.settings.focusPropertyName];
+    return properties.some((property) => {
+      const value = frontmatter?.[property];
+      return value === true || value === "true";
+    });
   }
 
   async toggleFocus(file: TFile): Promise<void> {
     if (!this.settings.focusPropertyEnabled) return;
     const property = this.settings.focusPropertyName.trim();
     if (!property) {
-      new Notice("请先在设置中填写重点关注属性名");
+      new Notice("请先在设置中填写收藏属性名");
       return;
     }
     const next = !this.isFocusFile(file);
     await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
       frontmatter[property] = next;
+      if (property === "收藏") {
+        for (const legacyProperty of LEGACY_FOCUS_PROPERTY_NAMES) delete frontmatter[legacyProperty];
+      }
     });
     this.refreshReadingViews();
-    new Notice(next ? `已将《${file.basename}》设为重点关注` : `已取消《${file.basename}》的重点关注`);
+    new Notice(next ? `已收藏《${file.basename}》` : `已取消收藏《${file.basename}》`);
   }
 
   resetAutoCompletionTracking(): void {
@@ -1788,6 +2146,7 @@ export default class KnowGrovePlugin extends Plugin {
     const audit = auditPropertySnapshots(snapshots, this.settings.propertySystem, {
       enabled: this.settings.focusPropertyEnabled,
       propertyName: this.settings.focusPropertyName,
+      aliases: this.settings.focusPropertyName === "收藏" ? LEGACY_FOCUS_PROPERTY_NAMES : [],
       reading: {
         propertyName: this.settings.statusProperty,
         readingValue: this.settings.readingStatus,
@@ -1960,7 +2319,6 @@ export default class KnowGrovePlugin extends Plugin {
       taxonomy,
     );
     this.settings.aiProperties.enabled = true;
-    this.settings.aiProperties.autoEnrichNewNotes = true;
     await this.savePluginData();
     await this.scanPropertyWorkspace();
     new Notice("已采用 AI 分类方案；只更新规则，尚未修改任何笔记");
@@ -3466,7 +3824,10 @@ export default class KnowGrovePlugin extends Plugin {
     if (!(sourceFile instanceof TFile)) throw new Error("原作品不存在");
     const sourceContent = await this.app.vault.read(sourceFile);
     const raw = await this.runCreationModel(buildChannelDerivativePrompt(
-      sourceContent.slice(0, Math.max(12_000, this.settings.aiProperties.maxContentCharacters)),
+      sourceContent.slice(0, automaticAIContentCharacterLimit(
+        this.settings.aiProperties.provider,
+        this.settings.aiProperties.model,
+      )),
       sourceState.draft,
       presetId,
       title,
@@ -4169,8 +4530,6 @@ export default class KnowGrovePlugin extends Plugin {
 
   getReferenceTargetFiles(source: TFile | string): TFile[] {
     const sourcePath = typeof source === "string" ? source : source.path;
-    const preferred = this.settings.defaultTargetFolder.trim();
-    const normalized = preferred ? `${normalizePath(preferred).replace(/^\/+|\/+$/g, "")}/` : "";
     return this.app.vault.getMarkdownFiles()
       .filter((file) => file.path !== sourcePath)
       .sort((a, b) => {
@@ -4183,11 +4542,6 @@ export default class KnowGrovePlugin extends Plugin {
           || bFrontmatter?.knowgrove_research_topic === true
           || bFrontmatter?.knowgrove_workspace === true;
         if (aWorkspace !== bWorkspace) return aWorkspace ? -1 : 1;
-        if (normalized) {
-          const aPreferred = a.path.startsWith(normalized);
-          const bPreferred = b.path.startsWith(normalized);
-          if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
-        }
         return a.path.localeCompare(b.path, "zh-CN");
       });
   }
@@ -4205,6 +4559,7 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async openCommentsForBlock(blockId: string): Promise<void> {
+    if (!this.settings.enableComments) return;
     const records = this.getReferencesForBlock(blockId);
     if (!records.length) return;
     const record = records[0];
@@ -4212,6 +4567,10 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async openCommentSidebarForActiveSelection(): Promise<void> {
+    if (!this.settings.enableComments) {
+      new Notice("评论功能已关闭");
+      return;
+    }
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view?.file) {
       new Notice("请先在 Markdown 文档中选中文字");
@@ -4224,6 +4583,7 @@ export default class KnowGrovePlugin extends Plugin {
     codeMirror: Parameters<typeof refreshCommentEditorDecorations>[0],
     selectedRange?: { from: number; to: number },
   ): Promise<void> {
+    if (!this.settings.enableComments) return;
     const markdownView = this.app.workspace.getLeavesOfType("markdown")
       .map((leaf) => leaf.view)
       .find((view): view is MarkdownView => view instanceof MarkdownView
@@ -4256,6 +4616,10 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async openCommentSidebarForSelection(editor: Editor, view: MarkdownView): Promise<void> {
+    if (!this.settings.enableComments) {
+      new Notice("评论功能已关闭");
+      return;
+    }
     const selectedText = editor.getSelection().trim();
     const file = view.file;
     if (!file || !selectedText) {
@@ -4302,6 +4666,18 @@ export default class KnowGrovePlugin extends Plugin {
   private refreshCommentSidebars(sourcePath?: string): void {
     for (const leaf of this.app.workspace.getLeavesOfType(COMMENTS_VIEW_TYPE)) {
       if (leaf.view instanceof CommentsSidebarView) leaf.view.refresh(sourcePath);
+    }
+  }
+
+  refreshCommentFeatureUi(): void {
+    this.hideSelectionCommentButton();
+    const paths = new Set<string>();
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      if (leaf.view instanceof MarkdownView && leaf.view.file) paths.add(leaf.view.file.path);
+    }
+    for (const path of paths) this.refreshCommentUi(path);
+    if (!this.settings.enableComments) {
+      for (const leaf of this.app.workspace.getLeavesOfType(COMMENTS_VIEW_TYPE)) leaf.detach();
     }
   }
 
@@ -4779,6 +5155,7 @@ export default class KnowGrovePlugin extends Plugin {
       }], this.settings.propertySystem, {
         enabled: this.settings.focusPropertyEnabled,
         propertyName: this.settings.focusPropertyName,
+        aliases: this.settings.focusPropertyName === "收藏" ? LEGACY_FOCUS_PROPERTY_NAMES : [],
       });
       const needsReview = audit.nonCompliantFiles > 0 || Boolean(aiError);
       this.updatePropertyCapture({
@@ -4820,13 +5197,17 @@ export default class KnowGrovePlugin extends Plugin {
 
   private addFocusMenuItem(menu: Menu, file: TFile): void {
     menu.addItem((item) => item
-      .setTitle(this.isFocusFile(file) ? "取消重点关注" : "设为重点关注")
+      .setTitle(this.isFocusFile(file) ? "取消收藏" : "收藏")
       .setIcon("star")
       .setChecked(this.isFocusFile(file))
       .onClick(() => void this.toggleFocus(file)));
   }
 
   async createCommentFromDraft(draft: CommentSelectionDraft, comment: string): Promise<ReferenceRecord | null> {
+    if (!this.settings.enableComments) {
+      new Notice("评论功能已关闭");
+      return null;
+    }
     const file = this.app.vault.getAbstractFileByPath(draft.sourcePath);
     const leaf = this.app.workspace.getLeavesOfType("markdown")
       .find((candidate) => candidate.view instanceof MarkdownView && candidate.view.file?.path === draft.sourcePath);
@@ -5134,6 +5515,7 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   private decorateReadingView(container: HTMLElement, sourcePath: string): void {
+    if (!this.settings.enableComments) return;
     const records = Object.values(this.data.references).filter((record) => record.sourcePath === sourcePath);
     const grouped = new Map<string, ReferenceRecord[]>();
     for (const record of records) grouped.set(record.sourceBlockId, [...(grouped.get(record.sourceBlockId) ?? []), record]);

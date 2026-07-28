@@ -14,3 +14,10 @@ How it works: `/how-it-works`
 
 This message disappears once the first observation lands.
 </claude-mem-context>
+
+# Product Documentation Policy
+
+- `PRD.md` in the repository root is the product baseline and source of truth.
+- Every user-visible feature addition, removal, behavior change, setting change, or release-status change must update the corresponding section of `PRD.md`.
+- Every such change must also add one entry to the `PRD.md` change log and update its product/PRD version when applicable.
+- Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.

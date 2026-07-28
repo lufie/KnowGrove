@@ -19,6 +19,7 @@ const SYSTEM_PATH_SEGMENTS = new Set([".git", ".obsidian", "node_modules"]);
 const SYSTEM_DIMENSION_IDS = new Set(["file-name", "type", "status", "domain", "topic"]);
 export const PROPERTY_BASE_MANAGED_MARKER = "# KnowGrove managed property Base";
 export const PROPERTY_RULE_SCHEMA_VERSION = 7;
+export const LEGACY_FOCUS_PROPERTY_NAMES = ["重点关注"] as const;
 
 interface PropertyFlowRule {
   viewName: string;
@@ -29,6 +30,7 @@ interface PropertyFlowRule {
 export interface ExternalFocusPropertyRule {
   enabled: boolean;
   propertyName: string;
+  aliases?: readonly string[];
   reading?: {
     propertyName: string;
     readingValue: string;
@@ -609,15 +611,20 @@ export function auditPropertySnapshots(
       operations.push(...reading.operations);
     }
     const focusProperty = focusRule?.propertyName.trim() ?? "";
+    const focusAliases = (focusRule?.aliases ?? [])
+      .map((alias) => alias.trim())
+      .filter(Boolean);
+    const hasFocusProperty = [focusProperty, ...focusAliases]
+      .some((property) => Object.prototype.hasOwnProperty.call(frontmatter, property));
     if (focusRule?.enabled
       && focusProperty
       && noteType === settings.trackedNoteType
       && !settings.dimensions.some((dimension) => dimension.name === focusProperty)
-      && !Object.prototype.hasOwnProperty.call(frontmatter, focusProperty)) {
+      && !hasFocusProperty) {
       const focusDimension: PropertyDimensionConfig = {
         id: "knowgrove-external-focus",
         name: focusProperty,
-        description: "外部输入资料的重点关注开关。",
+        description: "外部输入资料的收藏开关。",
         aliases: [],
         valueType: "checkbox",
         required: false,
@@ -630,7 +637,7 @@ export function auditPropertySnapshots(
         snapshot,
         focusDimension,
         "missing",
-        "外部输入资料缺少重点关注开关，自动补为未选中",
+        "外部输入资料缺少收藏开关，自动补为未选中",
         true,
         undefined,
         false,
@@ -640,7 +647,7 @@ export function auditPropertySnapshots(
         property: focusProperty,
         before: undefined,
         after: false,
-        reason: "为外部输入资料补齐重点关注 Checkbox",
+        reason: "为外部输入资料补齐收藏 Checkbox",
       });
     }
     const creationDateProperty = settings.creationDateProperty.trim() || "创建时间";
@@ -748,7 +755,11 @@ export function initializeTrackedNoteFrontmatter(
     ["领域", []],
     ["主题", []],
   ];
-  if (focusProperty.trim()) requiredValues.push([focusProperty.trim(), false]);
+  if (focusProperty.trim()) {
+    const hasLegacyFocus = focusProperty.trim() === "收藏"
+      && LEGACY_FOCUS_PROPERTY_NAMES.some((property) => hasOwn(property));
+    if (!hasLegacyFocus) requiredValues.push([focusProperty.trim(), false]);
+  }
   const additions = new Map<string, unknown>();
   for (const [property, value] of requiredValues) {
     if (deferredProperties.has(property)) continue;

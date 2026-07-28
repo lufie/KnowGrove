@@ -20,8 +20,15 @@ function system() {
   return createDefaultSettings().propertySystem;
 }
 
-test("property check cleans extra blank lines by default", () => {
-  assert.equal(createDefaultSettings().cleanupBlankLinesWithPropertyCheck, true);
+test("property check leaves blank-line cleanup off by default", () => {
+  assert.equal(createDefaultSettings().cleanupBlankLinesWithPropertyCheck, false);
+});
+
+test("new-content automation uses one shared default across capture and property processing", () => {
+  const settings = createDefaultSettings();
+  assert.equal(settings.browserCapture.autoProcessLinkNotes, settings.autoMarkNewNotes);
+  assert.equal(settings.aiProperties.autoEnrichNewNotes, settings.autoMarkNewNotes);
+  assert.equal(settings.propertySystem.initializeTrackedNotes, settings.autoMarkNewNotes);
 });
 
 test("governance scope excludes configured, system, and dependency files", () => {
@@ -248,7 +255,7 @@ test("reading aliases are normalized while unknown reading states remain visible
     },
   ], settings, {
     enabled: false,
-    propertyName: "重点关注",
+    propertyName: "收藏",
     reading: { propertyName: "阅读状态", readingValue: "在看", finishedValue: "已读" },
   });
   const unread = audit.changes.find((change) => change.path === "Home/Unread.md");
@@ -388,15 +395,22 @@ test("new external input receives an unchecked focus property without overwritin
   const settings = system();
   const frontmatter: Record<string, unknown> = {};
   initializeTrackedNoteFrontmatter(
-    frontmatter, "External", settings, "阅读状态", "在看", "2026-07-23", new Set(), "重点关注",
+    frontmatter, "External", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
   );
-  assert.equal(frontmatter.重点关注, false);
+  assert.equal(frontmatter.收藏, false);
 
-  const focused: Record<string, unknown> = { 重点关注: true };
+  const focused: Record<string, unknown> = { 收藏: true };
   initializeTrackedNoteFrontmatter(
-    focused, "Focused", settings, "阅读状态", "在看", "2026-07-23", new Set(), "重点关注",
+    focused, "Focused", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
   );
-  assert.equal(focused.重点关注, true);
+  assert.equal(focused.收藏, true);
+
+  const legacy: Record<string, unknown> = { 重点关注: true };
+  initializeTrackedNoteFrontmatter(
+    legacy, "Legacy", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
+  );
+  assert.equal(legacy.重点关注, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(legacy, "收藏"), false);
 });
 
 test("property audit adds the focus checkbox only to external input material", () => {
@@ -417,9 +431,9 @@ test("property audit adds the focus checkbox only to external input material", (
       basename: "Focused",
       frontmatter: { 文件名: "Focused", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 重点关注: true },
     },
-  ], settings, { enabled: true, propertyName: "重点关注" });
+  ], settings, { enabled: true, propertyName: "收藏", aliases: ["重点关注"] });
   const focusChanges = audit.changes.flatMap((change) => change.operations.map((operation) => ({ path: change.path, operation })))
-    .filter(({ operation }) => operation.property === "重点关注");
+    .filter(({ operation }) => operation.property === "收藏");
   assert.deepEqual(focusChanges.map(({ path }) => path), ["Home/External.md"]);
   assert.equal(focusChanges[0]?.operation.after, false);
 });

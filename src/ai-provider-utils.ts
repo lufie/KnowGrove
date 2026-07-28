@@ -14,6 +14,20 @@ export function providerModelOptions(provider: AIProviderId, availability?: AIPr
   ].filter(Boolean)));
 }
 
+export function automaticAIContentCharacterLimit(
+  provider: AIProviderId,
+  configuredModel = "",
+  detectedModel = "",
+): number {
+  const model = `${configuredModel} ${detectedModel}`.toLowerCase();
+  if (provider === "openai-compatible") {
+    return /\b(gpt-5|claude|gemini|qwen|deepseek|glm-5|llama-4)\b/.test(model)
+      ? 24_000
+      : 12_000;
+  }
+  return 24_000;
+}
+
 /**
  * Turn known CLI failures into an actionable message without hiding the raw
  * provider message, which remains important for support and diagnostics.

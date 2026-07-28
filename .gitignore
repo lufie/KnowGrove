@@ -8,5 +8,11 @@ main.js
 !.env.example
 coverage/
 release/
+runtime-dist/
+.runtime-input/
+.runtime-whisper/
+.runtime-paths.json
 *.zip
+*.pem
 reading-companion-*/
+知流浏览器一键入库/安装文件/

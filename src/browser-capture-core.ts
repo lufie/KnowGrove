@@ -1,0 +1,831 @@
+import type { AIProviderId } from "./types";
+
+export type BrowserCapturePageType = "article" | "video" | "audio";
+
+export function selectedCaptureProvider(
+  globalProvider: AIProviderId,
+  _pageType: BrowserCapturePageType,
+): AIProviderId {
+  return globalProvider;
+}
+
+export interface LinkNoteCandidate {
+  url: string;
+  title: string;
+}
+
+export interface InterruptedCaptureCandidate extends LinkNoteCandidate {
+  pageType: BrowserCapturePageType;
+  source: string;
+  mediaPath?: string;
+}
+
+export interface BrowserCaptureSkill {
+  id: string;
+  label: string;
+  contentTypes: BrowserCapturePageType[];
+  description: string;
+  stages: string[];
+}
+
+export interface BrowserCaptureAIResult {
+  summary: string;
+  keyPoints: string[];
+  bodyMarkdown: string;
+  mode: "article" | "single-speaker" | "multi-speaker";
+}
+
+export interface ExtractedArticle {
+  title: string;
+  author: string;
+  publishedAt: string;
+  source: string;
+}
+
+export type WhisperImplementation = "openai-whisper" | "whisper-cpp";
+
+export interface WhisperInvocation {
+  args: string[];
+  transcriptPath?: string;
+}
+
+const VIDEO_HOSTS = [
+  "youtube.com",
+  "youtu.be",
+  "bilibili.com",
+  "b23.tv",
+  "v.qq.com",
+  "youku.com",
+  "tudou.com",
+  "iqiyi.com",
+  "douyin.com",
+  "ixigua.com",
+  "tiktok.com",
+  "weibo.tv",
+];
+
+const AUDIO_HOSTS = [
+  "podcasts.apple.com",
+  "podcasts.google.com",
+  "music.163.com",
+  "audio.com",
+  "soundcloud.com",
+  "ximalaya.com",
+  "qingting.fm",
+];
+
+const VIDEO_EXTENSIONS = /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i;
+const AUDIO_EXTENSIONS = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)(?:$|[?#])/i;
+
+export const BROWSER_CAPTURE_SKILLS: BrowserCaptureSkill[] = [
+  {
+    id: "article-to-obsidian",
+    label: "网页文章入库",
+    contentTypes: ["article"],
+    description: "提取公开网页正文，生成摘要、要点和知识笔记，并保留原文。",
+    stages: ["网页提取", "原文备份", "AI 整理", "写入 Vault"],
+  },
+  {
+    id: "video-to-obsidian",
+    label: "视频转写入库",
+    contentTypes: ["video"],
+    description: "优先读取公开视频字幕，必要时下载音频并使用 Whisper 转录。",
+    stages: ["字幕或音频", "转录", "原文备份", "AI 整理"],
+  },
+  {
+    id: "audio-to-obsidian",
+    label: "语音转写入库",
+    contentTypes: ["audio"],
+    description: "保存公开音频，使用本机 Whisper 转录，再由 AI 生成摘要和结构化笔记。",
+    stages: ["保存音频", "转录", "逐字稿备份", "AI 总结"],
+  },
+];
+
+export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const isWeiboVideo = host.endsWith("weibo.com") && parsed.pathname.startsWith("/tv");
+    if (AUDIO_EXTENSIONS.test(parsed.href) || AUDIO_HOSTS.some((candidate) =>
+      host === candidate || host.endsWith(`.${candidate}`),
+    )) return "audio";
+    return isWeiboVideo || VIDEO_EXTENSIONS.test(parsed.href) || VIDEO_HOSTS.some((candidate) =>
+      host === candidate || host.endsWith(`.${candidate}`),
+    )
+      ? "video"
+      : "article";
+  } catch {
+    return "article";
+  }
+}
+
+export function stripCaptureFrontmatter(markdown: string): string {
+  return markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+}
+
+function normalizedLinkNoteTitle(title: string, url: string): string {
+  const cleaned = title
+    .replace(/^#+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned) return cleaned.slice(0, 200);
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "待解析内容";
+  }
+}
+
+export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): LinkNoteCandidate | null {
+  if (/KnowGrove采集状态:\s*["']?(?:处理中|已完成)["']?/i.test(markdown)) return null;
+  const body = stripCaptureFrontmatter(markdown);
+  const urls = Array.from(body.matchAll(/https?:\/\/[^\s<>()\]]+/gi))
+    .map((match) => match[0]!.replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
+  const uniqueUrls = Array.from(new Set(urls));
+  if (uniqueUrls.length !== 1) return null;
+  const url = uniqueUrls[0]!;
+  const withoutLinks = body
+    .replace(/!?\[[^\]]*]\(https?:\/\/[^)]+\)/gi, " ")
+    .replace(/https?:\/\/[^\s<>()\]]+/gi, " ")
+    .replace(/^#{1,6}\s+.*$/gm, " ")
+    .replace(/^>\s*(?:来源|链接|收藏|待处理|稍后阅读|KnowGrove).*$|^\s*[-*]\s*(?:来源|链接)\s*[:：].*$/gim, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/\s+/g, "");
+  if (withoutLinks.length > 120 || body.length > 1_500) return null;
+  const heading = body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim() ?? "";
+  return {
+    url,
+    title: normalizedLinkNoteTitle(heading || fallbackTitle, url),
+  };
+}
+
+function frontmatterScalar(markdown: string, keys: string[]): string {
+  const frontmatter = markdown.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? "";
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const value = frontmatter.match(new RegExp(`^${escaped}:\\s*(.+?)\\s*$`, "mi"))?.[1]?.trim() ?? "";
+    if (!value) continue;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (typeof parsed === "string") return parsed.trim();
+    } catch {
+      return value.replace(/^["']|["']$/g, "").trim();
+    }
+  }
+  return "";
+}
+
+export function detectInterruptedCapture(markdown: string): InterruptedCaptureCandidate | null {
+  if (!/KnowGrove采集状态:\s*["']?(?:处理中|部分完成)["']?/i.test(markdown)) return null;
+  if (/^##\s+内容摘要\s*$/m.test(markdown)) return null;
+  const url = frontmatterScalar(markdown, ["来源", "source_url"]);
+  if (!/^https?:\/\//i.test(url)) return null;
+  const contentType = frontmatterScalar(markdown, ["内容类型", "source_type"]);
+  const pageType: BrowserCapturePageType = /视频|video/i.test(contentType)
+    ? "video"
+    : /音频|语音|audio|podcast/i.test(contentType)
+      ? "audio"
+      : classifyBrowserCaptureUrl(url);
+  const sourceHeading = pageType === "article" ? "原文" : "完整逐字稿";
+  const source = markdown.match(new RegExp(`^##\\s+${sourceHeading}\\s*$\\r?\\n([\\s\\S]+)$`, "m"))?.[1]?.trim() ?? "";
+  if (source.length < 80) return null;
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const mediaPath = markdown.match(/^!\[\[([^\]]+)]]\s*$/m)?.[1]?.trim();
+  return {
+    url,
+    title: normalizedLinkNoteTitle(title, url),
+    pageType,
+    source,
+    ...(mediaPath ? { mediaPath } : {}),
+  };
+}
+
+export interface LinkNoteScanFile {
+  path: string;
+  mtime: number;
+}
+
+export function latestLinkNoteScanFiles(
+  files: LinkNoteScanFile[],
+  folder: string,
+  limit = 200,
+): LinkNoteScanFile[] {
+  const normalizedFolder = folder
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  return files
+    .filter((file) => {
+      const path = file.path.replace(/\\/g, "/").replace(/^\/+/, "");
+      if (!path.toLowerCase().endsWith(".md")) return false;
+      return !normalizedFolder
+        || path === normalizedFolder
+        || path.startsWith(`${normalizedFolder}/`);
+    })
+    .sort((left, right) => right.mtime - left.mtime || left.path.localeCompare(right.path))
+    .slice(0, Math.max(0, limit));
+}
+
+export function detectWhisperImplementation(executable: string): WhisperImplementation {
+  const name = executable.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  return name.includes("whisper-cli") || name.includes("whisper-cpp")
+    ? "whisper-cpp"
+    : "openai-whisper";
+}
+
+export function buildWhisperInvocation(input: {
+  implementation: WhisperImplementation;
+  audioPath: string;
+  outputDirectory: string;
+  model: string;
+  cppModelPath?: string;
+}): WhisperInvocation {
+  if (input.implementation === "whisper-cpp") {
+    if (!input.cppModelPath) throw new Error("whisper.cpp 缺少 GGML 模型文件");
+    const transcriptStem = `${input.outputDirectory.replace(/[\\/]$/, "")}/transcript`;
+    return {
+      args: [
+        "-m",
+        input.cppModelPath,
+        "-f",
+        input.audioPath,
+        "-l",
+        "auto",
+        "-otxt",
+        "-of",
+        transcriptStem,
+        "-np",
+      ],
+      transcriptPath: `${transcriptStem}.txt`,
+    };
+  }
+  return {
+    args: [
+      input.audioPath,
+      "--model",
+      input.model,
+      "--output_format",
+      "txt",
+      "--output_dir",
+      input.outputDirectory,
+    ],
+  };
+}
+
+export function browserCaptureSkill(pageType: BrowserCapturePageType): BrowserCaptureSkill {
+  return BROWSER_CAPTURE_SKILLS.find((skill) => skill.contentTypes.includes(pageType))
+    ?? BROWSER_CAPTURE_SKILLS[0]!;
+}
+
+export function extractJsonObject(text: string): Record<string, unknown> {
+  const source = String(text ?? "").replace(/```(?:json)?/gi, "").replace(/```/g, "");
+  for (let start = source.indexOf("{"); start >= 0; start = source.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < source.length; index += 1) {
+      const char = source[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === "\"") inString = false;
+        continue;
+      }
+      if (char === "\"") inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            return JSON.parse(source.slice(start, index + 1)) as Record<string, unknown>;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+  throw new Error("模型没有返回可解析的 JSON 结果");
+}
+
+export function splitBrowserCaptureText(text: string, maxChars = 28_000): string[] {
+  const normalized = String(text ?? "").trim();
+  if (!normalized) return [];
+  if (normalized.length <= maxChars) return [normalized];
+  const chunks: string[] = [];
+  let current = "";
+  for (const paragraph of normalized.split(/\n{2,}/)) {
+    if (paragraph.length > maxChars) {
+      if (current.trim()) chunks.push(current.trim());
+      current = "";
+      for (let offset = 0; offset < paragraph.length; offset += maxChars) {
+        chunks.push(paragraph.slice(offset, offset + maxChars).trim());
+      }
+      continue;
+    }
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length > maxChars) {
+      chunks.push(current.trim());
+      current = paragraph;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter(Boolean);
+}
+
+function normalizeMode(value: unknown, pageType: BrowserCapturePageType): BrowserCaptureAIResult["mode"] {
+  if (pageType === "article") return "article";
+  return value === "multi-speaker" ? "multi-speaker" : "single-speaker";
+}
+
+export function normalizeBrowserCaptureAIResult(
+  raw: Record<string, unknown>,
+  pageType: BrowserCapturePageType,
+): BrowserCaptureAIResult {
+  const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
+  const keyPoints = Array.isArray(raw.key_points)
+    ? raw.key_points.map((item) => String(item).trim()).filter(Boolean).slice(0, 16)
+    : [];
+  const bodyMarkdown = typeof raw.body_markdown === "string"
+    ? raw.body_markdown.trim().replace(/^##\s+/gm, "### ")
+    : "";
+  if (!summary || !keyPoints.length || !bodyMarkdown) {
+    throw new Error("模型结果缺少摘要、核心要点或整理正文");
+  }
+  return {
+    summary,
+    keyPoints,
+    bodyMarkdown,
+    mode: normalizeMode(raw.mode, pageType),
+  };
+}
+
+export function browserCapturePrompt(
+  pageType: BrowserCapturePageType,
+  title: string,
+  source: string,
+): string {
+  return [
+    "你正在执行 KnowGrove 的浏览器入库 Skill。",
+    "只根据提供的材料工作，不补造事实；无法确认的人名、数字和术语标记为 [待核]。",
+    "输出必须是一个 JSON 对象，不要使用 Markdown 代码围栏。",
+    pageType !== "article"
+      ? "判断单人讲解或多人对话。mode 使用 single-speaker 或 multi-speaker；正文需去除口语赘词，多人对话使用 **说话人**：格式。"
+      : [
+        "mode 固定为 article；正文重构为忠于原文、带 ### 小标题的知识笔记。",
+        "删除正文开始前的作者栏、编辑栏、阅读器提示、头图、公众号引导和纯装饰符号；删除正文末尾的关注、推荐阅读、二维码、转载声明等平台噪音。",
+        "原始材料中的 {{KNOWGROVE_IMAGE_数字}} 是已本地化的正文图片占位符，必须逐个原样保留、顺序不变、单独成段；不得改写、遗漏或新增占位符。",
+        `不要在 body_markdown 中重复输出文章一级标题“${title}”。`,
+      ].join(""),
+    '{"summary":"2-4段摘要","key_points":["要点1","要点2"],"mode":"article|single-speaker|multi-speaker","body_markdown":"### 小标题\\n\\n正文"}',
+    `内容类型：${pageType === "video" ? "视频" : pageType === "audio" ? "语音" : "文章"}`,
+    `标题：${title}`,
+    "原始材料：",
+    source,
+  ].join("\n\n");
+}
+
+export function browserCaptureChunkPrompt(
+  pageType: BrowserCapturePageType,
+  title: string,
+  source: string,
+  index: number,
+  total: number,
+): string {
+  return [
+    `这是《${title}》的第 ${index}/${total} 段材料。`,
+    "只整理这一段，不推断其他段落。输出必须是一个 JSON 对象。",
+    pageType !== "article"
+      ? "将口语整理成忠于原意、带 ### 小标题的正文；明显多人对话使用 **说话人**：格式。"
+      : [
+        "将文章片段整理成忠于原文、带 ### 小标题的知识笔记。",
+        "删除作者栏、编辑栏、阅读器提示、头图、关注引导和纯装饰符号。",
+        "所有 {{KNOWGROVE_IMAGE_数字}} 图片占位符必须逐个原样保留、顺序不变、单独成段，不得遗漏或新增。",
+      ].join(""),
+    '{"summary":"本段摘要","key_points":["要点1"],"mode":"article|single-speaker|multi-speaker","body_markdown":"### 小标题\\n\\n正文"}',
+    source,
+  ].join("\n\n");
+}
+
+export function browserCaptureSynthesisPrompt(
+  pageType: BrowserCapturePageType,
+  title: string,
+  partials: BrowserCaptureAIResult[],
+): string {
+  return [
+    `综合《${title}》各段结果，生成全局摘要和核心要点。不要新增原结果没有的事实。`,
+    pageType !== "article"
+      ? "mode 在 single-speaker 与 multi-speaker 中选择。"
+      : "mode 固定为 article。",
+    "body_markdown 填写“由分段整理正文合并生成”。输出必须是一个 JSON 对象。",
+    '{"summary":"2-4段全局摘要","key_points":["要点1"],"mode":"article|single-speaker|multi-speaker","body_markdown":"由分段整理正文合并生成"}',
+    JSON.stringify(partials.map((item, index) => ({
+      part: index + 1,
+      summary: item.summary,
+      key_points: item.keyPoints,
+      mode: item.mode,
+    }))),
+  ].join("\n\n");
+}
+
+function cleanText(value: string): string {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function imageSource(element: Element, baseUrl = ""): string {
+  const srcset = element.getAttribute("data-srcset")?.trim()
+    || element.getAttribute("srcset")?.trim()
+    || "";
+  const srcsetUrl = srcset.split(",")[0]?.trim().split(/\s+/)[0] ?? "";
+  const raw = element.getAttribute("data-src")?.trim()
+    || element.getAttribute("data-original")?.trim()
+    || element.getAttribute("data-lazy-src")?.trim()
+    || element.getAttribute("src")?.trim()
+    || srcsetUrl;
+  if (!raw || /^data:/i.test(raw)) return "";
+  try {
+    return baseUrl ? new URL(raw, baseUrl).toString() : raw;
+  } catch {
+    return raw;
+  }
+}
+
+function inlineMarkdown(node: Node, baseUrl = ""): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof Element)) return "";
+  const tag = node.tagName.toLowerCase();
+  if (tag === "img") {
+    const src = imageSource(node, baseUrl);
+    const alt = node.getAttribute("alt")?.trim() || "图片";
+    return src ? `![${alt}](${src})` : "";
+  }
+  const content = Array.from(node.childNodes).map((child) => inlineMarkdown(child, baseUrl)).join("");
+  if (tag === "br") return "\n";
+  if (tag === "strong" || tag === "b") return `**${content.trim()}**`;
+  if (tag === "em" || tag === "i") return `*${content.trim()}*`;
+  if (tag === "code") return `\`${content.trim()}\``;
+  if (tag === "a") {
+    const href = node.getAttribute("href")?.trim();
+    return href ? `[${content.trim() || href}](${href})` : content;
+  }
+  return content;
+}
+
+function elementMarkdown(element: Element, baseUrl = ""): string {
+  const tag = element.tagName.toLowerCase();
+  if (["script", "style", "noscript", "svg", "nav", "footer", "form", "button"].includes(tag)) return "";
+  if (/^h[1-6]$/.test(tag)) {
+    const level = Number(tag.slice(1));
+    return `${"#".repeat(Math.min(6, Math.max(3, level + 1)))} ${cleanText(inlineMarkdown(element, baseUrl))}\n\n`;
+  }
+  if (tag === "p") return `${cleanText(inlineMarkdown(element, baseUrl))}\n\n`;
+  if (tag === "li") return `- ${cleanText(inlineMarkdown(element, baseUrl))}\n`;
+  if (tag === "blockquote") {
+    return `${cleanText(inlineMarkdown(element, baseUrl)).split("\n").map((line) => `> ${line}`).join("\n")}\n\n`;
+  }
+  if (tag === "pre") return `\`\`\`\n${element.textContent?.trim() ?? ""}\n\`\`\`\n\n`;
+  if (tag === "img") {
+    const src = imageSource(element, baseUrl);
+    const alt = element.getAttribute("alt")?.trim() || "图片";
+    return src ? `![${alt}](${src})\n\n` : "";
+  }
+  return Array.from(element.children).map((child) => elementMarkdown(child, baseUrl)).join("")
+    || `${cleanText(inlineMarkdown(element, baseUrl))}\n\n`;
+}
+
+export function extractArticleFromHtml(html: string, fallbackTitle = "", baseUrl = ""): ExtractedArticle {
+  if (typeof DOMParser === "undefined") {
+    throw new Error("当前环境不支持网页正文解析");
+  }
+  const document = new DOMParser().parseFromString(html, "text/html");
+  for (const selector of [
+    "script", "style", "noscript", "svg", "nav", "footer", "form", "button",
+    "[aria-hidden='true']", ".advertisement", ".ads", ".sidebar", ".comments",
+  ]) {
+    document.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+  const title = document.querySelector("meta[property='og:title']")?.getAttribute("content")?.trim()
+    || document.querySelector("h1")?.textContent?.trim()
+    || document.title.trim()
+    || fallbackTitle.trim()
+    || "未命名网页";
+  const author = document.querySelector("meta[name='author']")?.getAttribute("content")?.trim()
+    || document.querySelector("[rel='author']")?.textContent?.trim()
+    || "";
+  const publishedAt = document.querySelector("meta[property='article:published_time']")?.getAttribute("content")?.trim()
+    || document.querySelector("time")?.getAttribute("datetime")?.trim()
+    || "";
+  const root = document.querySelector("article")
+    || document.querySelector("main")
+    || document.querySelector("[role='main']")
+    || document.body;
+  const source = cleanText(Array.from(root.children).map((child) => elementMarkdown(child, baseUrl)).join(""));
+  if (source.length < 80) throw new Error("没有提取到足够的网页正文，页面可能需要登录或使用动态加载");
+  return { title, author, publishedAt, source };
+}
+
+const ARTICLE_IMAGE_PATTERN = /!\[\[[^\]]+\]\]|!\[([^\]]*)\]\((https?:\/\/[^)\s]+(?:\?[^)\s]*)?)\)/gi;
+const IMAGE_PLACEHOLDER_PATTERN = /\{\{KNOWGROVE_IMAGE_(\d{3})\}\}/g;
+
+export interface ProtectedArticleImages {
+  source: string;
+  images: Array<{ token: string; markdown: string }>;
+}
+
+export function cleanArticleMarkdown(source: string, title = ""): string {
+  const normalizedTitle = title.trim().replace(/^#+\s*/, "");
+  let lines = String(source ?? "")
+    .replace(/\r/g, "")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.trimEnd());
+
+  const firstLines = lines.slice(0, 60);
+  let bylineEnd = -1;
+  firstLines.forEach((line, index) => {
+    if (/^(?:作者|编辑|撰文|文|采访|来源)\s*[丨|｜:：]/.test(line.trim())) bylineEnd = index;
+  });
+  if (bylineEnd >= 0) {
+    let start = bylineEnd + 1;
+    while (start < lines.length) {
+      const value = lines[start]!.trim();
+      if (
+        !value
+        || /^\*+$/.test(value)
+        || /^\**!\[[^\]]*]\([^)]+\)\**$/.test(value)
+      ) {
+        start += 1;
+        continue;
+      }
+      break;
+    }
+    lines = lines.slice(start);
+  } else {
+    while (lines.length) {
+      const value = lines[0]!.trim();
+      if (
+        !value
+        || value === normalizedTitle
+        || value.replace(/^#+\s*/, "") === normalizedTitle
+        || /^(?:原创|在小说阅读器|去阅读|微信扫一扫|点击.*阅读)/.test(value)
+        || /^\*+$/.test(value)
+      ) {
+        lines.shift();
+        continue;
+      }
+      break;
+    }
+  }
+
+  let footerStart = lines.findIndex((line, index) => {
+    if (index < Math.floor(lines.length * 0.55)) return false;
+    const value = line.trim()
+      .replace(/^#+\s*/, "")
+      .replace(/^\*+|\*+$/g, "")
+      .trim();
+    return /^(?:推荐阅读|阅读原文|知道了|微信扫一扫|扫描上方二维码|未经.+授权|上车[，,]|可独家畅览)/.test(value);
+  });
+  if (footerStart >= 0) {
+    while (footerStart > 0) {
+      const previous = lines[footerStart - 1]!.trim();
+      if (!previous || /^(?:!\[\[[^\]]+]]\s*)+$/.test(previous) || /^(?:!\[[^\]]*]\([^)]+\)\s*)+$/.test(previous)) {
+        footerStart -= 1;
+        continue;
+      }
+      break;
+    }
+    lines = lines.slice(0, footerStart);
+  }
+
+  return cleanText(lines
+    .filter((line) => {
+      const value = line.trim();
+      return !/^\*{2,}$/.test(value)
+        && value !== "//"
+        && !/^\*{0,2}\d{1,2}\s*$/.test(value)
+        && !/^(?:在小说阅读器读本章|在小说阅读器中沉浸阅读|去阅读)$/.test(value);
+    })
+    .join("\n"));
+}
+
+export function protectArticleImages(source: string): ProtectedArticleImages {
+  const images: ProtectedArticleImages["images"] = [];
+  const protectedSource = source.replace(ARTICLE_IMAGE_PATTERN, (markdown) => {
+    const token = `{{KNOWGROVE_IMAGE_${String(images.length + 1).padStart(3, "0")}}}`;
+    images.push({ token, markdown });
+    return `\n\n${token}\n\n`;
+  }).replace(/\n{3,}/g, "\n\n");
+  return { source: protectedSource.trim(), images };
+}
+
+export function restoreArticleImages(bodyMarkdown: string, images: ProtectedArticleImages["images"]): string {
+  let restored = bodyMarkdown;
+  const present = new Set(restored.match(IMAGE_PLACEHOLDER_PATTERN) ?? []);
+  for (const image of images) restored = restored.split(image.token).join(image.markdown);
+  const missing = images.filter((image) => !present.has(image.token));
+  if (missing.length) {
+    restored = [
+      restored.trim(),
+      "### 正文图片",
+      missing.map((image) => image.markdown).join("\n\n"),
+    ].filter(Boolean).join("\n\n");
+  }
+  return restored.replace(IMAGE_PLACEHOLDER_PATTERN, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function parseWebVtt(vtt: string): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const rawLine of vtt.replace(/\r\n/g, "\n").split("\n")) {
+    const line = rawLine
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .trim();
+    if (!line || /^WEBVTT/.test(line) || /-->/.test(line) || /^\d+$/.test(line) || /^NOTE\b/.test(line)) continue;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return cleanText(lines.join("\n"));
+}
+
+export function safeCaptureFileName(value: string): string {
+  const normalized = value
+    .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+  return normalized || "未命名内容";
+}
+
+export function captureDatePrefix(value: unknown, fallbackTime?: number): string {
+  const raw = String(value ?? "").trim();
+  const dateOnly = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (dateOnly) {
+    return `${dateOnly[1]}-${dateOnly[2]!.padStart(2, "0")}-${dateOnly[3]!.padStart(2, "0")}`;
+  }
+  const fallback = typeof fallbackTime === "number" && Number.isFinite(fallbackTime)
+    ? fallbackTime
+    : Date.now();
+  const parsed = raw ? new Date(raw) : new Date(fallback);
+  const date = Number.isNaN(parsed.getTime())
+    ? new Date(fallback)
+    : parsed;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+export function datedArticleTitle(title: string, datePrefix: string): string {
+  const cleanTitle = safeCaptureFileName(title).replace(/^\d{4}-\d{2}-\d{2}-/, "");
+  return `${datePrefix}-${cleanTitle}`;
+}
+
+export function articleCaptureTitle(
+  title: string,
+  datePrefix: string,
+  prefixWithDate: boolean,
+): string {
+  return prefixWithDate
+    ? datedArticleTitle(title, datePrefix)
+    : safeCaptureFileName(title);
+}
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+export function buildRawCaptureNote(input: {
+  pageType: BrowserCapturePageType;
+  title: string;
+  fileName?: string;
+  url: string;
+  source: string;
+  author?: string;
+  publishedAt?: string;
+  capturedAt: string;
+  statusProperty: string;
+  readingStatus: string;
+  mediaPath?: string;
+}): string {
+  const transcriptHeading = input.pageType === "article" ? "原文" : "完整逐字稿";
+  const contentType = input.pageType === "video"
+    ? "视频"
+    : input.pageType === "audio"
+      ? "音频"
+      : "网页文章";
+  return [
+    "---",
+    ...(input.fileName ? [`文件名: ${yamlString(input.fileName)}`] : []),
+    `标题: ${yamlString(input.title)}`,
+    `来源: ${yamlString(input.url)}`,
+    `内容类型: ${yamlString(contentType)}`,
+    `采集时间: ${yamlString(input.capturedAt)}`,
+    ...(input.author ? [`作者: ${yamlString(input.author)}`] : []),
+    ...(input.publishedAt ? [`发布时间: ${yamlString(input.publishedAt)}`] : []),
+    `${input.statusProperty}: ${yamlString(input.readingStatus)}`,
+    "KnowGrove采集状态: \"处理中\"",
+    "---",
+    "",
+    `# ${input.title}`,
+    "",
+    ...(input.mediaPath
+      ? ["## 原始音频", "", `![[${input.mediaPath}]]`, ""]
+      : []),
+    `## ${transcriptHeading}`,
+    "",
+    input.source.trim(),
+    "",
+  ].join("\n");
+}
+
+export function buildCaptureFailureNote(input: {
+  pageType: BrowserCapturePageType;
+  title: string;
+  url: string;
+  capturedAt: string;
+  error: string;
+}): string {
+  const contentType = input.pageType === "video"
+    ? "视频"
+    : input.pageType === "audio"
+      ? "音频"
+      : "网页文章";
+  return [
+    "---",
+    `标题: ${yamlString(input.title)}`,
+    `来源: ${yamlString(input.url)}`,
+    `内容类型: ${yamlString(contentType)}`,
+    `采集时间: ${yamlString(input.capturedAt)}`,
+    "KnowGrove采集状态: \"部分完成\"",
+    "---",
+    "",
+    `# ${input.title}`,
+    "",
+    "> 来源链接已经保存，但正文提取没有完成。重新打开来源页面后，可以再次点击知流重试。",
+    "",
+    "## 处理状态",
+    "",
+    `- 错误：${input.error.replace(/\s+/g, " ").trim() || "未知错误"}`,
+    "",
+    "## 来源",
+    "",
+    input.url,
+    "",
+  ].join("\n");
+}
+
+export function buildEnhancedCaptureNote(
+  rawNote: string,
+  pageType: BrowserCapturePageType,
+  result: BrowserCaptureAIResult,
+): string {
+  const frontmatter = rawNote.match(/^---\n[\s\S]*?\n---\n?/)?.[0]?.trim() ?? "";
+  const completedFrontmatter = frontmatter
+    ? frontmatter.replace(/KnowGrove采集状态:\s*["']?处理中["']?/, "KnowGrove采集状态: \"已完成\"")
+    : "";
+  const title = rawNote.match(/^#\s+(.+)$/m)?.[1]?.trim() || "未命名内容";
+  const sourceHeading = pageType === "article" ? "原文" : "完整逐字稿";
+  const sourceMatch = rawNote.match(new RegExp(`^##\\s+${sourceHeading}\\s*$([\\s\\S]*)`, "m"));
+  const source = sourceMatch?.[1]?.trim() ?? "";
+  const bodyHeading = pageType !== "article"
+    ? result.mode === "multi-speaker"
+      ? "对话记录"
+      : pageType === "audio" ? "音频正文" : "视频正文"
+    : "整理正文";
+  const mediaSection = rawNote.match(/^##\s+原始音频\s*$[\s\S]*?(?=^##\s+|\s*$)/m)?.[0]?.trim() ?? "";
+  return [
+    completedFrontmatter,
+    "",
+    `# ${title}`,
+    "",
+    "## 内容摘要",
+    "",
+    result.summary,
+    "",
+    "## 核心要点",
+    "",
+    result.keyPoints.map((point) => `- ${point.replace(/^[-*]\s+/, "")}`).join("\n"),
+    "",
+    `## ${bodyHeading}`,
+    "",
+    result.bodyMarkdown,
+    "",
+    ...(mediaSection ? [mediaSection, ""] : []),
+    `## ${sourceHeading}`,
+    "",
+    source,
+    "",
+  ].join("\n").replace(/\n{3,}/g, "\n\n");
+}

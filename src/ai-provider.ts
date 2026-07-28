@@ -7,9 +7,9 @@ import {
   providerModelOptions,
 } from "./ai-provider-utils";
 
-export { providerModelOptions } from "./ai-provider-utils";
+export { automaticAIContentCharacterLimit, providerModelOptions } from "./ai-provider-utils";
 
-interface CommandResult {
+export interface LocalCommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -18,6 +18,12 @@ interface CommandResult {
 const MAX_PROVIDER_OUTPUT = 2_000_000;
 type CLIProviderId = Extract<AIProviderId,
   "codex-cli" | "claude-cli" | "antigravity-cli" | "qoder-cli" | "kimi-cli" | "minimax-cli" | "glm-cli" | "codebuddy-cli" | "workbuddy-cli">;
+
+export interface AIProviderDetectionOptions {
+  secretStorageAvailable: boolean;
+  anthropicApiKey?: string;
+  openAICompatibleApiKey?: string;
+}
 
 const CLI_EXECUTABLES: Record<CLIProviderId, string[]> = {
   "codex-cli": ["codex"],
@@ -65,12 +71,12 @@ export function providerName(provider: AIProviderId): string {
   }[provider];
 }
 
-async function runCommand(
+export async function runLocalCommand(
   executable: string,
   args: string[],
   input: string,
   timeoutSeconds: number,
-): Promise<CommandResult> {
+): Promise<LocalCommandResult> {
   if (!Platform.isDesktopApp) throw new Error("CLI 模型只支持 Obsidian 桌面版");
   const { spawn } = require("node:child_process") as typeof import("node:child_process");
   const { tmpdir } = require("node:os") as typeof import("node:os");
@@ -82,7 +88,7 @@ async function runCommand(
   const pathEntries = [executableDirectory, "/opt/homebrew/bin", "/usr/local/bin", process.env.PATH]
     .filter(Boolean);
   try {
-    return await new Promise<CommandResult>((resolve, reject) => {
+    return await new Promise<LocalCommandResult>((resolve, reject) => {
       const child = spawn(executable, args, {
         cwd: workingDirectory,
         env: { ...process.env, PATH: Array.from(new Set(pathEntries)).join(":") },
@@ -148,14 +154,16 @@ async function detectExecutable(
   ].filter(Boolean)));
   for (const candidate of candidates) {
     try {
-      const result = await runCommand(candidate, ["--version"], "", 5);
+      const result = await runLocalCommand(candidate, ["--version"], "", 5);
       if (result.exitCode !== 0) continue;
       const version = (result.stdout || result.stderr).trim().split(/\r?\n/)[0]?.trim();
       const models = await detectCLIModels(id, candidate);
+      const readiness = await detectCLIReadiness(id, candidate);
       return {
         id,
         name: providerName(id),
-        available: true,
+        available: readiness.available,
+        installed: true,
         version,
         executablePath: candidate,
         configuredModel: id === "codex-cli"
@@ -167,20 +175,74 @@ async function detectExecutable(
         supportsModelOverride: !["minimax-cli", "workbuddy-cli"].includes(id),
         detail: id === "workbuddy-cli"
           ? `${version || "已检测"} · ${candidate}；暂未发现稳定的公开非交互文本调用协议，因此不会用于属性生成`
-          : id === "glm-cli"
-            ? `${version || "已检测"} · ${candidate}；使用 zai/glm 兼容 CLI，建议先测试模型`
-          : `${version || "已检测"} · ${candidate}`,
+          : !readiness.available
+            ? `${version || "已检测"} · ${candidate}；${readiness.detail}`
+            : id === "glm-cli"
+              ? `${version || "已检测"} · ${candidate}；使用 zai/glm 兼容 CLI，建议先测试模型`
+            : `${version || "已检测"} · ${candidate}${readiness.detail ? `；${readiness.detail}` : ""}`,
       };
     } catch {
       // Try the next well-known path.
+    }
+  }
+  if (id === "workbuddy-cli") {
+    const { access } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const appCandidates = [
+      "/Applications/WorkBuddy.app",
+      join(homedir(), "Applications", "WorkBuddy.app"),
+    ];
+    for (const appPath of appCandidates) {
+      try {
+        await access(appPath);
+        return {
+          id,
+          name: providerName(id),
+          available: false,
+          installed: true,
+          detail: `已安装 WorkBuddy 客户端（${appPath}），但没有检测到可供插件调用的 workbuddy CLI`,
+        };
+      } catch {
+        // Try the next application location.
+      }
     }
   }
   return {
     id,
     name: providerName(id),
     available: false,
+    installed: false,
     detail: `${executableName} 命令未检测到`,
   };
+}
+
+async function detectCLIReadiness(
+  id: CLIProviderId,
+  executable: string,
+): Promise<{ available: boolean; detail?: string }> {
+  if (id === "workbuddy-cli") {
+    return { available: false, detail: "没有稳定的非交互调用协议" };
+  }
+  if (id === "minimax-cli") {
+    try {
+      const result = await runLocalCommand(
+        executable,
+        ["auth", "status", "--output", "json", "--non-interactive"],
+        "",
+        8,
+      );
+      if (result.exitCode !== 0) {
+        return { available: false, detail: "尚未登录 MiniMax CLI" };
+      }
+      const parsed = JSON.parse(result.stdout) as { method?: unknown; source?: unknown };
+      if (typeof parsed.method !== "string" || !parsed.method.trim()) {
+        return { available: false, detail: "MiniMax CLI 没有有效认证信息" };
+      }
+      return { available: true, detail: "认证已就绪" };
+    } catch {
+      return { available: false, detail: "无法确认 MiniMax CLI 的登录状态" };
+    }
+  }
+  return { available: true };
 }
 
 async function detectCLIModels(id: CLIProviderId, executable: string): Promise<string[]> {
@@ -191,7 +253,7 @@ async function detectCLIModels(id: CLIProviderId, executable: string): Promise<s
         : [];
   if (!args.length) return [];
   try {
-    const result = await runCommand(executable, args, "", 12);
+    const result = await runLocalCommand(executable, args, "", 12);
     if (result.exitCode !== 0) return [];
     if (id === "kimi-cli") {
       const parsed = JSON.parse(result.stdout) as { models?: Record<string, unknown> };
@@ -229,9 +291,123 @@ async function readQoderConfiguredModel(): Promise<string | undefined> {
   }
 }
 
+async function requestWithTimeout(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMilliseconds = 4_000,
+): Promise<number> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error("连接超时")), timeoutMilliseconds);
+    });
+    const response = await Promise.race([
+      requestUrl({ url, method: "GET", headers }),
+      timeout,
+    ]);
+    return response.status;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function modelListEndpoint(endpoint: string, fallback: string): string {
+  const base = (endpoint.trim() || fallback).replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(base)) return base.replace(/\/chat\/completions$/i, "/models");
+  if (/\/messages$/i.test(base)) return base.replace(/\/messages$/i, "/models");
+  return /\/models$/i.test(base) ? base : `${base}/models`;
+}
+
+async function detectAnthropicAPI(
+  settings: AIPropertySettings,
+  options: AIProviderDetectionOptions,
+): Promise<AIProviderAvailability> {
+  const base = {
+    id: "anthropic-api" as const,
+    name: providerName("anthropic-api"),
+    installed: false,
+  };
+  if (!options.secretStorageAvailable) {
+    return { ...base, available: false, configured: false, detail: "当前 Obsidian 版本不支持安全密钥存储" };
+  }
+  if (settings.provider !== "anthropic-api") {
+    return { ...base, available: false, configured: false, detail: "尚未选择并配置 Anthropic API" };
+  }
+  if (!options.anthropicApiKey) {
+    return { ...base, available: false, configured: false, detail: "尚未保存 Anthropic API Key" };
+  }
+  if (!configuredModel(settings)) {
+    return { ...base, available: false, configured: false, detail: "尚未选择 Anthropic 模型" };
+  }
+  try {
+    const status = await requestWithTimeout(
+      modelListEndpoint(settings.endpoint, "https://api.anthropic.com/v1"),
+      {
+        "x-api-key": options.anthropicApiKey,
+        "anthropic-version": "2023-06-01",
+      },
+    );
+    const available = status >= 200 && status < 300;
+    return {
+      ...base,
+      available,
+      configured: true,
+      detail: available ? "密钥与 Anthropic 接口连接正常" : `Anthropic 接口返回 HTTP ${status}`,
+    };
+  } catch (error) {
+    return {
+      ...base,
+      available: false,
+      configured: true,
+      detail: `Anthropic 接口不可用：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+async function detectOpenAICompatibleAPI(
+  settings: AIPropertySettings,
+  options: AIProviderDetectionOptions,
+): Promise<AIProviderAvailability> {
+  const base = {
+    id: "openai-compatible" as const,
+    name: providerName("openai-compatible"),
+    installed: false,
+  };
+  if (settings.provider !== "openai-compatible") {
+    return { ...base, available: false, configured: false, detail: "尚未选择并配置 OpenAI 兼容接口" };
+  }
+  if (!configuredModel(settings)) {
+    return { ...base, available: false, configured: false, detail: "尚未选择接口模型" };
+  }
+  const headers: Record<string, string> = {};
+  if (options.openAICompatibleApiKey) {
+    headers.Authorization = `Bearer ${options.openAICompatibleApiKey}`;
+  }
+  try {
+    const status = await requestWithTimeout(
+      modelListEndpoint(settings.endpoint, "http://127.0.0.1:11434/v1"),
+      headers,
+    );
+    const available = status >= 200 && status < 300;
+    return {
+      ...base,
+      available,
+      configured: true,
+      detail: available ? "兼容接口连接正常" : `兼容接口返回 HTTP ${status}`,
+    };
+  } catch (error) {
+    return {
+      ...base,
+      available: false,
+      configured: true,
+      detail: `兼容接口不可用：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 export async function detectAIProviders(
   settings: AIPropertySettings,
-  secretStorageAvailable: boolean,
+  options: AIProviderDetectionOptions,
 ): Promise<AIProviderAvailability[]> {
   const cli = Platform.isDesktopApp
     ? await Promise.all([
@@ -256,20 +432,12 @@ export async function detectAIProviders(
       { id: "codebuddy-cli" as const, name: providerName("codebuddy-cli"), available: false, detail: "仅桌面版可用" },
       { id: "workbuddy-cli" as const, name: providerName("workbuddy-cli"), available: false, detail: "仅桌面版可用" },
     ];
+  const anthropic = await detectAnthropicAPI(settings, options);
+  const openAICompatible = await detectOpenAICompatibleAPI(settings, options);
   return [
     ...cli,
-    {
-      id: "anthropic-api",
-      name: providerName("anthropic-api"),
-      available: secretStorageAvailable,
-      detail: secretStorageAvailable ? "可使用 Obsidian 安全密钥存储" : "需要 Obsidian 1.11.4 或更高版本",
-    },
-    {
-      id: "openai-compatible",
-      name: providerName("openai-compatible"),
-      available: true,
-      detail: "支持 Ollama、LM Studio 和其他 OpenAI 兼容服务",
-    },
+    anthropic,
+    openAICompatible,
   ];
 }
 
@@ -305,7 +473,7 @@ async function runCodex(settings: AIPropertySettings, prompt: string, executable
   ];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push("-");
-  const result = await runCommand(executable, args, prompt, settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Codex CLI 退出码 ${result.exitCode}`);
   return extractCodexMessage(result.stdout);
 }
@@ -314,7 +482,7 @@ async function runClaude(settings: AIPropertySettings, prompt: string, executabl
   const executable = settings.executablePath.trim() || executablePath || "claude";
   const args = ["-p", "--output-format", "json"];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  const result = await runCommand(executable, args, prompt, settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Claude Code CLI 退出码 ${result.exitCode}`);
   try {
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -328,7 +496,7 @@ async function runClaude(settings: AIPropertySettings, prompt: string, executabl
 async function runAntigravity(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "agy";
   const args = buildAntigravityArguments(configuredModel(settings), prompt);
-  const result = await runCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) {
     throw new Error(formatCLIProviderError("antigravity-cli", `${result.stderr}\n${result.stdout}`, `Antigravity CLI 退出码 ${result.exitCode}`));
   }
@@ -342,7 +510,7 @@ async function runQoder(settings: AIPropertySettings, prompt: string, executable
   const args = ["--print", "--permission-mode", "dont_ask", "--tools", ""];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push(prompt);
-  const result = await runCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) {
     throw new Error(formatCLIProviderError("qoder-cli", `${result.stderr}\n${result.stdout}`, `Qoder CLI 退出码 ${result.exitCode}`));
   }
@@ -354,7 +522,7 @@ async function runKimi(settings: AIPropertySettings, prompt: string, executableP
   const executable = settings.executablePath.trim() || executablePath || "kimi";
   const args = ["--plan", "--prompt", prompt];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  const result = await runCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Kimi Code CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("Kimi Code CLI 没有返回文本结果");
   return result.stdout;
@@ -362,7 +530,7 @@ async function runKimi(settings: AIPropertySettings, prompt: string, executableP
 
 async function runMiniMax(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "mmx";
-  const result = await runCommand(executable, ["text", "chat", "--message", prompt], "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, ["text", "chat", "--message", prompt], "", settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `MiniMax CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("MiniMax CLI 没有返回文本结果");
   return result.stdout;
@@ -371,7 +539,7 @@ async function runMiniMax(settings: AIPropertySettings, prompt: string, executab
 async function runGLM(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "zai";
   const args = configuredModel(settings) ? ["--model", configuredModel(settings), prompt] : [prompt];
-  const result = await runCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `GLM CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("GLM CLI 没有返回文本结果");
   return result.stdout;
@@ -382,7 +550,7 @@ async function runCodeBuddy(settings: AIPropertySettings, prompt: string, execut
   const args = ["--print", "--permission-mode", "plan", "--tools", "", "--max-turns", "1"];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push(prompt);
-  const result = await runCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `CodeBuddy CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("CodeBuddy CLI 没有返回文本结果");
   return result.stdout;

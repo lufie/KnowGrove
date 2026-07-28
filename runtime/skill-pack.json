@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.2",
+  "minimumPluginVersion": "2.5.0",
+  "skills": {
+    "article": {
+      "id": "knowgrove.article.v1",
+      "purpose": "将网页正文整理为可追溯的 Obsidian 输入资料",
+      "prompt": "只根据提供的网页正文整理，不补写正文中不存在的事实。删除正文开始前的作者栏、编辑栏、阅读器提示、头图和装饰符号，删除正文末尾的关注引导、二维码、推荐阅读与转载声明。保留正文图片占位符的原始顺序，不得遗漏或新增。保留作者的关键论证、数据限定和原始语义，输出适合继续阅读与研究的中文 Markdown。",
+      "output": ["summary", "key_points", "body_markdown"]
+    },
+    "video": {
+      "id": "knowgrove.video.v1",
+      "purpose": "基于字幕或逐字稿整理视频内容，不补写来源中不存在的事实",
+      "prompt": "把字幕视为唯一证据。区分讲述、对话和引用，删除口头重复但不改变结论；无法确认的说话人不要猜姓名。",
+      "output": ["summary", "key_points", "mode", "body_markdown"]
+    },
+    "audio": {
+      "id": "knowgrove.audio.v1",
+      "purpose": "保留完整逐字稿，同时生成摘要、要点和可读的对话记录",
+      "prompt": "基于完整逐字稿整理。对话角色不确定时使用中性编号，保留决定、分歧、行动项与上下文，不把推测写成事实。",
+      "output": ["summary", "key_points", "mode", "body_markdown"]
+    }
+  }
+}

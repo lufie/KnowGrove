@@ -1,0 +1,152 @@
+name: KnowGrove runtime release
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_version:
+        description: Runtime version
+        required: true
+        default: 1.0.0
+      release_base_url:
+        description: Primary release attachment base URL
+        required: true
+        default: https://github.com/lufie/KnowGrove-runtime/releases/download/runtime-v1.0.0
+      fallback_base_url:
+        description: Optional fallback release attachment base URL
+        required: false
+        default: ""
+      release_repository:
+        description: Public GitHub repository that stores runtime assets
+        required: true
+        default: lufie/KnowGrove-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            os: macos-14
+            ytdlp_asset: yt-dlp_macos
+          - platform: darwin-x64
+            os: macos-15-intel
+            ytdlp_asset: yt-dlp_macos
+          - platform: win32-x64
+            os: windows-2025
+            ytdlp_asset: yt-dlp.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned FFmpeg binaries
+        shell: bash
+        run: npm install --no-save ffmpeg-static@5.3.0 @derhuerst/ffprobe-static@5.3.0
+      - name: Build whisper.cpp
+        shell: bash
+        run: |
+          git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git .runtime-whisper
+          cmake -S .runtime-whisper -B .runtime-whisper/build \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_SERVER=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build .runtime-whisper/build --config Release --parallel
+      - name: Download official yt-dlp binary
+        shell: bash
+        run: |
+          mkdir -p .runtime-input
+          curl --fail --location \
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${{ matrix.ytdlp_asset }}" \
+            --output ".runtime-input/${{ matrix.ytdlp_asset }}"
+      - name: Locate and stage runtime
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'); fs.writeFileSync('.runtime-paths.json', JSON.stringify({ffmpeg:require('ffmpeg-static'),ffprobe:require('@derhuerst/ffprobe-static').path}))"
+          export KNOWGROVE_FFMPEG_PATH="$(node -p "require('./.runtime-paths.json').ffmpeg")"
+          export KNOWGROVE_FFPROBE_PATH="$(node -p "require('./.runtime-paths.json').ffprobe")"
+          export KNOWGROVE_YTDLP_PATH="$(node -p "require('path').resolve('.runtime-input/${{ matrix.ytdlp_asset }}')")"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            export KNOWGROVE_WHISPER_PATH="$(node -p "require('path').resolve('.runtime-whisper/build/bin/Release/whisper-cli.exe')")"
+          else
+            export KNOWGROVE_WHISPER_PATH="$(node -p "require('path').resolve('.runtime-whisper/build/bin/whisper-cli')")"
+          fi
+          node scripts/stage-runtime.mjs --platform "${{ matrix.platform }}" --output runtime-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.platform }}
+          path: runtime-dist/${{ matrix.platform }}
+          if-no-files-found: error
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-*
+          path: runtime-dist
+      - name: Normalize downloaded artifact directories
+        run: |
+          for platform in darwin-arm64 darwin-x64 win32-x64; do
+            test -d "runtime-dist/runtime-$platform" || exit 1
+            mv "runtime-dist/runtime-$platform" "runtime-dist/$platform"
+          done
+      - name: Stage shared components
+        run: |
+          mkdir -p runtime-dist/shared
+          cp runtime/skill-pack.json runtime-dist/shared/skill-pack.json
+          cp runtime/THIRD_PARTY_NOTICES.md runtime-dist/shared/THIRD_PARTY_NOTICES.md
+          curl --fail --location \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin \
+            --output runtime-dist/shared/ggml-small.bin
+      - name: Build signed manifest
+        env:
+          KNOWGROVE_RUNTIME_VERSION: ${{ inputs.runtime_version }}
+          KNOWGROVE_MINIMUM_PLUGIN_VERSION: 2.5.0
+          KNOWGROVE_RELEASE_BASE_URL: ${{ inputs.release_base_url }}
+          KNOWGROVE_FALLBACK_BASE_URL: ${{ inputs.fallback_base_url }}
+          KNOWGROVE_RUNTIME_SIGNING_KEY: ${{ secrets.KNOWGROVE_RUNTIME_SIGNING_KEY }}
+        run: node scripts/build-runtime-manifest.mjs
+      - name: Flatten release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          version="${{ inputs.runtime_version }}"
+          for platform in darwin-arm64 darwin-x64 win32-x64; do
+            for file in runtime-dist/$platform/bin/*; do
+              cp "$file" "release-assets/knowgrove-runtime-$version-$platform-$(basename "$file")"
+            done
+          done
+          for file in runtime-dist/shared/*; do
+            cp "$file" "release-assets/knowgrove-runtime-$version-shared-$(basename "$file")"
+          done
+          cp runtime-dist/runtime-manifest.json release-assets/runtime-manifest.json
+          sha256sum release-assets/* > release-assets/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knowgrove-runtime-${{ inputs.runtime_version }}
+          path: release-assets
+          if-no-files-found: error
+      - name: Publish public GitHub Runtime release
+        env:
+          GH_TOKEN: ${{ secrets.KNOWGROVE_RUNTIME_RELEASE_TOKEN }}
+          RELEASE_REPOSITORY: ${{ inputs.release_repository }}
+          RUNTIME_VERSION: ${{ inputs.runtime_version }}
+        shell: bash
+        run: |
+          tag="runtime-v${RUNTIME_VERSION}"
+          if ! gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$RELEASE_REPOSITORY" \
+              --title "KnowGrove Runtime ${RUNTIME_VERSION}" \
+              --notes "Signed cross-platform runtime for KnowGrove 2.5.0 and later."
+          fi
+          gh release upload "$tag" release-assets/* \
+            --repo "$RELEASE_REPOSITORY" \
+            --clobber

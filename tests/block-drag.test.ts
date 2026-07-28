@@ -13,6 +13,13 @@ test("block reference dragging is enabled by default", () => {
   assert.equal(createDefaultSettings().enableBlockDragReferences, true);
 });
 
+test("comments are enabled by default and use the fixed comment section", () => {
+  const settings = createDefaultSettings();
+  assert.equal(settings.enableComments, true);
+  assert.equal(settings.defaultTargetFolder, "");
+  assert.equal(settings.defaultTargetHeading, "评论");
+});
+
 test("expands a partial paragraph selection to its complete Markdown block", () => {
   const content = "# 标题\n\n第一行内容\n仍属于同一个段落\n\n下一段";
   const start = content.indexOf("内容");

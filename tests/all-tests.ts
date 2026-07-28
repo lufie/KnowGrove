@@ -10,3 +10,5 @@ import "./research-output.test";
 import "./research-sources.test";
 import "./block-drag.test";
 import "./brand-migration.test";
+import "./browser-capture.test";
+import "./runtime-core.test";

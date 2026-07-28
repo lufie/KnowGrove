@@ -1,4 +1,14 @@
-import { App, Notice, PluginSettingTab, Setting, normalizePath } from "obsidian";
+import {
+  App,
+  FuzzySuggestModal,
+  Modal,
+  Notice,
+  Platform,
+  PluginSettingTab,
+  Setting,
+  TFolder,
+  normalizePath,
+} from "obsidian";
 import type KnowGrovePlugin from "./main";
 import { isCLIProvider, providerModelOptions } from "./ai-provider";
 import { domainPaths, PDSA_STAGES } from "./property-taxonomy";
@@ -6,6 +16,7 @@ import {
   type AIProviderAvailability,
   type AIProviderId,
 } from "./types";
+import type { KnowGroveRuntimeAudit } from "./runtime-core";
 
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
@@ -22,7 +33,33 @@ function cliExecutablePlaceholder(provider: AIProviderId): string {
   return placeholders[provider] ?? "CLI 可执行文件路径";
 }
 
+class VaultFolderPickerModal extends FuzzySuggestModal<TFolder> {
+  constructor(
+    app: App,
+    private readonly onChoose: (folder: TFolder) => void,
+  ) {
+    super(app);
+    this.setPlaceholder("搜索 Vault 中的文件夹…");
+  }
+
+  getItems(): TFolder[] {
+    return this.app.vault.getAllLoadedFiles()
+      .filter((item): item is TFolder => item instanceof TFolder && Boolean(item.path))
+      .sort((left, right) => left.path.localeCompare(right.path, "zh-CN"));
+  }
+
+  getItemText(folder: TFolder): string {
+    return folder.path;
+  }
+
+  onChooseItem(folder: TFolder): void {
+    this.onChoose(folder);
+  }
+}
+
 export class KnowGroveSettingTab extends PluginSettingTab {
+  private readonly openModules = new Set<string>();
+
   constructor(app: App, private readonly plugin: KnowGrovePlugin) {
     super(app, plugin);
   }
@@ -34,17 +71,229 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "KnowGrove · 知识森林" });
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "让散落资料沿着领域、主题、证据与输出持续生长。阅读状态保存在笔记属性中，评论与引用关系随 Vault 数据同步。",
+      text: "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。",
     });
 
-    this.renderPropertyWorkflowGuide(containerEl);
-    this.renderAIProperties(containerEl);
-    this.renderCreationStudio(containerEl);
-    this.renderPropertySystem(containerEl);
+    const aiModule = this.renderSettingsModule(
+      containerEl,
+      "ai",
+      "01",
+      "大模型配置",
+      "选择本地 CLI 或 API、模型与连接方式，供属性整理、内容解析和知识创作统一使用。",
+    );
+    this.renderAIProperties(aiModule);
 
-    containerEl.createEl("h3", { text: "阅读列表" });
+    const readItLaterModule = this.renderSettingsModule(
+      containerEl,
+      "read-it-later",
+      "02",
+      "Read It Later",
+      "配置浏览器扩展、手机收集内容，以及文章、视频、语音的自动整理和阅读状态。",
+    );
+    this.renderReadItLaterSettings(readItLaterModule);
+    this.renderReadItLaterAdvancedSettings(readItLaterModule);
+
+    const propertyModule = this.renderSettingsModule(
+      containerEl,
+      "property",
+      "03",
+      "属性管理",
+      "让 AI 建议分类树、补齐语义属性，并统一检查知识库中的属性规范。",
+    );
+    this.renderPropertyWorkflowGuide(propertyModule);
+    this.renderAIPropertyAutomation(propertyModule);
+    this.renderPropertySystem(propertyModule);
+
+    const workbenchModule = this.renderSettingsModule(
+      containerEl,
+      "workbench",
+      "04",
+      "知识工作台",
+      "配置知识创作、渠道稿件和配图。",
+    );
+    this.renderCreationStudio(workbenchModule);
+
+    const enhancementModule = this.renderSettingsModule(
+      containerEl,
+      "enhancement",
+      "05",
+      "增强功能",
+      "配置可选的笔记整理与效率增强能力。",
+    );
+    this.renderEnhancementSettings(enhancementModule);
+  }
+
+  private renderSettingsModule(
+    containerEl: HTMLElement,
+    id: string,
+    index: string,
+    title: string,
+    description: string,
+  ): HTMLElement {
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-module" });
+    details.open = this.openModules.has(id);
+    const summary = details.createEl("summary", { cls: "knowgrove-settings-module-summary" });
+    summary.createSpan({ cls: "knowgrove-settings-module-index", text: index });
+    const copy = summary.createDiv("knowgrove-settings-module-copy");
+    copy.createEl("strong", { text: title });
+    copy.createEl("span", { text: description });
+    details.addEventListener("toggle", () => {
+      if (details.open) this.openModules.add(id);
+      else this.openModules.delete(id);
+    });
+    return details.createDiv("knowgrove-settings-module-content");
+  }
+
+  private renderReadItLaterSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings;
+    const capture = settings.browserCapture;
 
     new Setting(containerEl)
+      .setName("收集箱路径")
+      .setDesc("唯一需要确认的路径。阅读列表、浏览器剪藏、手机端剪藏和自动解析统一使用这个文件夹。")
+      .addText((text) => text
+        .setPlaceholder("阅读列表")
+        .setValue(settings.trackedFolder)
+        .onChange(async (value) => {
+          const next = value.trim()
+            ? normalizePath(value.trim()).replace(/^\/+|\/+$/g, "")
+            : "阅读列表";
+          settings.trackedFolder = next;
+          capture.inboxFolder = "";
+          capture.watchFolder = "";
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+        }));
+
+    new Setting(containerEl)
+      .setName("浏览器授权")
+      .setDesc("仅在更换电脑或需要断开已配对的浏览器扩展时使用。")
+      .addButton((button) => button
+        .setButtonText("撤销授权")
+        .setDisabled(!capture.enabled || !Platform.isDesktopApp)
+        .onClick(async () => {
+          await this.plugin.resetBrowserPairing();
+          new Notice("浏览器授权已撤销。再次打开扩展即可重新配对。", 6000);
+        }));
+
+    new Setting(containerEl)
+      .setName("自动整理新内容")
+      .setDesc("新文档自动进入未读列表；对于只有链接或语音的轻量笔记，会自动提取、转录并由 AI 整理。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.autoMarkNewNotes)
+        .onChange(async (value) => {
+          await this.setAutoProcessNewNotes(value);
+        }));
+
+    this.renderRuntimeEnvironment(containerEl);
+
+    new Setting(containerEl)
+      .setName("读到文末自动标记已读")
+      .setDesc("在文末停留后自动完成；编辑文字时会暂停，避免误判。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.autoMarkFinishedAtEnd)
+        .onChange(async (value) => {
+          settings.autoMarkFinishedAtEnd = value;
+          this.plugin.resetAutoCompletionTracking();
+          await this.plugin.savePluginData();
+        }));
+
+    new Setting(containerEl)
+      .setName("文章标题添加日期")
+      .setDesc("默认生成“YYYY-MM-DD-文章名”，方便按文件名排序；不会批量修改已有笔记。")
+      .addToggle((toggle) => toggle
+        .setValue(capture.prefixArticleTitleWithDate)
+        .onChange(async (value) => {
+          capture.prefixArticleTitleWithDate = value;
+          await this.plugin.savePluginData();
+        }));
+
+  }
+
+  private renderReadItLaterAdvancedSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings;
+    const capture = settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "阅读习惯设置" });
+    const content = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(content)
+      .setName("阅读状态属性")
+      .setDesc("只有已有知识库使用不同字段时才需要修改。")
+      .addText((text) => text
+        .setValue(settings.statusProperty)
+        .onChange(async (value) => {
+          if (!value.trim()) return;
+          settings.statusProperty = value.trim();
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+        }));
+
+    new Setting(content)
+      .setName("未读 / 已读状态值")
+      .setDesc("默认使用“在看”和“已读完”。")
+      .addText((text) => text
+        .setValue(settings.readingStatus)
+        .onChange(async (value) => {
+          if (!value.trim()) return;
+          settings.readingStatus = value.trim();
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+        }))
+      .addText((text) => text
+        .setValue(settings.finishedStatus)
+        .onChange(async (value) => {
+          if (!value.trim()) return;
+          settings.finishedStatus = value.trim();
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+        }));
+
+    new Setting(content)
+      .setName("文末停留时间")
+      .setDesc("默认 3 秒，用于避免快速滑过时误标已读。")
+      .addSlider((slider) => slider
+        .setLimits(1, 10, 1)
+        .setDynamicTooltip()
+        .setValue(settings.finishDwellSeconds)
+        .onChange(async (value) => {
+          settings.finishDwellSeconds = value;
+          this.plugin.resetAutoCompletionTracking();
+          await this.plugin.savePluginData();
+        }));
+
+    new Setting(content)
+      .setName("启用收藏")
+      .setDesc("默认开启，并使用原生 Checkbox 属性“收藏”。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.focusPropertyEnabled)
+        .onChange(async (value) => {
+          settings.focusPropertyEnabled = value;
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+        }));
+
+    if (settings.focusPropertyEnabled) {
+      new Setting(content)
+        .setName("收藏属性名")
+        .addText((text) => text
+          .setValue(settings.focusPropertyName)
+          .onChange(async (value) => {
+            if (!value.trim()) return;
+            settings.focusPropertyName = value.trim();
+            await this.plugin.savePluginData();
+            this.plugin.refreshReadingViews();
+          }));
+    }
+
+  }
+
+  private renderReadingStatusSettings(containerEl: HTMLElement): void {
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "阅读状态管理" });
+    const content = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(content)
       .setName("跟踪文件夹")
       .setDesc("相对于仓库根目录的路径。留空表示统计整个仓库。")
       .addText((text) => text
@@ -56,7 +305,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.refreshReadingViews();
         }));
 
-    new Setting(containerEl)
+    new Setting(content)
       .setName("状态属性名")
       .setDesc("写入 Markdown frontmatter 的属性名称。")
       .addText((text) => text
@@ -70,7 +319,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.refreshReadingViews();
         }));
 
-    new Setting(containerEl)
+    new Setting(content)
       .setName("在看状态值")
       .addText((text) => text
         .setValue(this.plugin.settings.readingStatus)
@@ -82,7 +331,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.refreshReadingViews();
         }));
 
-    new Setting(containerEl)
+    new Setting(content)
       .setName("已读完状态值")
       .addText((text) => text
         .setValue(this.plugin.settings.finishedStatus)
@@ -94,37 +343,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.refreshReadingViews();
         }));
 
-    containerEl.createEl("h3", { text: "手动标记" });
-
-    new Setting(containerEl)
-      .setName("重点关注")
-      .setDesc("为笔记写入一个原生 Checkbox 属性。开启后，阅读列表会显示星标，点一下即可设为或取消重点关注；重点笔记会排在列表前面。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.focusPropertyEnabled)
-        .onChange(async (value) => {
-          this.plugin.settings.focusPropertyEnabled = value;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-          this.display();
-        }));
-
-    if (this.plugin.settings.focusPropertyEnabled) {
-      new Setting(containerEl)
-        .setName("重点关注属性名")
-        .setDesc("默认“重点关注”。首次点亮星标时，插件会写入 true，Obsidian 会将它识别为可直接点选的 Checkbox。")
-        .addText((text) => text
-          .setPlaceholder("重点关注")
-          .setValue(this.plugin.settings.focusPropertyName)
-          .onChange(async (value) => {
-            const next = value.trim();
-            if (!next) return;
-            this.plugin.settings.focusPropertyName = next;
-            await this.plugin.savePluginData();
-            this.plugin.refreshReadingViews();
-          }));
-    }
-
-    new Setting(containerEl)
+    new Setting(content)
       .setName("自动接管新笔记")
       .setDesc("在跟踪文件夹中新建或导入 Markdown 笔记时，若没有阅读状态，自动设为“在看”。")
       .addToggle((toggle) => toggle
@@ -134,7 +353,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
 
-    new Setting(containerEl)
+    new Setting(content)
       .setName("读到文末自动完成")
       .setDesc("在实时阅览或阅读视图中主动滚动、点击，并在文末停留后自动切换为“已读完”。实时编辑文字时会暂停，避免误判。")
       .addToggle((toggle) => toggle
@@ -147,7 +366,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
 
     if (this.plugin.settings.autoMarkFinishedAtEnd) {
-      new Setting(containerEl)
+      new Setting(content)
         .setName("文末停留时间")
         .setDesc("到达文末后等待多久再标记完成，用于减少快速滑过导致的误判。")
         .addSlider((slider) => slider
@@ -161,22 +380,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           }));
     }
 
-    new Setting(containerEl)
-      .setName("初始化现有笔记")
-      .setDesc("仅给当前未分类的笔记补上“在看”；不会覆盖已有状态。")
-      .addButton((button) => button
-        .setButtonText("补齐未分类")
-        .onClick(async () => {
-          button.setDisabled(true).setButtonText("处理中…");
-          await this.plugin.initializeUnclassifiedNotes();
-          button.setDisabled(false).setButtonText("补齐未分类");
-        }));
+  }
 
-    containerEl.createEl("h3", { text: "属性检查" });
-
+  private renderEnhancementSettings(containerEl: HTMLElement): void {
     new Setting(containerEl)
-      .setName("处理时整理多余空行")
-      .setDesc("默认开启。待规范笔记交给 AI 处理并成功写入属性后，会同时整理正文的多余空行；YAML、代码块、数学块和注释不会改动。")
+      .setName("删除多余空行")
+      .setDesc("段落间保留一个空行，删除多余空行。")
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.cleanupBlankLinesWithPropertyCheck)
         .onChange(async (value) => {
@@ -184,10 +393,8 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
 
-    containerEl.createEl("h3", { text: "引用默认值" });
-
     new Setting(containerEl)
-      .setName("选中文字拖成块引用")
+      .setName("选中文字支持整块拖动")
       .setDesc("默认开启。选中源笔记中的文字并拖到另一篇 Markdown 后，自动引用选区所在的完整块；源内容修改后，目标笔记会同步展示。")
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.enableBlockDragReferences)
@@ -198,51 +405,367 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName("默认目标文件夹")
-      .setDesc("在引用目标搜索中优先显示这个文件夹。留空表示整个仓库。")
-      .addText((text) => text
-        .setPlaceholder("例如：卡片盒")
-        .setValue(this.plugin.settings.defaultTargetFolder)
+      .setName("启用评论")
+      .setDesc("评论后，评论内容将在目标文档末尾以“评论”为标题，在该章节进行记录。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.enableComments)
         .onChange(async (value) => {
-          this.plugin.settings.defaultTargetFolder = value.trim() ? normalizePath(value.trim()).replace(/^\/+|\/+$/g, "") : "";
+          this.plugin.settings.enableComments = value;
           await this.plugin.savePluginData();
+          this.plugin.refreshCommentFeatureUi();
+        }));
+  }
+
+  private renderBookmarkSettings(containerEl: HTMLElement): void {
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "收藏功能配置" });
+    const content = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(content)
+      .setName("启用收藏")
+      .setDesc("为外部资料写入原生 Checkbox 属性。阅读列表中的星标可直接收藏或取消收藏，已收藏内容优先显示。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.focusPropertyEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.focusPropertyEnabled = value;
+          await this.plugin.savePluginData();
+          this.plugin.refreshReadingViews();
+          this.display();
         }));
 
-    new Setting(containerEl)
-      .setName("默认插入章节")
-      .setDesc("目标笔记没有该标题时，会在文末自动创建二级标题。留空则直接追加到文末。")
-      .addText((text) => text
-        .setPlaceholder("引用与评论")
-        .setValue(this.plugin.settings.defaultTargetHeading)
+    if (this.plugin.settings.focusPropertyEnabled) {
+      new Setting(content)
+        .setName("收藏属性名")
+        .setDesc("默认“收藏”。首次点亮星标时写入 true，Obsidian 会将它识别为可直接点选的 Checkbox。")
+        .addText((text) => text
+          .setPlaceholder("收藏")
+          .setValue(this.plugin.settings.focusPropertyName)
+          .onChange(async (value) => {
+            const next = value.trim();
+            if (!next) return;
+            this.plugin.settings.focusPropertyName = next;
+            await this.plugin.savePluginData();
+            this.plugin.refreshReadingViews();
+          }));
+    }
+  }
+
+  private renderRuntimeEnvironment(containerEl: HTMLElement): void {
+    const setting = new Setting(containerEl)
+      .setName("自动整理组件配置")
+      .setDesc("正在检测自动整理组件…");
+
+    const describeAudit = (audit: KnowGroveRuntimeAudit): string => {
+      const status = (id: "article" | "video" | "audio"): string =>
+        audit.capabilities.find((capability) => capability.id === id)?.status === "ready"
+          ? "可用"
+          : "不可用";
+      return [
+        `网页文章解析${status("article")}`,
+        `视频解析${status("video")}`,
+        `语音转录${status("audio")}`,
+      ].join(" · ");
+    };
+
+    const refresh = async (): Promise<void> => {
+      setting.setDesc("正在检测自动整理组件…");
+      try {
+        setting.setDesc(describeAudit(await this.plugin.auditRuntimeEnvironment()));
+      } catch (error) {
+        setting.setDesc(`检测失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
+    setting
+      .addButton((button) => button
+        .setButtonText("检测")
+        .onClick(async () => {
+          button.setDisabled(true);
+          await refresh();
+          button.setDisabled(false);
+        }))
+      .addButton((button) => button
+        .setCta()
+        .setButtonText("自动配置")
+        .setDisabled(!Platform.isDesktopApp)
+        .onClick(async () => {
+          button.setDisabled(true).setButtonText("配置中…");
+          try {
+            await this.plugin.installRuntimeEnvironment((state) => {
+              setting.setDesc(`自动配置中：${state.message}`);
+            });
+            new Notice("自动整理组件已配置");
+            await refresh();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setting.setDesc(`自动配置失败：${message}`);
+            new Notice(`自动整理组件配置失败：${message}`, 9000);
+          } finally {
+            button.setDisabled(false).setButtonText("自动配置");
+          }
+        }));
+    void refresh();
+  }
+
+  private renderBrowserClippingSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "浏览器剪藏" });
+    const section = details.createDiv("knowgrove-settings-details-content");
+
+    const status = this.plugin.getBrowserCaptureStatus();
+    new Setting(section)
+      .setName("接收浏览器剪藏")
+      .setDesc(!Platform.isDesktopApp
+        ? "只支持 Obsidian 桌面版。移动端会忽略此设置。"
+        : status.running
+          ? `已运行：${status.address}`
+          : `未运行${status.error ? `：${status.error}` : ""}`)
+      .addToggle((toggle) => toggle
+        .setValue(settings.enabled)
+        .setDisabled(!Platform.isDesktopApp)
         .onChange(async (value) => {
-          this.plugin.settings.defaultTargetHeading = value.trim();
+          settings.enabled = value;
+          await this.plugin.savePluginData();
+          try {
+            await this.plugin.restartBrowserCaptureServer();
+          } catch (error) {
+            new Notice(`浏览器接收切换失败：${error instanceof Error ? error.message : String(error)}`);
+          }
+          this.display();
+        }))
+      .addButton((button) => button
+        .setButtonText("撤销浏览器授权")
+        .setDisabled(!settings.enabled || !Platform.isDesktopApp)
+        .onClick(async () => {
+          await this.plugin.resetBrowserPairing();
+          new Notice("浏览器授权已撤销。再次打开扩展，点击“重新连接 KnowGrove”即可配对。", 7000);
+        }));
+
+    new Setting(section)
+      .setName("浏览器剪藏存储路径")
+      .setDesc("填写相对于当前库的路径。")
+      .addText((text) => text
+        .setPlaceholder(this.plugin.settings.trackedFolder || "阅读列表")
+        .setValue(settings.inboxFolder)
+        .onChange(async (value) => {
+          settings.inboxFolder = value.trim()
+            ? normalizePath(value.trim()).replace(/^\/+|\/+$/g, "")
+            : "";
           await this.plugin.savePluginData();
         }));
   }
 
-  private renderAIProperties(containerEl: HTMLElement): void {
-    const settings = this.plugin.settings.aiProperties;
-    const section = containerEl.createDiv("knowgrove-ai-settings");
-    const header = section.createDiv("knowgrove-property-settings-heading");
-    header.createEl("h4", { text: "AI 自动属性" });
-    header.createEl("p", {
-      text: "规则负责文件名、日期和阅读状态；大模型只处理已开启的语义字段。已有属性默认保留，批量处理必须手动确认。",
-    });
+  private renderMobileClippingSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "手机端剪藏" });
+    const section = details.createDiv("knowgrove-settings-details-content");
 
     new Setting(section)
-      .setName("启用 AI 自动属性")
-      .setDesc("启用后，新阅读资料会在基础属性写入后自动生成 AI 管理字段。笔记内容会发送给所选模型。")
-      .addToggle((toggle) => toggle
-        .setValue(settings.enabled)
+      .setName("手机端剪藏文件夹")
+      .setDesc("监听手机端写入的链接或语音笔记。填写相对于当前库的路径；留空时沿用阅读状态管理的跟踪文件夹。")
+      .addText((text) => text
+        .setPlaceholder(this.plugin.settings.trackedFolder || "阅读列表")
+        .setValue(settings.watchFolder)
         .onChange(async (value) => {
-          settings.enabled = value;
+          settings.watchFolder = value.trim()
+            ? normalizePath(value.trim()).replace(/^\/+|\/+$/g, "")
+            : "";
           await this.plugin.savePluginData();
-          this.display();
+        }));
+  }
+
+  private renderCaptureParsingSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "剪藏内容解析" });
+    const section = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(section)
+      .setName("笔记自动解析")
+      .setDesc("针对剪藏笔记中的链接或语音文件进行转录和解析。启用后会在 Obsidian 启动时自动触发，也可通过左侧菜单栏手动触发。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.autoProcessLinkNotes)
+        .onChange(async (value) => {
+          settings.autoProcessLinkNotes = value;
+          await this.plugin.savePluginData();
         }));
 
+    new Setting(section)
+      .setName("文章标题添加日期前缀")
+      .setDesc("默认开启，生成“YYYY-MM-DD-文章名”，便于按文件名排序。关闭后只使用原文章名；不会批量修改已有笔记。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.prefixArticleTitleWithDate)
+        .onChange(async (value) => {
+          settings.prefixArticleTitleWithDate = value;
+          await this.plugin.savePluginData();
+        }));
+
+    const providerOptions: Array<[AIProviderId, string]> = [
+      ["codex-cli", "Codex CLI"],
+      ["claude-cli", "Claude Code CLI"],
+      ["antigravity-cli", "Antigravity CLI"],
+      ["qoder-cli", "Qoder CLI"],
+      ["kimi-cli", "Kimi Code CLI"],
+      ["minimax-cli", "MiniMax CLI"],
+      ["glm-cli", "GLM CLI"],
+      ["codebuddy-cli", "CodeBuddy CLI"],
+      ["anthropic-api", "Anthropic API"],
+      ["openai-compatible", "OpenAI 兼容接口"],
+    ];
+    const addProviderDropdown = (
+      name: string,
+      description: string,
+      current: AIProviderId,
+      save: (provider: AIProviderId) => void,
+    ): void => {
+      new Setting(section)
+        .setName(name)
+        .setDesc(description)
+        .addDropdown((dropdown) => {
+          for (const [id, label] of providerOptions) dropdown.addOption(id, label);
+          dropdown.setValue(current).onChange(async (value) => {
+            save(value as AIProviderId);
+            await this.plugin.savePluginData();
+          });
+        });
+    };
+    addProviderDropdown(
+      "网页文章引擎",
+      "网页正文提取后，使用这个引擎生成摘要、要点和整理正文。",
+      settings.articleProvider,
+      (provider) => { settings.articleProvider = provider; },
+    );
+    addProviderDropdown(
+      "视频内容引擎",
+      "字幕或 Whisper 逐字稿生成后，使用这个引擎整理。",
+      settings.videoProvider,
+      (provider) => { settings.videoProvider = provider; },
+    );
+    addProviderDropdown(
+      "语音内容引擎",
+      "Whisper 逐字稿生成后，使用这个引擎生成摘要、要点和整理正文。",
+      settings.audioProvider,
+      (provider) => { settings.audioProvider = provider; },
+    );
+
+    const toolsDetails = section.createEl("details", { cls: "knowgrove-settings-details" });
+    toolsDetails.createEl("summary", { text: "存储路径与本地解析工具" });
+    const tools = toolsDetails.createDiv("knowgrove-settings-details-content");
+    const addFolderSetting = (
+      name: string,
+      description: string,
+      value: string,
+      save: (path: string) => void,
+      placeholder: string,
+    ): void => {
+      new Setting(tools)
+        .setName(name)
+        .setDesc(description)
+        .addText((text) => text
+          .setPlaceholder(placeholder)
+          .setValue(value)
+          .onChange(async (next) => {
+            save(next.trim() ? normalizePath(next.trim()).replace(/^\/+|\/+$/g, "") : "");
+            await this.plugin.savePluginData();
+          }));
+    };
+    addFolderSetting(
+      "网页文章保存目录",
+      "留空时在原链接笔记内完成；填写后处理完成会移动到该目录。",
+      settings.articleOutputFolder,
+      (path) => { settings.articleOutputFolder = path; },
+      "例如：Home/📬输入/网页",
+    );
+    addFolderSetting(
+      "视频笔记保存目录",
+      "留空时在原链接笔记内完成。",
+      settings.videoOutputFolder,
+      (path) => { settings.videoOutputFolder = path; },
+      "例如：Home/📬输入/视频",
+    );
+    addFolderSetting(
+      "语音笔记保存目录",
+      "留空时在原链接笔记内完成。",
+      settings.audioOutputFolder,
+      (path) => { settings.audioOutputFolder = path; },
+      "例如：Home/📬输入/语音",
+    );
+    addFolderSetting(
+      "网页正文图片目录",
+      "文章正文图片会下载到 Vault，并使用 Obsidian 内部链接嵌入；头图和平台装饰图不会保留。",
+      settings.articleAssetFolder,
+      (path) => { settings.articleAssetFolder = path; },
+      "Home/📬输入/assets",
+    );
+    addFolderSetting(
+      "音视频原文件目录",
+      "语音原文件会保存在 Vault 内，并在笔记正文中使用 Obsidian 内部链接嵌入。",
+      settings.mediaFolder,
+      (path) => { settings.mediaFolder = path; },
+      "Home/📬输入/附件/音视频",
+    );
+    new Setting(tools)
+      .setName("Defuddle")
+      .setDesc("网页内置解析失败时使用；留空自动检测 defuddle。")
+      .addText((text) => text
+        .setPlaceholder("/opt/homebrew/bin/defuddle")
+        .setValue(settings.defuddlePath)
+        .onChange(async (value) => {
+          settings.defuddlePath = value.trim();
+          await this.plugin.savePluginData();
+        }));
+    new Setting(tools)
+      .setName("yt-dlp")
+      .setDesc("通常留空自动检测；用于读取字幕，以及下载公开视频或公开音频。")
+      .addText((text) => text
+        .setPlaceholder("/opt/homebrew/bin/yt-dlp")
+        .setValue(settings.videoDownloaderPath)
+        .onChange(async (value) => {
+          settings.videoDownloaderPath = value.trim();
+          await this.plugin.savePluginData();
+        }));
+    new Setting(tools)
+      .setName("FFmpeg")
+      .setDesc("通常由运行环境自动配置；用于音视频格式转换。")
+      .addText((text) => text
+        .setPlaceholder("/opt/homebrew/bin/ffmpeg")
+        .setValue(settings.ffmpegPath)
+        .onChange(async (value) => {
+          settings.ffmpegPath = value.trim();
+          await this.plugin.savePluginData();
+        }));
+    new Setting(tools)
+      .setName("Whisper")
+      .setDesc("视频没有字幕时使用；留空会自动检测 whisper 或 whisper-cli。")
+      .addText((text) => text
+        .setPlaceholder("/opt/homebrew/bin/whisper-cli")
+        .setValue(settings.whisperPath)
+        .onChange(async (value) => {
+          settings.whisperPath = value.trim();
+          await this.plugin.savePluginData();
+        }));
+    new Setting(tools)
+      .setName("Whisper 模型")
+      .setDesc("Python Whisper 可填 small；whisper.cpp 可填 small 或 GGML 模型完整路径。")
+      .addText((text) => text
+        .setPlaceholder("small")
+        .setValue(settings.whisperModel)
+        .onChange(async (value) => {
+          settings.whisperModel = value.trim() || "small";
+          await this.plugin.savePluginData();
+        }));
+    this.renderRuntimeEnvironment(section);
+  }
+
+  private renderAIProperties(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.aiProperties;
+    const section = containerEl;
+
     const providerSetting = new Setting(section)
-      .setName("模型引擎")
-      .setDesc("正在检测本机 CLI 和可用接口…")
+      .setName("模型选择")
+      .setDesc("")
       .addDropdown((dropdown) => dropdown
         .addOption("codex-cli", "Codex CLI")
         .addOption("claude-cli", "Claude Code CLI")
@@ -265,11 +788,30 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
           this.display();
         }));
+    const providerStatus = section.createDiv("knowgrove-provider-status");
+    providerStatus.createDiv({ text: "正在检查本机命令、API 配置和接口连接…" });
     const updateProviderDescription = (providers: AIProviderAvailability[]): void => {
       if (!providerSetting.settingEl.isConnected) return;
+      const available = providers.filter((provider) => provider.available).map((provider) => provider.name);
+      const installedOnly = providers
+        .filter((provider) => provider.installed && !provider.available)
+        .map((provider) => provider.name);
+      const unavailable = providers
+        .filter((provider) => !provider.available && !provider.installed)
+        .map((provider) => provider.name);
       const selected = providers.find((provider) => provider.id === settings.provider);
-      const summary = providers.map((provider) => `${provider.available ? "✓" : "○"} ${provider.name}：${provider.detail}`).join("；");
-      providerSetting.setDesc(`${summary}${selected?.configuredModel ? `；当前配置模型：${selected.configuredModel}` : ""}`);
+      providerStatus.empty();
+      providerStatus.createDiv({ text: `可调用：${available.join("、") || "暂无"}` });
+      if (installedOnly.length) {
+        providerStatus.createDiv({ text: `已安装但不可调用：${installedOnly.join("、")}` });
+      }
+      providerStatus.createDiv({ text: `待安装或配置：${unavailable.join("、") || "无"}` });
+      if (selected && !selected.available) {
+        providerStatus.createDiv({
+          cls: "knowgrove-provider-status-warning",
+          text: `当前选择不可用：${selected.detail}`,
+        });
+      }
     };
     const cached = this.plugin.getCachedAIProviders();
     if (cached) updateProviderDescription(cached);
@@ -277,20 +819,8 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       updateProviderDescription(providers);
       this.display();
     }).catch((error) => {
-      providerSetting.setDesc(`模型检测失败：${error instanceof Error ? error.message : String(error)}`);
+      providerStatus.setText(`模型检测失败：${error instanceof Error ? error.message : String(error)}`);
     });
-
-    if (settings.enabled) {
-      new Setting(section)
-        .setName("自动处理新文档")
-        .setDesc("关闭后只保留手动刷新和批量补齐入口。")
-        .addToggle((toggle) => toggle
-          .setValue(settings.autoEnrichNewNotes)
-          .onChange(async (value) => {
-            settings.autoEnrichNewNotes = value;
-            await this.plugin.savePluginData();
-          }));
-    }
 
     const selectedAvailability = cached?.find((provider) => provider.id === settings.provider);
     const models = providerModelOptions(settings.provider, selectedAvailability);
@@ -390,18 +920,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     }
 
     new Setting(section)
-      .setName("正文发送上限")
-      .setDesc("长文会保留开头和结尾，中间截断；不会修改原文。")
-      .addSlider((slider) => slider
-        .setLimits(4_000, 40_000, 2_000)
-        .setDynamicTooltip()
-        .setValue(settings.maxContentCharacters)
-        .onChange(async (value) => {
-          settings.maxContentCharacters = value;
-          await this.plugin.savePluginData();
-        }));
-
-    new Setting(section)
       .setName("连接与执行")
       .setDesc("连接测试只发送一段插件内置的虚拟文本，不读取或修改你的笔记。")
       .addButton((button) => button
@@ -430,34 +948,56 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           } finally {
             window.setTimeout(() => button.setDisabled(false).setButtonText("测试模型"), 2_000);
           }
-        }))
-      .addButton((button) => button
-        .setCta()
-        .setButtonText("补齐缺失属性")
-        .onClick(() => void this.plugin.openAIPropertyBatch()));
+        }));
+  }
+
+  private renderAIPropertyAutomation(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.aiProperties;
+
+    new Setting(containerEl)
+      .setName("启用 AI 自动属性")
+      .setDesc("基础字段仍由规则维护；大模型只生成类型、状态、领域和主题等语义字段，已有值默认保留。")
+      .addToggle((toggle) => toggle
+        .setValue(settings.enabled)
+        .onChange(async (value) => {
+          settings.enabled = value;
+          await this.plugin.savePluginData();
+          this.display();
+        }));
+
   }
 
   private renderCreationStudio(containerEl: HTMLElement): void {
     const settings = this.plugin.settings.creationStudio;
-    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
-    const summary = details.createEl("summary");
-    summary.createSpan({ text: "创作与配图" });
-    const content = details.createDiv("knowgrove-settings-details-content");
-
-    new Setting(content)
+    let outputFolderInput: HTMLInputElement | undefined;
+    new Setting(containerEl)
       .setName("作品文件夹")
-      .setDesc("首稿、渠道派生稿和版本元数据都保存在 Vault 内；不会覆盖来源资料。")
-      .addText((text) => text
-        .setValue(settings.outputFolder)
-        .setPlaceholder("_KnowGrove/输出")
-        .onChange(async (value) => {
-          const next = this.normalizedFolder(value);
-          if (!next) return;
-          settings.outputFolder = next;
-          await this.plugin.savePluginData();
+      .setDesc("保存首稿、渠道稿和版本记录。可直接输入路径，或从当前 Vault 选择已有文件夹。")
+      .addText((text) => {
+        outputFolderInput = text.inputEl;
+        text
+          .setValue(settings.outputFolder)
+          .setPlaceholder("_KnowGrove/输出")
+          .onChange(async (value) => {
+            const next = this.normalizedFolder(value);
+            if (!next) return;
+            settings.outputFolder = next;
+            await this.plugin.savePluginData();
+          });
+      })
+      .addButton((button) => button
+        .setButtonText("选择文件夹")
+        .onClick(() => {
+          new VaultFolderPickerModal(this.app, (folder) => {
+            const next = this.normalizedFolder(folder.path);
+            if (!next) return;
+            settings.outputFolder = next;
+            if (outputFolderInput) outputFolderInput.value = next;
+            void this.plugin.savePluginData();
+          }).open();
         }));
 
-    new Setting(content)
+    new Setting(containerEl)
       .setName("生成真实配图")
       .setDesc("关闭时仍会生成可复制的配图方案；开启后可在创作助手中生成图片并保存为 Vault 附件。")
       .addToggle((toggle) => toggle
@@ -469,7 +1009,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
 
     if (!settings.imageGenerationEnabled) return;
-    new Setting(content)
+    new Setting(containerEl)
       .setName("配图接口与模型")
       .setDesc("支持 OpenAI Images API 或相同返回结构的兼容服务。")
       .addText((text) => text
@@ -486,7 +1026,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           settings.imageModel = value.trim();
           await this.plugin.savePluginData();
         }));
-    new Setting(content)
+    new Setting(containerEl)
       .setName("配图尺寸与附件目录")
       .addDropdown((dropdown) => dropdown
         .addOption("1536x1024", "横图 1536×1024")
@@ -506,7 +1046,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           settings.imageAssetFolder = next;
           await this.plugin.savePluginData();
         }));
-    new Setting(content)
+    new Setting(containerEl)
       .setName("配图 API Key")
       .setDesc(this.plugin.supportsAISecretStorage()
         ? "只保存在 Obsidian 安全密钥存储中，不写入 data.json。"
@@ -635,21 +1175,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       dismiss.addEventListener("click", () => void this.plugin.dismissPropertyTaxonomyProposal().then(() => this.display()));
     }
 
-    const fineTune = guide.createEl("details", { cls: "knowgrove-taxonomy-fine-tune" });
-    fineTune.createEl("summary", { text: "微调领域树（可选）" });
-    fineTune.createEl("p", { text: "每行填写“一级领域”或“一级领域/二级领域”。最多两级，其他字段由系统维护。" });
-    const editor = fineTune.createEl("textarea");
-    editor.value = domainPaths(taxonomy.domains).join("\n");
-    const save = fineTune.createEl("button", { text: "保存微调" });
-    save.addEventListener("click", () => {
-      save.disabled = true;
-      void this.plugin.updatePropertyTaxonomyDomains(editor.value)
-        .then(() => this.display())
-        .catch((error) => {
-          new Notice(`领域树保存失败：${error instanceof Error ? error.message : String(error)}`);
-          save.disabled = false;
-        });
-    });
+    new Setting(guide)
+      .setName("微调分类树")
+      .setDesc("只在 AI 建议不符合你的分类习惯时调整领域名称和层级。")
+      .addButton((button) => button
+        .setButtonText("微调")
+        .onClick(() => this.openTaxonomyFineTuneModal()));
   }
 
   private renderTaxonomyTree(container: HTMLElement, nodes: Array<{ name: string; children: string[] }>): void {
@@ -666,26 +1197,11 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   private renderPropertySystem(containerEl: HTMLElement): void {
     const settings = this.plugin.settings.propertySystem;
-    const advanced = containerEl.createEl("details", { cls: "knowgrove-property-advanced" });
-    advanced.createEl("summary", { text: "高级设置" });
-    const advancedContent = advanced.createDiv();
-
-    new Setting(advancedContent)
-      .setName("治理范围")
-      .setDesc("相对于 Vault 根目录。留空表示扫描整个 Vault；系统文件、代码依赖和排除目录仍会跳过。")
-      .addText((text) => text
-        .setPlaceholder("例如：Home")
-        .setValue(settings.scopeFolder)
-        .onChange(async (value) => {
-          settings.scopeFolder = this.normalizedFolder(value);
-          await this.plugin.savePluginData();
-        }));
-
-    new Setting(advancedContent)
-      .setName("排除目录")
-      .setDesc("每行一个 Vault 相对路径。机器语料、代码仓库、Skills 和其他不适用普通笔记模板的目录应放在这里。")
+    new Setting(containerEl)
+      .setName("忽略文件夹")
+      .setDesc("属性检查默认覆盖整个知识库，并自动跳过系统文件和代码依赖；这里每行可再添加一个不需要检查的文件夹。")
       .addTextArea((text) => text
-        .setPlaceholder("Home/🕹️skills\nHome/🐘项目/某项目/知识库")
+        .setPlaceholder("例如：Home/🕹️skills")
         .setValue(settings.excludedFolders.join("\n"))
         .onChange(async (value) => {
           settings.excludedFolders = Array.from(new Set(value.split("\n")
@@ -693,76 +1209,46 @@ export class KnowGroveSettingTab extends PluginSettingTab {
             .filter(Boolean)));
           await this.plugin.savePluginData();
         }));
+  }
 
-    new Setting(advancedContent)
-      .setName("Base 文件路径")
-      .setDesc("插件只会更新带有 KnowGrove 管理标记的 Base，不覆盖你手工创建的同名文件。")
-      .addText((text) => text
-        .setPlaceholder("_KnowGrove/属性工作台.base")
-        .setValue(settings.basePath)
-        .onChange(async (value) => {
-          const trimmed = value.trim();
-          if (!trimmed) return;
-          settings.basePath = normalizePath(trimmed).replace(/^\/+/, "");
-          await this.plugin.savePluginData();
-        }))
-      .addButton((button) => button
-        .setButtonText("生成并打开")
-        .onClick(() => void this.plugin.ensureAndOpenPropertyBase()));
-
-    new Setting(advancedContent)
-      .setName("为新阅读资料补齐核心属性")
-      .setDesc("只处理新建事件产生的阅读资料；已有值全部保留，普通移动不会触发核心属性模板。")
-      .addToggle((toggle) => toggle
-        .setValue(settings.initializeTrackedNotes)
-        .onChange(async (value) => {
-          settings.initializeTrackedNotes = value;
-          await this.plugin.savePluginData();
+  private openTaxonomyFineTuneModal(): void {
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("微调分类树");
+    modal.contentEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "每行填写“一级领域”或“一级领域/二级领域”。最多两级，其他字段由系统维护。",
+    });
+    const editor = modal.contentEl.createEl("textarea", {
+      cls: "knowgrove-taxonomy-fine-tune-editor",
+    });
+    editor.value = domainPaths(this.plugin.settings.propertySystem.taxonomy.domains).join("\n");
+    const actions = modal.contentEl.createDiv("modal-button-container");
+    const cancel = actions.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => modal.close());
+    const save = actions.createEl("button", { cls: "mod-cta", text: "保存微调" });
+    save.addEventListener("click", () => {
+      save.disabled = true;
+      void this.plugin.updatePropertyTaxonomyDomains(editor.value)
+        .then(() => {
+          modal.close();
           this.display();
-        }));
+        })
+        .catch((error) => {
+          new Notice(`分类树保存失败：${error instanceof Error ? error.message : String(error)}`);
+          save.disabled = false;
+        });
+    });
+    modal.open();
+    window.setTimeout(() => editor.focus(), 50);
+  }
 
-    if (settings.initializeTrackedNotes) {
-      new Setting(advancedContent)
-        .setName("新阅读资料的类型与状态")
-        .setDesc("阅读跟踪文件夹通常承担外部输入入口；只有字段缺失时才会补齐。")
-        .addText((text) => text
-          .setPlaceholder("输入资料")
-          .setValue(settings.trackedNoteType)
-          .onChange(async (value) => {
-            const next = value.trim();
-            if (!next) return;
-            settings.trackedNoteType = next;
-            await this.plugin.savePluginData();
-          }))
-        .addText((text) => text
-          .setPlaceholder("待整理")
-          .setValue(settings.trackedNoteStatus)
-          .onChange(async (value) => {
-            const next = value.trim();
-            if (!next) return;
-            settings.trackedNoteStatus = next;
-            await this.plugin.savePluginData();
-          }));
-
-      new Setting(advancedContent)
-        .setName("进入知识库日期属性")
-        .setDesc("仅对当下新建或导入的阅读资料写入文件创建日期，不会用运行日期回填历史笔记。")
-        .addText((text) => text
-          .setPlaceholder("创建时间")
-          .setValue(settings.creationDateProperty)
-          .onChange(async (value) => {
-            const next = value.trim();
-            if (!next) return;
-            const previous = settings.creationDateProperty;
-            settings.creationDateProperty = next;
-            const creationDimension = settings.dimensions.find((dimension) => dimension.name === previous
-              && dimension.origin === "system"
-              && (dimension.requiredForTypes ?? []).includes("输入资料"));
-            if (creationDimension) creationDimension.name = next;
-            await this.plugin.savePluginData();
-          }));
-    }
-
+  private async setAutoProcessNewNotes(value: boolean): Promise<void> {
+    const settings = this.plugin.settings;
+    settings.autoMarkNewNotes = value;
+    settings.browserCapture.autoProcessLinkNotes = value;
+    settings.aiProperties.autoEnrichNewNotes = value;
+    settings.propertySystem.initializeTrackedNotes = value;
+    await this.plugin.savePluginData();
   }
 
   private normalizedFolder(value: string): string {

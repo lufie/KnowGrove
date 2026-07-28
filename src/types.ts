@@ -1,5 +1,6 @@
-export type ReadingFilter = "unread" | "finished";
+import type { KnowGroveRuntimeSettings } from "./runtime-core";
 
+export type ReadingFilter = "unread" | "finished";
 export type PropertyValueType = "text" | "single" | "multi" | "date" | "checkbox";
 export type PropertyFillStrategy = "none" | "file-name" | "empty-list" | "fixed";
 export type PropertyRuleOrigin = "system" | "user" | "inferred";
@@ -48,6 +49,8 @@ export interface AIProviderAvailability {
   id: AIProviderId;
   name: string;
   available: boolean;
+  installed?: boolean;
+  configured?: boolean;
   version?: string;
   executablePath?: string;
   configuredModel?: string;
@@ -114,6 +117,31 @@ export interface CreationStudioSettings {
   imageAssetFolder: string;
 }
 
+export interface BrowserCaptureSettings {
+  enabled: boolean;
+  port: number;
+  inboxFolder: string;
+  autoProcessLinkNotes: boolean;
+  watchFolder: string;
+  prefixArticleTitleWithDate: boolean;
+  articleOutputFolder: string;
+  videoOutputFolder: string;
+  audioOutputFolder: string;
+  articleAssetFolder: string;
+  mediaFolder: string;
+  /** @deprecated 原始语音现在始终保留；该字段仅用于兼容旧 data.json。 */
+  keepAudioSource: boolean;
+  articleProvider: AIProviderId;
+  videoProvider: AIProviderId;
+  audioProvider: AIProviderId;
+  defuddlePath: string;
+  videoDownloaderPath: string;
+  ffmpegPath: string;
+  whisperPath: string;
+  whisperModel: string;
+  accessToken: string;
+}
+
 export interface KnowGroveSettings {
   trackedFolder: string;
   statusProperty: string;
@@ -127,7 +155,10 @@ export interface KnowGroveSettings {
   focusPropertyEnabled: boolean;
   focusPropertyName: string;
   enableBlockDragReferences: boolean;
+  enableComments: boolean;
   cleanupBlankLinesWithPropertyCheck: boolean;
+  runtime: KnowGroveRuntimeSettings;
+  browserCapture: BrowserCaptureSettings;
   aiProperties: AIPropertySettings;
   creationStudio: CreationStudioSettings;
   propertySystem: PropertySystemSettings;
@@ -351,11 +382,43 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   autoMarkFinishedAtEnd: true,
   finishDwellSeconds: 3,
   defaultTargetFolder: "",
-  defaultTargetHeading: "引用与评论",
+  defaultTargetHeading: "评论",
   focusPropertyEnabled: true,
-  focusPropertyName: "重点关注",
+  focusPropertyName: "收藏",
   enableBlockDragReferences: true,
-  cleanupBlankLinesWithPropertyCheck: true,
+  enableComments: true,
+  cleanupBlankLinesWithPropertyCheck: false,
+  runtime: {
+    mode: "auto",
+    manifestUrl: "",
+    preferExistingTools: true,
+    autoUpdateSkillPack: true,
+    lastAuditAt: "",
+    lastInstallError: "",
+  },
+  browserCapture: {
+    enabled: true,
+    port: 47831,
+    inboxFolder: "",
+    autoProcessLinkNotes: true,
+    watchFolder: "",
+    prefixArticleTitleWithDate: true,
+    articleOutputFolder: "",
+    videoOutputFolder: "",
+    audioOutputFolder: "",
+    articleAssetFolder: "阅读列表/assets",
+    mediaFolder: "阅读列表/附件/音视频",
+    keepAudioSource: true,
+    articleProvider: "codex-cli",
+    videoProvider: "codex-cli",
+    audioProvider: "codex-cli",
+    defuddlePath: "",
+    videoDownloaderPath: "",
+    ffmpegPath: "",
+    whisperPath: "",
+    whisperModel: "small",
+    accessToken: "",
+  },
   aiProperties: {
     enabled: false,
     autoEnrichNewNotes: true,
