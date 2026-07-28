@@ -488,15 +488,34 @@ export class KnowGroveRuntimeManager {
     artifacts: KnowGroveRuntimeArtifact[],
     onProgress: ProgressHandler,
   ): Promise<KnowGroveRuntimeInstallationRecord> {
-    const { chmod, mkdir, rename, rm, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { chmod, mkdir, readFile, rename, rm, stat, unlink, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
     const { dirname, join } = require("node:path") as typeof import("node:path");
     const root = this.getRoot();
-    const staging = join(root, `.staging-${manifest.runtimeVersion}-${Date.now()}`);
+    const transactionId = Date.now();
+    const staging = join(root, `.staging-${manifest.runtimeVersion}-${transactionId}`);
     const destination = join(root, manifest.runtimeVersion);
+    const backup = join(root, `.backup-${manifest.runtimeVersion}-${transactionId}`);
+    const currentRecordPath = join(root, CURRENT_RECORD);
+    const currentRecordTemp = join(root, `.current-${transactionId}.json`);
     await mkdir(staging, { recursive: true });
     const totalBytes = totalArtifactBytes(artifacts);
     let completedBytes = 0;
     const files: Partial<Record<KnowGroveRuntimeArtifactId, string>> = {};
+    let previousRecord: string | undefined;
+    let movedExisting = false;
+    let activatedNew = false;
+    const capture = this.host.getCaptureSettings();
+    const previousCapturePaths = {
+      videoDownloaderPath: capture.videoDownloaderPath,
+      ffmpegPath: capture.ffmpegPath,
+      whisperPath: capture.whisperPath,
+      whisperModel: capture.whisperModel,
+    };
+    try {
+      previousRecord = await readFile(currentRecordPath, "utf8");
+    } catch {
+      previousRecord = undefined;
+    }
     try {
       for (const artifact of artifacts) {
         const output = join(staging, artifact.target);
@@ -529,23 +548,46 @@ export class KnowGroveRuntimeManager {
         if (artifact.executable && process.platform !== "win32") await chmod(output, 0o755);
         files[artifact.id] = join(destination, artifact.target);
       }
-      await rm(destination, { recursive: true, force: true });
+      try {
+        if ((await stat(destination)).isDirectory()) {
+          await rename(destination, backup);
+          movedExisting = true;
+        }
+      } catch {
+        movedExisting = false;
+      }
       await rename(staging, destination);
+      activatedNew = true;
       const record: KnowGroveRuntimeInstallationRecord = {
         runtimeVersion: manifest.runtimeVersion,
         platform,
         installedAt: new Date().toISOString(),
         files,
       };
-      await writeFile(join(root, CURRENT_RECORD), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      await writeFile(currentRecordTemp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      await rm(currentRecordPath, { force: true });
+      await rename(currentRecordTemp, currentRecordPath);
       this.applyCapturePaths(files);
       const settings = this.host.getRuntimeSettings();
       settings.lastInstallError = "";
       await this.host.saveSettings();
+      if (movedExisting) await rm(backup, { recursive: true, force: true });
       onProgress({ phase: "completed", message: "KnowGrove 运行环境已就绪", completedBytes: totalBytes, totalBytes });
       return record;
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      await unlink(currentRecordTemp).catch(() => undefined);
+      if (activatedNew) await rm(destination, { recursive: true, force: true }).catch(() => undefined);
+      if (movedExisting) await rename(backup, destination).catch(() => undefined);
+      if (previousRecord !== undefined) {
+        await writeFile(currentRecordPath, previousRecord, "utf8").catch(() => undefined);
+      } else {
+        await unlink(currentRecordPath).catch(() => undefined);
+      }
+      capture.videoDownloaderPath = previousCapturePaths.videoDownloaderPath;
+      capture.ffmpegPath = previousCapturePaths.ffmpegPath;
+      capture.whisperPath = previousCapturePaths.whisperPath;
+      capture.whisperModel = previousCapturePaths.whisperModel;
       throw error;
     }
   }

@@ -46,7 +46,14 @@ jobs:
           node-version: 22
       - name: Install pinned FFmpeg binaries
         shell: bash
-        run: npm install --no-save ffmpeg-static@5.3.0 @derhuerst/ffprobe-static@5.3.0
+        run: |
+          mkdir -p .runtime-deps
+          npm install \
+            --prefix .runtime-deps \
+            --no-save \
+            --legacy-peer-deps \
+            ffmpeg-static@5.3.0 \
+            @derhuerst/ffprobe-static@5.3.0
       - name: Build whisper.cpp
         shell: bash
         run: |
@@ -66,7 +73,7 @@ jobs:
       - name: Locate and stage runtime
         shell: bash
         run: |
-          node -e "const fs=require('fs'); fs.writeFileSync('.runtime-paths.json', JSON.stringify({ffmpeg:require('ffmpeg-static'),ffprobe:require('@derhuerst/ffprobe-static').path}))"
+          node -e "const fs=require('fs'); fs.writeFileSync('.runtime-paths.json', JSON.stringify({ffmpeg:require('./.runtime-deps/node_modules/ffmpeg-static'),ffprobe:require('./.runtime-deps/node_modules/@derhuerst/ffprobe-static').path}))"
           export KNOWGROVE_FFMPEG_PATH="$(node -p "require('./.runtime-paths.json').ffmpeg")"
           export KNOWGROVE_FFPROBE_PATH="$(node -p "require('./.runtime-paths.json').ffprobe")"
           export KNOWGROVE_YTDLP_PATH="$(node -p "require('path').resolve('.runtime-input/${{ matrix.ytdlp_asset }}')")"
