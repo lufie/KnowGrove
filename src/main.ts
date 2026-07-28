@@ -483,6 +483,23 @@ export default class KnowGrovePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "configure-runtime-environment",
+      name: "自动配置整理组件",
+      callback: () => {
+        const progressNotice = new Notice("正在检查整理组件…", 0);
+        void this.installRuntimeEnvironment((progress) => {
+          progressNotice.setMessage(progress.message);
+        }).then(() => {
+          progressNotice.hide();
+          new Notice("自动整理组件已配置");
+        }).catch((error) => {
+          progressNotice.hide();
+          const message = error instanceof Error ? error.message : String(error);
+          new Notice(`自动配置失败：${message}`);
+        });
+      },
+    });
+    this.addCommand({
       id: "generate-property-base",
       name: "生成并打开属性工作流 Base",
       callback: () => void this.ensureAndOpenPropertyBase(),

@@ -438,6 +438,8 @@ Runtime 1.0.0 托管：
 6. 已安装的可用本机工具优先复用；缺失组件才从远端补齐。
 7. Skill Pack 和模型信息跟随 Runtime 版本发布，提示词可独立升级，但不得静默降低最低插件版本要求。
 
+这里的“远端”专指面向插件用户的公开组件分发服务，不是插件源代码仓库。用户即使只通过手工方式拿到 `main.js`、`manifest.json` 和 `styles.css`，也必须能够在设置中点击“自动配置”，从公开 Runtime 清单完成组件下载、校验、本地部署和可用性检测。
+
 ### 8.2 2.5.0 发布目标
 
 - Runtime 版本：`1.0.0`
@@ -458,20 +460,20 @@ Runtime 1.0.0 托管：
 | 本机已有视频与语音工具复用 | 已实现 | 自动检测本机现有工具 |
 | Runtime 构建脚本 | 已实现 | 本地存在跨平台构建与签名脚本 |
 | Runtime Skill Pack | 已实现 | 当前版本 `1.0.2` |
-| GitHub Runtime 工作流 | 仅存在于本地工作区 | 尚未推送到远端仓库 |
-| Runtime 二进制产物 | 未生成 | 当前无 `runtime-dist` |
-| CNB 或其他国内下载源 | 未发布 | 尚无可验证服务器地址 |
-| GitHub Releases 备用源 | 未发布 | 远端仓库当前无 Release |
-| 插件默认 `manifestUrl` | 未配置 | 当前值为空 |
-| 新用户自动下载组件 | 尚不可用 | 只能复用用户电脑已有工具 |
+| GitHub Runtime 工作流 | 已运行成功 | 三个平台构建和签名组装均通过，运行记录 `30378029343` |
+| Runtime 二进制产物 | 已生成 | Runtime `1.0.0`，包含 macOS Apple Silicon、macOS Intel 和 Windows x64 |
+| CNB 国内下载源 | 待账号认证后发布 | CNB 已登录，但首次创建公开组织仍要求完成平台实名认证 |
+| GitHub Releases 备用源 | 已发布 | 公共仓库 `lufie/KnowGrove-runtime` 的 `runtime-v1.0.0` |
+| 插件默认清单地址 | 已内置 | 设置值留空时自动使用公共 Release 的 `runtime-manifest.json` |
+| 新用户自动下载组件 | 已在 macOS Apple Silicon 实测 | 强制托管模式从默认清单下载约 610 MB，7 个组件全部通过大小和 SHA-256 校验并成功启用 |
 
 ### 8.4 地址说明
 
 - 本机浏览器服务：`http://127.0.0.1:47831`
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
-- 远程运行包清单：**待发布**
-- 国内运行包下载地址：**待发布**
-- GitHub Release 备用地址：**待发布**
+- 远程运行包清单：`https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json`
+- 国内运行包下载地址：**待 CNB 账号认证后发布**
+- GitHub Release 备用地址：`https://github.com/lufie/KnowGrove-runtime/releases/tag/runtime-v1.0.0`
 
 不得把本机地址写成远程服务器地址，也不得在远程清单和产物可访问之前宣称“安装即可自动下载组件”。
 
@@ -535,8 +537,8 @@ Runtime 1.0.0 托管：
 
 ## 11. 当前已知缺口
 
-1. 远程 Runtime 尚未发布，新用户不能自动下载视频和语音组件。
-2. README 中部分版本和“托管运行包已可安装”的描述需要在正式发布前与真实状态同步。
+1. CNB 国内主下载源仍需完成账号实名认证后发布；当前只有 GitHub 公共源。
+2. macOS Intel 和 Windows x64 已完成云端构建，仍需在干净实体环境完成插件内托管安装。
 3. WorkBuddy CLI 可检测到安装，但模型调用协议仍需持续验证。
 4. Safari 扩展、Chrome 商店分发和新用户安装流程需要独立发布验收。
 5. 真实图片生成依赖外部图片模型和密钥，默认关闭。
@@ -593,5 +595,5 @@ Runtime 1.0.0 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
-| 2026-07-29 | 2.5.0（目标） | 1.1.0 | 发布规划 | 定义 Runtime 1.0.0 的签名清单、跨平台组件、双源下载、模型信息、自动配置和首轮发布验收门槛 | 开发中 |
+| 2026-07-29 | 2.5.0（候选） | 1.1.0 | 新增 / 发布 | 完成 Runtime 1.0.0 三平台构建、签名清单、GitHub 公共分发和 macOS Apple Silicon 插件内远端安装；CNB 国内主源等待账号实名认证 | 已部署并完成 macOS 实测 |
 | 2026-07-28 | 2.4.26 | 1.0.0 | 建立基线 | 汇总 KnowGrove 当前全部产品能力、数据边界、Runtime 真实发布状态、验收标准和后续 PRD 维护规则 | 已建立文档；插件功能以当前实机版本为准 |
