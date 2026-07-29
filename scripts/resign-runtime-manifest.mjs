@@ -6,6 +6,7 @@ const input = process.argv[2];
 const output = process.argv[3];
 const primaryBase = (process.env.KNOWGROVE_RELEASE_BASE_URL || "").replace(/\/+$/, "");
 const fallbackBase = (process.env.KNOWGROVE_FALLBACK_BASE_URL || "").replace(/\/+$/, "");
+const assetUrlMapInput = process.env.KNOWGROVE_ASSET_URL_MAP || "";
 const keyInput = process.env.KNOWGROVE_RUNTIME_SIGNING_KEY || "";
 
 if (!input || !output) {
@@ -34,14 +35,21 @@ function assetName(url) {
 }
 
 const parsed = JSON.parse(await readFile(input, "utf8"));
+const assetUrlMap = assetUrlMapInput
+  ? JSON.parse(await readFile(assetUrlMapInput, "utf8"))
+  : {};
 const { signature: _previousSignature, ...manifest } = parsed;
 manifest.generatedAt = new Date().toISOString();
 
 for (const release of Object.values(manifest.platforms ?? {})) {
   for (const artifact of release.artifacts ?? []) {
     const name = assetName(artifact.urls?.[0] || "");
+    const mappedUrl = assetUrlMap[name];
+    if (mappedUrl !== undefined && !/^https:\/\//.test(mappedUrl)) {
+      throw new Error(`Mapped artifact URL must use HTTPS: ${name}`);
+    }
     artifact.urls = [
-      `${primaryBase}/${name}`,
+      mappedUrl || `${primaryBase}/${name}`,
       ...(fallbackBase ? [`${fallbackBase}/${name}`] : []),
     ];
   }

@@ -59,7 +59,7 @@ test("runtime platform detection only accepts supported desktop targets", () => 
 
 test("runtime manifest sources use an optional override before the signed public release", () => {
   assert.deepEqual(DEFAULT_RUNTIME_MANIFEST_URLS, [
-    "https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.0/runtime-manifest.json",
+    "https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.1/runtime-manifest.json",
     "https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json",
   ]);
   assert.deepEqual(
@@ -92,6 +92,14 @@ test("runtime source selection uses the newest signed release instead of the fir
   ]);
   assert.equal(selected?.manifest.runtimeVersion, "1.0.1");
   assert.equal(selected?.url, "https://github.example/runtime.json");
+});
+
+test("runtime source selection keeps the domestic mirror first when versions match", () => {
+  const selected = selectNewestRuntimeManifest([
+    { manifest: { runtimeVersion: "1.0.1" }, url: "https://cnb.example/runtime.json" },
+    { manifest: { runtimeVersion: "1.0.1" }, url: "https://github.example/runtime.json" },
+  ]);
+  assert.equal(selected?.url, "https://cnb.example/runtime.json");
 });
 
 test("runtime manifest validation rejects traversal and insecure mirrors", () => {

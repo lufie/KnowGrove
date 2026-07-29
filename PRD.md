@@ -11,7 +11,7 @@
 | 产品形态 | Obsidian 桌面端插件 + 浏览器剪藏扩展 |
 | 当前产品版本 | 2.5.2（开发中） |
 | 本轮目标版本 | 2.5.2 跨电脑视频解析恢复与 CLI 模型动态同步 |
-| PRD 版本 | 1.2.6 |
+| PRD 版本 | 1.2.7 |
 | 基线日期 | 2026-07-29 |
 | 文档状态 | 2.5.2 开发基线 |
 | 源代码仓库 | `https://github.com/lufie/KnowGrove`（私有） |
@@ -449,9 +449,9 @@ Runtime 1.0.x 托管：
 
 这里的“远端”专指面向插件用户的公开组件分发服务，不是插件源代码仓库。用户即使只通过手工方式拿到 `main.js`、`manifest.json` 和 `styles.css`，也必须能够在设置中点击“自动配置”，从公开 Runtime 清单完成组件下载、校验、本地部署和可用性检测。
 
-### 8.2 2.5.0 发布目标
+### 8.2 2.5.x 发布目标
 
-- Runtime 版本：`1.0.0`
+- Runtime 版本：`1.0.1`
 - Whisper 模型：`ggml-small.bin`
 - 默认模型语言策略：自动识别，不把用户语音上传至 KnowGrove 服务器。
 - 插件首次环境检查：自动读取签名清单并显示网页、视频、语音三个能力状态。
@@ -474,9 +474,9 @@ Runtime 1.0.x 托管：
 | Runtime Skill Pack | 已实现 | 当前版本 `1.0.2` |
 | GitHub Runtime 工作流 | 已运行成功 | Runtime 1.0.1 三个平台构建、签名组装与公开发布均通过，运行记录 `30421360036` |
 | Runtime 二进制产物 | 已生成 | Runtime `1.0.1`，包含 macOS Apple Silicon、macOS Intel 和 Windows x64，并更新官方 `yt-dlp` |
-| CNB 国内下载源 | 已发布并完成匿名下载、签名与插件内审计 | 公共仓库 `lufie-knowgrove/knowgrove-runtime` 的 `runtime-v1.0.0`，17 个稳定 Release 附件已上传，21 项组件地址全部可访问；Obsidian 实机识别主源为 `cnb.cool` |
+| CNB 国内下载源 | Runtime 1.0.1 已发布并完成匿名下载与签名审计 | 公共仓库 `lufie-knowgrove/knowgrove-runtime` 的 `runtime-v1.0.1` 提供新签名清单、校验和与变化组件；其余 SHA-256 完全一致的组件复用 CNB `runtime-v1.0.0` 附件，21 项主下载地址全部位于 `cnb.cool` |
 | GitHub Releases 备用源 | 已发布 | 公共仓库 `lufie/KnowGrove-runtime` 的 `runtime-v1.0.1`，17 个附件可匿名下载 |
-| 插件默认清单地址 | 已内置双源比较 | 设置值留空时校验 CNB 与 GitHub 签名清单，并使用版本最高的有效 Runtime；当前可由 GitHub 升级到 1.0.1 |
+| 插件默认清单地址 | 已内置双源比较 | 设置值留空时先校验 CNB 1.0.1 与 GitHub 最新签名清单，并使用版本最高的有效 Runtime；同版本时优先使用 CNB |
 | 新用户自动下载组件 | 已在 macOS Apple Silicon 实测 | 插件 2.5.2 从默认双源选择 GitHub Runtime 1.0.1，下载 620,187,419 字节；连接波动后可断点续传，7 个组件全部通过大小和 SHA-256 校验并成功启用 |
 
 ### 8.4 地址说明
@@ -485,8 +485,8 @@ Runtime 1.0.x 托管：
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
 - 本地可分发文件夹：`release/KnowGrove-2.5.0-可分发文件/`
 - 2.5.1 CLI 修复包：`release/KnowGrove-2.5.1-CLI修复包/`
-- 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.0/runtime-manifest.json`
-- 国内运行包发布地址：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/tag/runtime-v1.0.0`
+- 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.1/runtime-manifest.json`
+- 国内运行包发布地址：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/tag/runtime-v1.0.1`
 - GitHub 备用清单：`https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json`
 - GitHub Release 备用地址：`https://github.com/lufie/KnowGrove-runtime/releases/tag/runtime-v1.0.1`
 
@@ -610,6 +610,7 @@ Runtime 1.0.x 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-29 | 2.5.2（开发中） | 1.2.7 | 发布 / 调整 | 发布 CNB Runtime 1.0.1，并将插件默认国内清单切换到该版本；清单支持按附件 URL 映射复用早期 Release 中 SHA-256 完全一致的二进制，变化文件留在新 Release，GitHub 1.0.1 继续作为逐组件备用源 | CNB Release、签名清单和变化组件已发布；清单验签通过，3 个平台共 21 项主下载地址均完成匿名可达与文件大小检查 |
 | 2026-07-29 | 2.5.2（开发中） | 1.2.6 | 修复 / 调整 | 修复跨电脑 Bilibili 剪藏因过期 `yt-dlp`、HTTP 412 和登录字幕未命中导致的处理失败：浏览器剪藏按当前页面 BV 号重新解析 CID，读取登录态官方字幕且字幕正文请求不携带凭据；轻量链接动态检查全部真实字幕语言，无字幕才下载转录；字幕和 Whisper 输出合并为自然段；Runtime 双源改为选择最高签名版本，大文件连接中断时保留已下载部分并自动断点续传；全部模型 CLI 优先读取各自模型命令、帮助声明或本机缓存，MiniMax 支持下拉模型覆盖 | 169 项测试、浏览器扩展静态检查、插件构建与本机部署通过；指定 Bilibili 视频已完成匿名“无公开字幕 → 下载音轨 → Whisper → AI 自然分段”和登录态 `ai-zh` 字幕 1,201 字符提取两条实测；本机已从远端完整下载 620,187,419 字节并启用 Runtime 1.0.1，CNB 1.0.1 待同步 |
 | 2026-07-29 | 2.5.1（开发中） | 1.2.5 | 修复 / 调整 | CodeBuddy 模型下拉改为读取本机 CLI `--help` 公布的模型 ID，删除遗留的 WorkBuddy `default/sonnet/opus` 回退值，并随 CLI 更新动态刷新；未指定模型时明确标记为跟随 CodeBuddy 默认模型 | 161 项测试与构建通过；当前 macOS 已部署重载，并实测从 CodeBuddy 2.128.1 检出 11 个模型、下拉选项一致、控制台无错误 |
 | 2026-07-29 | 2.5.1（开发中） | 1.2.4 | 新增 / 调整 | 自动整理组件配置增加运行包总大小、实时下载进度、检查/下载/校验/配置阶段反馈，并在完成后展示网页、视频、语音与 AI 四项能力状态 | 160 项测试与构建通过；当前 macOS 已部署重载，591 MB 总包、复用流程、四项状态、设置页视觉与控制台无错误均已实测 |

@@ -6,11 +6,11 @@ on:
       runtime_version:
         description: Runtime version
         required: true
-        default: 1.0.0
+        default: 1.0.1
       release_base_url:
         description: Primary release attachment base URL
         required: true
-        default: https://github.com/lufie/KnowGrove-runtime/releases/download/runtime-v1.0.0
+        default: https://github.com/lufie/KnowGrove-runtime/releases/download/runtime-v1.0.1
       fallback_base_url:
         description: Optional fallback release attachment base URL
         required: false

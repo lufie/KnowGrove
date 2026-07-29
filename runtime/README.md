@@ -38,3 +38,8 @@ environment. The private key must never be committed.
 
 `KNOWGROVE_RUNTIME_SIGNING_KEY` must contain the PEM encoded Ed25519 private
 key. The matching public key is embedded in the plugin runtime manager.
+
+When a mirror reuses byte-identical artifacts from an earlier release, pass a
+JSON object through `KNOWGROVE_ASSET_URL_MAP`. Keys are current artifact file
+names and values are the HTTPS URLs that should become their primary download
+sources. Unmapped artifacts continue to use `KNOWGROVE_RELEASE_BASE_URL`.
