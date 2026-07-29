@@ -8,6 +8,7 @@ import {
   platformArtifacts,
   runtimeManifestCandidates,
   selectNewestRuntimeManifest,
+  shouldAutoConfigureRuntime,
   shouldRestartRuntimeDownload,
   runtimeProgressRatio,
   stableRuntimeJson,
@@ -83,6 +84,56 @@ test("runtime download recovery resumes transient failures and restarts only whe
   assert.equal(shouldRestartRuntimeDownload("Error: aborted"), false);
   assert.equal(shouldRestartRuntimeDownload("运行包下载连接超时"), false);
   assert.equal(shouldRestartRuntimeDownload("下载源不支持断点续传，请重试"), true);
+});
+
+test("runtime auto setup only runs for reachable desktop packages that need installation or an update", () => {
+  const readyCapabilities = [
+    { id: "article" as const, name: "网页文章", status: "ready" as const, detail: "" },
+    { id: "video" as const, name: "视频解析", status: "ready" as const, detail: "" },
+    { id: "audio" as const, name: "语音转录", status: "ready" as const, detail: "" },
+  ];
+  const baseAudit = {
+    desktop: true,
+    platform: "darwin-arm64" as const,
+    sourceReachable: true,
+    managedRuntimeVersion: undefined,
+    runtimeUpdateAvailable: false,
+    capabilities: readyCapabilities,
+  };
+  assert.equal(shouldAutoConfigureRuntime({ mode: "auto" }, baseAudit), false);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "managed" }, baseAudit), true);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "existing" }, {
+    ...baseAudit,
+    capabilities: readyCapabilities.map((capability) =>
+      capability.id === "audio"
+        ? { ...capability, status: "needs-setup" as const }
+        : capability),
+  }), false);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "auto" }, {
+    ...baseAudit,
+    capabilities: readyCapabilities.map((capability) =>
+      capability.id === "video"
+        ? { ...capability, status: "needs-setup" as const }
+        : capability),
+  }), true);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "auto" }, {
+    ...baseAudit,
+    managedRuntimeVersion: "1.0.0",
+    runtimeUpdateAvailable: true,
+  }), true);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "auto" }, {
+    ...baseAudit,
+    sourceReachable: false,
+    capabilities: readyCapabilities.map((capability) =>
+      capability.id === "audio"
+        ? { ...capability, status: "needs-setup" as const }
+        : capability),
+  }), false);
+  assert.equal(shouldAutoConfigureRuntime({ mode: "auto" }, {
+    ...baseAudit,
+    desktop: false,
+    platform: undefined,
+  }), false);
 });
 
 test("runtime source selection uses the newest signed release instead of the first reachable mirror", () => {

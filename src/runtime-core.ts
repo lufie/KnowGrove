@@ -69,6 +69,8 @@ export interface KnowGroveRuntimeAudit {
   runtimeRoot: string;
   sourceReachable: boolean;
   sourceDetail: string;
+  managedRuntimeVersion?: string;
+  runtimeUpdateAvailable: boolean;
   packageSizeBytes?: number;
   diskFreeBytes?: number;
   tools: Partial<Record<KnowGroveRuntimeArtifactId, string>>;
@@ -257,6 +259,34 @@ export function runtimeProgressRatio(completedBytes: number, totalBytes: number)
 
 export function shouldRestartRuntimeDownload(errorMessage: string): boolean {
   return errorMessage.includes("不支持断点续传");
+}
+
+export function shouldAutoConfigureRuntime(
+  settings: Pick<KnowGroveRuntimeSettings, "mode">,
+  audit: Pick<
+    KnowGroveRuntimeAudit,
+    | "desktop"
+    | "platform"
+    | "sourceReachable"
+    | "managedRuntimeVersion"
+    | "runtimeUpdateAvailable"
+    | "capabilities"
+  >,
+): boolean {
+  if (
+    !audit.desktop
+    || !audit.platform
+    || !audit.sourceReachable
+    || settings.mode === "existing"
+  ) {
+    return false;
+  }
+  if (settings.mode === "managed") {
+    return !audit.managedRuntimeVersion || audit.runtimeUpdateAvailable;
+  }
+  return audit.runtimeUpdateAvailable || audit.capabilities.some((capability) =>
+    (capability.id === "video" || capability.id === "audio")
+    && capability.status === "needs-setup");
 }
 
 export function validateSkillPack(value: unknown): KnowGroveSkillPack {

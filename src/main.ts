@@ -138,7 +138,11 @@ import {
 } from "./reference-repair";
 import { KnowGroveSettingTab } from "./settings";
 import { KnowGroveRuntimeManager, type RuntimeInstallProgress } from "./runtime-manager";
-import type { KnowGroveRuntimeAudit } from "./runtime-core";
+import {
+  formatRuntimeBytes,
+  shouldAutoConfigureRuntime,
+  type KnowGroveRuntimeAudit,
+} from "./runtime-core";
 import type { BrowserCapturePageType } from "./browser-capture-core";
 import { getSelectionAnchorRect, positionSelectionCommentButton } from "./selection-comment-position";
 import { PropertyAuditModal } from "./property-audit-modal";
@@ -376,6 +380,11 @@ export default class KnowGrovePlugin extends Plugin {
   private aiBatchCancelRequested = false;
   private browserCaptureServer?: BrowserCaptureServer;
   private runtimeManager?: KnowGroveRuntimeManager;
+  private runtimeInstallPromise?: Promise<void>;
+  private runtimeBootstrapPromise?: Promise<void>;
+  private startupRuntimeBootstrapTimer?: number;
+  private latestRuntimeInstallProgress?: RuntimeInstallProgress;
+  private readonly runtimeInstallProgressListeners = new Set<(progress: RuntimeInstallProgress) => void>();
   private linkNoteScanPromise?: Promise<number>;
   private startupLinkNoteScanTimer?: number;
 
@@ -418,9 +427,17 @@ export default class KnowGrovePlugin extends Plugin {
         new Notice(`浏览器接收未启动：${error instanceof Error ? error.message : String(error)}`);
       });
     }
+    if (Platform.isDesktopApp && this.settings.runtime.mode !== "existing") {
+      this.startupRuntimeBootstrapTimer = window.setTimeout(
+        () => void this.ensureRuntimeEnvironmentOnStartup(),
+        800,
+      );
+      this.register(() => window.clearTimeout(this.startupRuntimeBootstrapTimer));
+    }
     if (Platform.isDesktopApp && this.settings.browserCapture.autoProcessLinkNotes) {
       this.startupLinkNoteScanTimer = window.setTimeout(
-        () => void this.scanPendingLinkNotes(false),
+        () => void this.ensureRuntimeEnvironmentOnStartup()
+          .then(() => this.scanPendingLinkNotes(false)),
         1_800,
       );
       this.register(() => window.clearTimeout(this.startupLinkNoteScanTimer));
@@ -700,6 +717,8 @@ export default class KnowGrovePlugin extends Plugin {
   onunload(): void {
     this.aiBatchCancelRequested = true;
     void this.browserCaptureServer?.stop();
+    this.runtimeInstallProgressListeners.clear();
+    window.clearTimeout(this.startupRuntimeBootstrapTimer);
     window.clearTimeout(this.refreshTimer);
     window.clearTimeout(this.referenceRepairTimer);
     window.clearTimeout(this.blockEmbedHydrationTimer);
@@ -1368,12 +1387,99 @@ export default class KnowGrovePlugin extends Plugin {
     return audit;
   }
 
+  getRuntimeInstallProgress(): RuntimeInstallProgress | undefined {
+    return this.latestRuntimeInstallProgress
+      ? { ...this.latestRuntimeInstallProgress }
+      : undefined;
+  }
+
+  subscribeRuntimeInstallProgress(
+    listener: (progress: RuntimeInstallProgress) => void,
+  ): () => void {
+    this.runtimeInstallProgressListeners.add(listener);
+    if (this.latestRuntimeInstallProgress) listener({ ...this.latestRuntimeInstallProgress });
+    return () => this.runtimeInstallProgressListeners.delete(listener);
+  }
+
+  private reportRuntimeInstallProgress(progress: RuntimeInstallProgress): void {
+    this.latestRuntimeInstallProgress = { ...progress };
+    for (const listener of this.runtimeInstallProgressListeners) {
+      listener({ ...progress });
+    }
+  }
+
   async installRuntimeEnvironment(
     onProgress?: (progress: RuntimeInstallProgress) => void,
   ): Promise<void> {
     if (!this.runtimeManager) throw new Error("运行环境管理器尚未初始化");
-    await this.runtimeManager.install(onProgress);
-    await this.restartBrowserCaptureServer();
+    const startsNewInstall = !this.runtimeInstallPromise;
+    if (startsNewInstall) this.latestRuntimeInstallProgress = undefined;
+    const unsubscribe = onProgress
+      ? this.subscribeRuntimeInstallProgress(onProgress)
+      : undefined;
+    if (startsNewInstall) {
+      this.runtimeInstallPromise = (async () => {
+        await this.runtimeManager!.install((progress) => this.reportRuntimeInstallProgress(progress));
+        await this.restartBrowserCaptureServer();
+      })().finally(() => {
+        this.runtimeInstallPromise = undefined;
+      });
+    }
+    try {
+      await this.runtimeInstallPromise;
+    } finally {
+      unsubscribe?.();
+    }
+  }
+
+  private ensureRuntimeEnvironmentOnStartup(): Promise<void> {
+    if (
+      !Platform.isDesktopApp
+      || this.settings.runtime.mode === "existing"
+      || !this.runtimeManager
+    ) {
+      return Promise.resolve();
+    }
+    if (!this.runtimeBootstrapPromise) {
+      this.runtimeBootstrapPromise = this.bootstrapRuntimeEnvironment().catch((error) => {
+        console.warn("KnowGrove: automatic runtime setup failed", error);
+      });
+    }
+    return this.runtimeBootstrapPromise;
+  }
+
+  private async bootstrapRuntimeEnvironment(): Promise<void> {
+    const audit = await this.auditRuntimeEnvironment();
+    if (!shouldAutoConfigureRuntime(this.settings.runtime, audit)) return;
+    let progressNotice: Notice | undefined;
+    let downloaded = false;
+    try {
+      await this.installRuntimeEnvironment((progress) => {
+        if (progress.phase === "downloading") downloaded = true;
+        if (!downloaded) return;
+        progressNotice ??= new Notice("KnowGrove 正在自动配置整理组件…", 0);
+        const total = progress.totalBytes || audit.packageSizeBytes || 0;
+        const size = total > 0
+          ? `${formatRuntimeBytes(Math.min(progress.completedBytes, total))} / ${formatRuntimeBytes(total)}`
+          : "";
+        progressNotice.setMessage(
+          `${progress.message}${size ? ` · ${size}` : ""}`,
+        );
+      });
+      if (progressNotice) {
+        progressNotice.setMessage("KnowGrove 整理组件已自动配置，可以直接使用");
+        window.setTimeout(() => progressNotice?.hide(), 4_000);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (progressNotice) {
+        progressNotice.setMessage(`整理组件自动配置未完成：${message}`);
+        window.setTimeout(() => progressNotice?.hide(), 9_000);
+      } else {
+        console.warn(`KnowGrove: automatic runtime setup skipped: ${message}`);
+      }
+      throw error;
+    }
   }
 
   private async getRuntimeSkillInstruction(pageType: BrowserCapturePageType): Promise<string> {

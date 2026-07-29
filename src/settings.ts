@@ -63,6 +63,7 @@ class VaultFolderPickerModal extends FuzzySuggestModal<TFolder> {
 
 export class KnowGroveSettingTab extends PluginSettingTab {
   private readonly openModules = new Set<string>();
+  private runtimeProgressUnsubscribe?: () => void;
 
   constructor(app: App, private readonly plugin: KnowGrovePlugin) {
     super(app, plugin);
@@ -70,6 +71,8 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    this.runtimeProgressUnsubscribe?.();
+    this.runtimeProgressUnsubscribe = undefined;
     containerEl.empty();
     containerEl.addClass("knowgrove-settings");
     containerEl.createEl("h2", { text: "KnowGrove · 知识森林" });
@@ -474,7 +477,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     capabilityList.hidden = true;
 
     let latestAudit: KnowGroveRuntimeAudit | undefined;
-    let latestProgress: RuntimeInstallProgress | undefined;
+    let latestProgress = this.plugin.getRuntimeInstallProgress();
     let downloadedInThisRun = false;
     let lastProgressRenderedAt = 0;
 
@@ -601,6 +604,9 @@ export class KnowGroveSettingTab extends PluginSettingTab {
             button.setDisabled(false).setButtonText("自动配置");
           }
         }));
+    this.runtimeProgressUnsubscribe = this.plugin.subscribeRuntimeInstallProgress((progress) => {
+      renderProgress(progress);
+    });
     void refresh();
   }
 

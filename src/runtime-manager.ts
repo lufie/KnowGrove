@@ -397,6 +397,7 @@ export class KnowGroveRuntimeManager {
         runtimeRoot: this.getRoot(),
         sourceReachable: false,
         sourceDetail: "移动端不运行本地媒体组件",
+        runtimeUpdateAvailable: false,
         tools: {},
         capabilities: [
           { id: "article", name: "网页文章", status: "ready", detail: "使用插件内置解析能力" },
@@ -449,6 +450,8 @@ export class KnowGroveRuntimeManager {
       runtimeRoot: this.getRoot(),
       sourceReachable,
       sourceDetail,
+      managedRuntimeVersion: installed?.runtimeVersion,
+      runtimeUpdateAvailable,
       packageSizeBytes,
       diskFreeBytes,
       tools,
