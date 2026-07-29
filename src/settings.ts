@@ -16,7 +16,12 @@ import {
   type AIProviderAvailability,
   type AIProviderId,
 } from "./types";
-import type { KnowGroveRuntimeAudit } from "./runtime-core";
+import {
+  formatRuntimeBytes,
+  runtimeProgressRatio,
+  type KnowGroveRuntimeAudit,
+} from "./runtime-core";
+import type { RuntimeInstallProgress } from "./runtime-manager";
 
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
@@ -28,7 +33,6 @@ function cliExecutablePlaceholder(provider: AIProviderId): string {
     "minimax-cli": "/Users/liyijie/.local/bin/mmx",
     "glm-cli": "/Users/liyijie/.local/bin/zai",
     "codebuddy-cli": "/Users/liyijie/.local/bin/codebuddy",
-    "workbuddy-cli": "/Users/liyijie/.local/bin/workbuddy",
   };
   return placeholders[provider] ?? "CLI 可执行文件路径";
 }
@@ -455,22 +459,93 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .setName("自动整理组件配置")
       .setDesc("正在检测自动整理组件…");
 
+    const progressPanel = containerEl.createDiv("knowgrove-runtime-progress");
+    progressPanel.hidden = true;
+    const progressHeader = progressPanel.createDiv("knowgrove-runtime-progress-header");
+    const progressStatus = progressHeader.createSpan("knowgrove-runtime-progress-status");
+    const progressSize = progressHeader.createSpan("knowgrove-runtime-progress-size");
+    const progressBar = progressPanel.createEl("progress");
+    progressBar.max = 1;
+    const progressStages = progressPanel.createDiv("knowgrove-runtime-progress-stages");
+    const stageNames = ["检查环境", "下载组件", "校验文件", "配置组件"];
+    const stageEls = stageNames.map((name) =>
+      progressStages.createSpan({ cls: "knowgrove-runtime-progress-stage", text: name }));
+    const capabilityList = containerEl.createDiv("knowgrove-runtime-capabilities");
+    capabilityList.hidden = true;
+
+    let latestAudit: KnowGroveRuntimeAudit | undefined;
+    let latestProgress: RuntimeInstallProgress | undefined;
+    let downloadedInThisRun = false;
+    let lastProgressRenderedAt = 0;
+
+    const phaseIndex = (phase: RuntimeInstallProgress["phase"]): number => {
+      if (phase === "checking") return 0;
+      if (phase === "downloading") return 1;
+      if (phase === "verifying") return 2;
+      if (phase === "installing") return 3;
+      return 4;
+    };
+
+    const renderProgress = (progress: RuntimeInstallProgress, failed = false): void => {
+      latestProgress = progress;
+      progressPanel.hidden = false;
+      progressPanel.toggleClass("is-error", failed);
+      const totalBytes = progress.totalBytes || latestAudit?.packageSizeBytes || 0;
+      const completedBytes = Math.min(progress.completedBytes, totalBytes || progress.completedBytes);
+      progressStatus.setText(failed ? `配置失败：${progress.message}` : progress.message);
+      progressSize.setText(totalBytes > 0
+        ? `总包大小 ${formatRuntimeBytes(totalBytes)} · 已下载 ${formatRuntimeBytes(completedBytes)}`
+        : "正在获取运行包大小…");
+      if (totalBytes > 0) {
+        progressBar.value = progress.phase === "completed"
+          ? 1
+          : runtimeProgressRatio(completedBytes, totalBytes);
+      } else {
+        progressBar.removeAttribute("value");
+      }
+      const activeIndex = phaseIndex(progress.phase);
+      stageEls.forEach((stageEl, index) => {
+        stageEl.toggleClass("is-done", progress.phase === "completed" || index < activeIndex);
+        stageEl.toggleClass("is-active", !failed && progress.phase !== "completed" && index === activeIndex);
+      });
+    };
+
+    const renderCapabilities = (audit: KnowGroveRuntimeAudit): void => {
+      capabilityList.empty();
+      capabilityList.hidden = false;
+      for (const id of ["article", "video", "audio", "ai"] as const) {
+        const capability = audit.capabilities.find((item) => item.id === id);
+        if (!capability) continue;
+        const row = capabilityList.createDiv("knowgrove-runtime-capability");
+        row.addClass(`is-${capability.status}`);
+        row.createSpan("knowgrove-runtime-capability-dot");
+        const copy = row.createDiv("knowgrove-runtime-capability-copy");
+        const capabilityName = id === "article" ? "网页文章解析" : capability.name;
+        copy.createDiv({
+          cls: "knowgrove-runtime-capability-name",
+          text: `${capabilityName}${capability.status === "ready" ? "可用" : "不可用"}`,
+        });
+        copy.createDiv({
+          cls: "knowgrove-runtime-capability-detail",
+          text: capability.detail,
+        });
+      }
+    };
+
     const describeAudit = (audit: KnowGroveRuntimeAudit): string => {
-      const status = (id: "article" | "video" | "audio"): string =>
-        audit.capabilities.find((capability) => capability.id === id)?.status === "ready"
-          ? "可用"
-          : "不可用";
-      return [
-        `网页文章解析${status("article")}`,
-        `视频解析${status("video")}`,
-        `语音转录${status("audio")}`,
-      ].join(" · ");
+      const size = audit.packageSizeBytes
+        ? `运行包总大小 ${formatRuntimeBytes(audit.packageSizeBytes)}`
+        : "未获取到运行包大小";
+      return `${size}；已配置组件会自动复用。`;
     };
 
     const refresh = async (): Promise<void> => {
       setting.setDesc("正在检测自动整理组件…");
       try {
-        setting.setDesc(describeAudit(await this.plugin.auditRuntimeEnvironment()));
+        latestAudit = await this.plugin.auditRuntimeEnvironment();
+        setting.setDesc(describeAudit(latestAudit));
+        renderCapabilities(latestAudit);
+        if (latestProgress) renderProgress(latestProgress, progressPanel.hasClass("is-error"));
       } catch (error) {
         setting.setDesc(`检测失败：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -490,15 +565,37 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .setDisabled(!Platform.isDesktopApp)
         .onClick(async () => {
           button.setDisabled(true).setButtonText("配置中…");
+          downloadedInThisRun = false;
           try {
             await this.plugin.installRuntimeEnvironment((state) => {
-              setting.setDesc(`自动配置中：${state.message}`);
+              if (state.phase === "downloading" && state.completedBytes > 0) downloadedInThisRun = true;
+              const now = Date.now();
+              const phaseChanged = state.phase !== latestProgress?.phase;
+              latestProgress = state;
+              if (phaseChanged || state.phase === "completed" || now - lastProgressRenderedAt >= 100) {
+                renderProgress(state);
+                lastProgressRenderedAt = now;
+              }
             });
             new Notice("自动整理组件已配置");
             await refresh();
+            if (!downloadedInThisRun && latestProgress?.phase !== "completed") {
+              renderProgress({
+                phase: "completed",
+                message: "已复用现有组件，无需重复下载",
+                completedBytes: 0,
+                totalBytes: latestAudit?.packageSizeBytes ?? 0,
+              });
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             setting.setDesc(`自动配置失败：${message}`);
+            renderProgress({
+              phase: latestProgress?.phase ?? "checking",
+              message,
+              completedBytes: latestProgress?.completedBytes ?? 0,
+              totalBytes: latestProgress?.totalBytes || latestAudit?.packageSizeBytes || 0,
+            }, true);
             new Notice(`自动整理组件配置失败：${message}`, 9000);
           } finally {
             button.setDisabled(false).setButtonText("自动配置");
@@ -775,7 +872,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .addOption("minimax-cli", "MiniMax CLI")
         .addOption("glm-cli", "GLM CLI（zai 兼容）")
         .addOption("codebuddy-cli", "CodeBuddy CLI")
-        .addOption("workbuddy-cli", "WorkBuddy CLI（待协议支持）")
         .addOption("anthropic-api", "Anthropic API")
         .addOption("openai-compatible", "OpenAI 兼容接口")
         .setValue(settings.provider)
@@ -830,7 +926,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .setName("模型名称")
         .setDesc("从已检测或官方推荐的模型中选择；选择“自定义模型 ID”后才需要手动填写。")
         .addDropdown((dropdown) => {
-          dropdown.addOption("", "使用 CLI 默认模型");
+          dropdown.addOption(
+            "",
+            settings.provider === "codebuddy-cli"
+              ? "跟随 CodeBuddy 默认模型"
+              : "使用 CLI 默认模型",
+          );
           for (const model of models) dropdown.addOption(model, model);
           dropdown.addOption("__custom__", "自定义模型 ID…");
           dropdown.setValue(modelIsCustom ? "__custom__" : settings.model);
@@ -920,8 +1021,8 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     }
 
     new Setting(section)
-      .setName("连接与执行")
-      .setDesc("连接测试只发送一段插件内置的虚拟文本，不读取或修改你的笔记。")
+      .setName("重新检测本机 CLI")
+      .setDesc("安装、升级或切换本地 CLI 后使用；只刷新可执行路径和可用状态。")
       .addButton((button) => button
         .setButtonText("重新检测")
         .onClick(async () => {
@@ -931,22 +1032,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
             this.display();
           } finally {
             button.setDisabled(false).setButtonText("重新检测");
-          }
-        }))
-      .addButton((button) => button
-        .setButtonText("测试模型")
-        .onClick(async () => {
-          button.setDisabled(true).setButtonText("测试中…");
-          try {
-            const result = await this.plugin.testAIProviderConfiguration();
-            button.setButtonText(`成功：${Object.keys(result).join("、")}`);
-            new Notice(`AI 模型连接成功：${JSON.stringify(result)}`);
-          } catch (error) {
-            console.error("KnowGrove: AI provider test failed", error);
-            button.setButtonText("测试失败");
-            new Notice(`AI 模型测试失败：${error instanceof Error ? error.message : String(error)}`);
-          } finally {
-            window.setTimeout(() => button.setDisabled(false).setButtonText("测试模型"), 2_000);
           }
         }));
   }

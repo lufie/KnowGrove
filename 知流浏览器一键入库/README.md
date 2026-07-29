@@ -2,7 +2,7 @@
 
 知流是 KnowGrove 的浏览器入口：点击一次，把当前文章或视频整理到当前 Obsidian Vault。
 
-版本：Chrome 扩展 `0.3.1`，需配合 KnowGrove `2.3.2` 或更高版本。
+版本：Chrome 扩展 `0.3.2`，需配合 KnowGrove `2.5.2` 或更高版本。
 
 ## 目录
 
@@ -29,9 +29,11 @@
 
 1. 安装并启用 KnowGrove。
 2. 保持 Obsidian 打开。
-3. 在 Chrome 开发者模式加载 `安装文件/Chrome/请选择此文件夹安装-知流-0.3.1/`。
+3. 在 Chrome 开发者模式加载 `安装文件/Chrome/请选择此文件夹安装-知流-0.3.2/`。
 4. 点击扩展中的“连接 KnowGrove”，在 Obsidian 弹窗中允许。
 5. 打开文章或视频，点击“一键整理到 Obsidian”。
+
+Bilibili 视频会优先读取当前登录页面可见的官方字幕；字幕只作为文字传给本机 KnowGrove，浏览器 Cookie 不会离开浏览器。没有可用字幕时，KnowGrove 才会下载公开音频并使用本机 Whisper 转录。
 
 详见 [安装与使用说明](安装文件/安装与使用说明.md)。
 

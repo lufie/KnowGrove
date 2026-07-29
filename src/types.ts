@@ -5,18 +5,30 @@ export type PropertyValueType = "text" | "single" | "multi" | "date" | "checkbox
 export type PropertyFillStrategy = "none" | "file-name" | "empty-list" | "fixed";
 export type PropertyRuleOrigin = "system" | "user" | "inferred";
 export type PropertyEnumMode = "open" | "closed";
-export type AIProviderId =
-  | "codex-cli"
-  | "claude-cli"
-  | "antigravity-cli"
-  | "qoder-cli"
-  | "kimi-cli"
-  | "minimax-cli"
-  | "glm-cli"
-  | "codebuddy-cli"
-  | "workbuddy-cli"
-  | "anthropic-api"
-  | "openai-compatible";
+export const AI_PROVIDER_IDS = [
+  "codex-cli",
+  "claude-cli",
+  "antigravity-cli",
+  "qoder-cli",
+  "kimi-cli",
+  "minimax-cli",
+  "glm-cli",
+  "codebuddy-cli",
+  "anthropic-api",
+  "openai-compatible",
+] as const;
+
+export type AIProviderId = typeof AI_PROVIDER_IDS[number];
+
+export function normalizeAIProviderId(
+  value: unknown,
+  fallback: AIProviderId = "codex-cli",
+): AIProviderId {
+  if (value === "workbuddy-cli") return "codebuddy-cli";
+  return typeof value === "string" && (AI_PROVIDER_IDS as readonly string[]).includes(value)
+    ? value as AIProviderId
+    : fallback;
+}
 
 export interface PropertyDimensionConfig {
   id: string;

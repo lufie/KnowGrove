@@ -69,6 +69,7 @@ export interface KnowGroveRuntimeAudit {
   runtimeRoot: string;
   sourceReachable: boolean;
   sourceDetail: string;
+  packageSizeBytes?: number;
   diskFreeBytes?: number;
   tools: Partial<Record<KnowGroveRuntimeArtifactId, string>>;
   capabilities: KnowGroveRuntimeCapability[];
@@ -139,6 +140,15 @@ export function runtimeManifestCandidates(configuredUrl = ""): string[] {
     configuredUrl.trim(),
     ...DEFAULT_RUNTIME_MANIFEST_URLS,
   ].filter(Boolean)));
+}
+
+export function selectNewestRuntimeManifest<T extends {
+  manifest: Pick<KnowGroveRuntimeManifest, "runtimeVersion">;
+  url: string;
+}>(candidates: T[]): T | undefined {
+  return [...candidates].sort((left, right) =>
+    compareRuntimeVersions(right.manifest.runtimeVersion, left.manifest.runtimeVersion),
+  )[0];
 }
 
 export function stableRuntimeJson(value: unknown): string {
@@ -238,6 +248,15 @@ export function formatRuntimeBytes(bytes: number): string {
     unit += 1;
   }
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+export function runtimeProgressRatio(completedBytes: number, totalBytes: number): number {
+  if (!Number.isFinite(completedBytes) || !Number.isFinite(totalBytes) || totalBytes <= 0) return 0;
+  return Math.min(1, Math.max(0, completedBytes / totalBytes));
+}
+
+export function shouldRestartRuntimeDownload(errorMessage: string): boolean {
+  return errorMessage.includes("不支持断点续传");
 }
 
 export function validateSkillPack(value: unknown): KnowGroveSkillPack {

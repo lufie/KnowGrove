@@ -7,6 +7,9 @@ import {
   formatRuntimeBytes,
   platformArtifacts,
   runtimeManifestCandidates,
+  selectNewestRuntimeManifest,
+  shouldRestartRuntimeDownload,
+  runtimeProgressRatio,
   stableRuntimeJson,
   totalArtifactBytes,
   unsignedRuntimeManifest,
@@ -76,6 +79,21 @@ test("runtime version comparison handles normalized semantic versions", () => {
   assert.equal(compareRuntimeVersions("2.5", "2.5.0"), 0);
 });
 
+test("runtime download recovery resumes transient failures and restarts only when Range is unsupported", () => {
+  assert.equal(shouldRestartRuntimeDownload("Error: aborted"), false);
+  assert.equal(shouldRestartRuntimeDownload("运行包下载连接超时"), false);
+  assert.equal(shouldRestartRuntimeDownload("下载源不支持断点续传，请重试"), true);
+});
+
+test("runtime source selection uses the newest signed release instead of the first reachable mirror", () => {
+  const selected = selectNewestRuntimeManifest([
+    { manifest: { runtimeVersion: "1.0.0" }, url: "https://cnb.example/runtime.json" },
+    { manifest: { runtimeVersion: "1.0.1" }, url: "https://github.example/runtime.json" },
+  ]);
+  assert.equal(selected?.manifest.runtimeVersion, "1.0.1");
+  assert.equal(selected?.url, "https://github.example/runtime.json");
+});
+
 test("runtime manifest validation rejects traversal and insecure mirrors", () => {
   assert.equal(validateRuntimeManifest(manifest()).runtimeVersion, "1.0.0");
   const traversal = manifest();
@@ -101,6 +119,13 @@ test("runtime artifact helpers report platform size", () => {
   assert.equal(totalArtifactBytes(artifacts), 30);
   assert.equal(formatRuntimeBytes(1024 * 1024), "1.0 MB");
   assert.throws(() => platformArtifacts(manifest(), "win32-x64"), /不支持/);
+});
+
+test("runtime progress ratio is bounded and handles unknown totals", () => {
+  assert.equal(runtimeProgressRatio(25, 100), 0.25);
+  assert.equal(runtimeProgressRatio(120, 100), 1);
+  assert.equal(runtimeProgressRatio(-10, 100), 0);
+  assert.equal(runtimeProgressRatio(10, 0), 0);
 });
 
 test("runtime Skill Pack accepts bounded data-only prompts", () => {

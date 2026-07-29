@@ -243,6 +243,7 @@ import {
 } from "./property-workbench";
 import {
   createDefaultSettings,
+  normalizeAIProviderId,
   type AIPropertyRunState,
   type AIProviderAvailability,
   type AIProviderId,
@@ -1108,6 +1109,29 @@ export default class KnowGrovePlugin extends Plugin {
       || savedBrowserCapture?.autoProcessLinkNotes !== autoProcessNewNotes
       || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
     const needsKeepAudioSourceMigration = savedBrowserCapture?.keepAudioSource === false;
+    const savedAIProvider = (savedAIProperties as { provider?: unknown } | undefined)?.provider;
+    const normalizedAIProvider = normalizeAIProviderId(savedAIProvider, defaults.aiProperties.provider);
+    const savedBrowserProviders = savedBrowserCapture as {
+      articleProvider?: unknown;
+      videoProvider?: unknown;
+      audioProvider?: unknown;
+    } | undefined;
+    const browserProviderValues = [
+      savedBrowserProviders?.articleProvider,
+      savedBrowserProviders?.videoProvider,
+      savedBrowserProviders?.audioProvider,
+    ];
+    const browserProviderFallbacks = [
+      defaults.browserCapture.articleProvider,
+      defaults.browserCapture.videoProvider,
+      defaults.browserCapture.audioProvider,
+    ];
+    const needsAIProviderMigration = (
+      typeof savedAIProvider === "string" && savedAIProvider !== normalizedAIProvider
+    ) || browserProviderValues.some((provider, index) => (
+      typeof provider === "string"
+      && provider !== normalizeAIProviderId(provider, browserProviderFallbacks[index])
+    ));
     this.data = {
       schemaVersion: PROPERTY_RULE_SCHEMA_VERSION,
       uiMigrationVersion: typeof saved.uiMigrationVersion === "number" ? saved.uiMigrationVersion : 0,
@@ -1124,6 +1148,7 @@ export default class KnowGrovePlugin extends Plugin {
           ...defaults.aiProperties,
           ...(savedAIProperties ?? {}),
           autoEnrichNewNotes: autoProcessNewNotes,
+          provider: normalizedAIProvider,
         },
         runtime: {
           ...defaults.runtime,
@@ -1134,6 +1159,18 @@ export default class KnowGrovePlugin extends Plugin {
           ...(savedBrowserCapture ?? {}),
           autoProcessLinkNotes: autoProcessNewNotes,
           keepAudioSource: true,
+          articleProvider: normalizeAIProviderId(
+            savedBrowserProviders?.articleProvider,
+            defaults.browserCapture.articleProvider,
+          ),
+          videoProvider: normalizeAIProviderId(
+            savedBrowserProviders?.videoProvider,
+            defaults.browserCapture.videoProvider,
+          ),
+          audioProvider: normalizeAIProviderId(
+            savedBrowserProviders?.audioProvider,
+            defaults.browserCapture.audioProvider,
+          ),
         },
         creationStudio: {
           ...defaults.creationStudio,
@@ -1165,6 +1202,7 @@ export default class KnowGrovePlugin extends Plugin {
       || needsRuleMigration
       || needsAutoProcessMigration
       || needsKeepAudioSourceMigration
+      || needsAIProviderMigration
       || migrateLegacyFocusProperty
     ) {
       await this.savePluginData();
@@ -1591,30 +1629,6 @@ export default class KnowGrovePlugin extends Plugin {
     const detected = this.aiProviderAvailability?.find((provider) => provider.id === settings.provider);
     const model = settings.model.trim() || detected?.configuredModel || "默认模型";
     return `${providerName(settings.provider)} · ${model}`;
-  }
-
-  async testAIProviderConfiguration(): Promise<Record<string, unknown>> {
-    const settings = this.settings.aiProperties;
-    const dimensions = aiManagedDimensions(this.settings.propertySystem.dimensions);
-    if (!dimensions.length) throw new Error("请先至少开启一个 AI 管理字段");
-    const availability = await this.getAIProviders(true);
-    const selected = availability.find((provider) => provider.id === settings.provider);
-    if (selected && !selected.available) throw new Error(selected.detail);
-    const prompt = buildAIPropertyPrompt({
-      path: "KnowGrove/AI-connection-test.md",
-      basename: "AI 属性连接测试",
-      frontmatter: { 类型: "输入资料", 状态: "待整理" },
-      body: "这是一篇讨论如何使用人工智能产品改善个人知识管理、自动分类笔记和构建主题体系的测试文章。",
-      dimensions,
-      maxContentCharacters: automaticAIContentCharacterLimit(
-        settings.provider,
-        settings.model,
-        selected?.configuredModel,
-      ),
-      taxonomy: this.settings.propertySystem.taxonomy,
-    });
-    const raw = await runAIProvider(settings, prompt, availability, this.getAISecret(settings.provider));
-    return parseAIPropertyResponse(raw, dimensions, { 类型: "输入资料", 状态: "待整理" }).properties;
   }
 
   private async readAIPropertyContext(file: TFile): Promise<{

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildAIBatchPropertyPrompt,
   buildAIPropertyPrompt,
@@ -9,13 +12,27 @@ import {
   pendingAIManagedDimensions,
   truncateForAI,
 } from "../src/ai-property";
-import { createDefaultSettings } from "../src/types";
+import {
+  AI_PROVIDER_IDS,
+  createDefaultSettings,
+  normalizeAIProviderId,
+} from "../src/types";
 import {
   automaticAIContentCharacterLimit,
   buildAntigravityArguments,
   formatCLIProviderError,
+  parseCodexModelCache,
+  parseCodeBuddyModels,
+  parseModelsFromHelp,
+  parseQoderModels,
   providerModelOptions,
 } from "../src/ai-provider-utils";
+import {
+  buildExecutableCandidates,
+  buildExecutableSearchDirectories,
+  mergeExecutablePath,
+  resolveLocalExecutable,
+} from "../src/local-cli";
 
 function semanticDimensions() {
   return createDefaultSettings().propertySystem.dimensions.filter((dimension) => dimension.aiManaged);
@@ -155,6 +172,35 @@ test("provider model dropdown keeps detected defaults and exposes safe fallbacks
     id: "qoder-cli", name: "Qoder CLI", available: true, detail: "ok", configuredModel: "ultimate",
   }), ["ultimate"]);
   assert.deepEqual(providerModelOptions("glm-cli"), ["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.5-air"]);
+  assert.deepEqual(providerModelOptions("codebuddy-cli").slice(0, 4), [
+    "hy3",
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5v-turbo",
+  ]);
+});
+
+test("CodeBuddy models are read from the installed CLI help instead of legacy WorkBuddy labels", () => {
+  assert.deepEqual(parseCodeBuddyModels(`
+    --model <model> Model for the current session.
+    Currently supported: (hy3, glm-5.2, minimax-m3, kimi-k3-1, deepseek-v4-pro)
+  `), ["hy3", "glm-5.2", "minimax-m3", "kimi-k3-1", "deepseek-v4-pro"]);
+  assert.deepEqual(parseCodeBuddyModels("Currently supported: (hy3, ../../secret, hy3)"), ["hy3"]);
+});
+
+test("dynamic CLI model parsers accept current provider-owned outputs", () => {
+  assert.deepEqual(parseQoderModels("MODEL\nUltimate\n"), ["Ultimate"]);
+  assert.deepEqual(parseCodexModelCache(JSON.stringify({
+    models: [
+      { slug: "gpt-5.6-sol", visibility: "list" },
+      { slug: "retired-hidden", visibility: "hide" },
+      { slug: "gpt-5.6-terra", visibility: "list" },
+    ],
+  })), ["gpt-5.6-sol", "gpt-5.6-terra"]);
+  assert.deepEqual(parseModelsFromHelp([
+    "--model <model> Model ID (default: MiniMax-M2.7)",
+    "mmx text chat --model MiniMax-M2.7-highspeed --message hello",
+  ].join("\n")), ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]);
 });
 
 test("AI content limit is automatic and conservative for unknown local models", () => {
@@ -179,4 +225,73 @@ test("Antigravity passes the prompt after print mode instead of stdin", () => {
     buildAntigravityArguments("Claude Opus 4.6 (Thinking)", "只返回 JSON"),
     ["--sandbox", "--model", "Claude Opus 4.6 (Thinking)", "--print", "只返回 JSON"],
   );
+});
+
+test("local CLI search includes login-shell and native Claude install paths on macOS", () => {
+  const directories = buildExecutableSearchDirectories({
+    platform: "darwin",
+    homeDirectory: "/Users/example",
+    env: { PATH: "/usr/bin:/bin" },
+    loginShellPath: "/Users/example/.nvm/versions/node/v22/bin:/opt/custom/bin",
+  });
+  assert.deepEqual(directories.slice(0, 4), [
+    "/Users/example/.nvm/versions/node/v22/bin",
+    "/opt/custom/bin",
+    "/usr/bin",
+    "/bin",
+  ]);
+  assert.ok(directories.includes("/Users/example/.local/bin"));
+  assert.ok(directories.includes("/opt/homebrew/bin"));
+  assert.ok(buildExecutableCandidates("claude", {
+    platform: "darwin",
+    homeDirectory: "/Users/example",
+    env: { PATH: "/usr/bin" },
+  }).includes("/Users/example/.local/bin/claude"));
+});
+
+test("local CLI search covers native and npm Claude launchers on Windows", () => {
+  const candidates = buildExecutableCandidates("claude", {
+    platform: "win32",
+    homeDirectory: "C:\\Users\\Example",
+    env: {
+      Path: "C:\\Windows\\System32",
+      PATHEXT: ".EXE;.CMD",
+      APPDATA: "C:\\Users\\Example\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local",
+    },
+  });
+  assert.ok(candidates.includes("C:\\Users\\Example\\.local\\bin\\claude.exe"));
+  assert.ok(candidates.includes("C:\\Users\\Example\\AppData\\Roaming\\npm\\claude.cmd"));
+  assert.match(mergeExecutablePath(
+    "C:\\Users\\Example\\.local\\bin\\claude.exe",
+    "",
+    {
+      platform: "win32",
+      homeDirectory: "C:\\Users\\Example",
+      env: { Path: "C:\\Windows\\System32" },
+    },
+  ), /;/);
+});
+
+test("local CLI resolution finds an executable exposed only by the login shell PATH", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "knowgrove-cli-test-"));
+  const executable = join(directory, "claude");
+  try {
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", "utf8");
+    await chmod(executable, 0o755);
+    assert.equal(await resolveLocalExecutable("claude", {
+      platform: "darwin",
+      homeDirectory: "/Users/example",
+      env: { PATH: "/usr/bin:/bin" },
+      loginShellPath: directory,
+    }), executable);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy WorkBuddy provider settings migrate to CodeBuddy and disappear from supported providers", () => {
+  assert.equal(normalizeAIProviderId("workbuddy-cli"), "codebuddy-cli");
+  assert.equal(AI_PROVIDER_IDS.includes("codebuddy-cli"), true);
+  assert.equal((AI_PROVIDER_IDS as readonly string[]).includes("workbuddy-cli"), false);
 });

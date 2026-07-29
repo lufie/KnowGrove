@@ -1,5 +1,6 @@
 import {
   bridgeRequest,
+  captureBilibiliTranscript,
   capturePageContent,
   detectPageType,
   extensionApi,
@@ -150,9 +151,12 @@ async function submitFromContextMenu(info, tab) {
   const settings = await loadSettings();
   const url = info.linkUrl || info.pageUrl || tab?.url;
   if (!url) throw new Error("没有找到可整理的网页链接");
-  const pageContent = !info.linkUrl && detectPageType(url) === "article"
-    ? await capturePageContent(tab?.id)
-    : null;
+  const pageType = detectPageType(url);
+  const pageContent = info.linkUrl
+    ? null
+    : pageType === "article"
+      ? await capturePageContent(tab?.id)
+      : await captureBilibiliTranscript(tab?.id);
   await setBadge("…", "#a46616");
   const accepted = await bridgeRequest(settings, "/v1/capture", {
     method: "POST",
@@ -165,6 +169,7 @@ async function submitFromContextMenu(info, tab) {
       author: pageContent?.author || "",
       publishedAt: pageContent?.publishedAt || "",
       sourceKind: pageContent?.sourceKind || "",
+      transcript: pageContent?.transcript || "",
     }),
   });
   await extensionApi.storage.local.set({

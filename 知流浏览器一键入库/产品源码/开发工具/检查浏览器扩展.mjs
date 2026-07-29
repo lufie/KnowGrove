@@ -29,6 +29,7 @@ check(manifest.permissions?.includes("tabs"), "读取当前页面 URL 和标题�
 check(manifest.permissions?.includes("activeTab"), "读取用户主动提交页面的可见正文需要 activeTab 权限");
 check(manifest.permissions?.includes("scripting"), "按用户操作提取当前页面正文需要 scripting 权限");
 check(manifest.permissions?.includes("alarms"), "后台任务进度恢复需要 alarms 权限");
+check(!manifest.permissions?.includes("cookies"), "扩展不得申请 cookies 权限");
 check(!manifest.host_permissions?.includes("<all_urls>"), "不得使用 <all_urls> 主机权限");
 for (const host of manifest.host_permissions ?? []) {
   check(
@@ -63,8 +64,17 @@ for (const path of javaScriptFiles) {
   const source = await readFile(resolve(extensionRoot, path), "utf8");
   check(!/\beval\s*\(/.test(source), `${path} 使用了 eval`);
   check(!/\bnew\s+Function\s*\(/.test(source), `${path} 使用了 new Function`);
+  check(!/(?:document|chrome|browser)\.cookies?\b/.test(source), `${path} 不得读取浏览器 Cookie`);
   check(!/\.then\s*\(/.test(source), `${path} 使用了 .then()，应改为 async/await`);
   check(!/bridge:init|bridge:start|本地助手/.test(source), `${path} 仍引用已删除的独立本地助手`);
+  if (path === "common.js") {
+    check(/const pathBvid = location\.pathname\.match/.test(source), "Bilibili 字幕必须优先使用当前页面 BV 号");
+    check(/x\/web-interface\/view\?bvid=/.test(source), "Bilibili 单页切换后必须重新获取当前视频 CID");
+    check(
+      /fetch\(subtitleUrl, \{ credentials: "omit" \}\)/.test(source),
+      "Bilibili 字幕正文必须避免携带凭据触发跨域失败",
+    );
+  }
 }
 
 if (errors.length) {

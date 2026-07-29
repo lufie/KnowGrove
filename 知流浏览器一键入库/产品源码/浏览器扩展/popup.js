@@ -1,5 +1,6 @@
 import {
   bridgeRequest,
+  captureBilibiliTranscript,
   capturePageContent,
   clipText,
   detectPageType,
@@ -149,7 +150,7 @@ async function startCapture() {
   try {
     const pageContent = currentPageType === "article"
       ? await capturePageContent(currentTab.id)
-      : null;
+      : await captureBilibiliTranscript(currentTab.id);
     const accepted = await bridgeRequest(currentSettings, "/v1/capture", {
       method: "POST",
       body: JSON.stringify({
@@ -161,6 +162,7 @@ async function startCapture() {
         author: pageContent?.author || "",
         publishedAt: pageContent?.publishedAt || "",
         sourceKind: pageContent?.sourceKind || "",
+        transcript: pageContent?.transcript || "",
       }),
     });
     const snapshot = {

@@ -152,6 +152,86 @@ export async function capturePageContent(tabId) {
   }
 }
 
+export async function captureBilibiliTranscript(tabId) {
+  if (!tabId || !extensionApi.scripting) return null;
+  try {
+    const results = await extensionApi.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: async () => {
+        const state = globalThis.__INITIAL_STATE__ ?? {};
+        const videoData = state.videoData ?? {};
+        const pathBvid = location.pathname.match(/\/video\/(BV[a-zA-Z0-9]+)/)?.[1] ?? "";
+        const stateBvid = String(videoData.bvid ?? state.bvid ?? "");
+        const bvid = String(pathBvid || stateBvid);
+        let title = stateBvid === bvid ? String(videoData.title ?? "") : "";
+        let cid = Number(
+          (stateBvid === bvid ? videoData.cid ?? state.cidMap?.[bvid]?.cids?.[0] : 0)
+          ?? new URL(location.href).searchParams.get("cid")
+          ?? 0,
+        );
+        if (bvid && (!cid || stateBvid !== bvid)) {
+          const viewResponse = await fetch(
+            `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
+            { credentials: "include" },
+          );
+          if (viewResponse.ok) {
+            const view = await viewResponse.json();
+            cid = Number(view?.data?.pages?.[0]?.cid ?? view?.data?.cid ?? cid);
+            title = String(view?.data?.title ?? title);
+          }
+        }
+        if (!bvid || !cid) return null;
+        const playerResponse = await fetch(
+          `https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(bvid)}&cid=${encodeURIComponent(cid)}`,
+          { credentials: "include" },
+        );
+        if (!playerResponse.ok) return null;
+        const player = await playerResponse.json();
+        const subtitles = Array.isArray(player?.data?.subtitle?.subtitles)
+          ? player.data.subtitle.subtitles
+          : [];
+        const ranked = [...subtitles].sort((left, right) => {
+          const rank = (item) => {
+            const language = String(item?.lan ?? "").toLowerCase();
+            if (/zh[-_]?hans|zh[-_]?cn/.test(language)) return 0;
+            if (/ai[-_]?zh/.test(language)) return 1;
+            if (language === "zh") return 2;
+            if (/zh[-_]?hant|zh[-_]?tw/.test(language)) return 3;
+            if (language.startsWith("en")) return 4;
+            return 10;
+          };
+          return rank(left) - rank(right);
+        });
+        for (const item of ranked) {
+          const rawUrl = String(item?.subtitle_url ?? "").trim();
+          if (!rawUrl) continue;
+          const subtitleUrl = rawUrl.startsWith("//") ? `https:${rawUrl}` : rawUrl;
+          const subtitleResponse = await fetch(subtitleUrl, { credentials: "omit" });
+          if (!subtitleResponse.ok) continue;
+          const subtitle = await subtitleResponse.json();
+          const transcript = (Array.isArray(subtitle?.body) ? subtitle.body : [])
+            .map((line) => String(line?.content ?? "").trim())
+            .filter(Boolean)
+            .join("\n");
+          if (transcript) {
+            return {
+              title: String(title || document.title || "").trim().slice(0, 500),
+              transcript: transcript.slice(0, 120_000),
+              language: String(item?.lan ?? ""),
+            };
+          }
+        }
+        return null;
+      },
+    });
+    const captured = results?.[0]?.result;
+    return captured?.transcript?.length >= 20 ? captured : null;
+  } catch {
+    return null;
+  }
+}
+
 export function pageTypeLabel(pageType) {
   return pageType === "video" ? "视频" : "文章";
 }

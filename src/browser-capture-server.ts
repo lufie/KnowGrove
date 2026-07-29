@@ -26,14 +26,19 @@ import {
   cleanArticleMarkdown,
   extractArticleFromHtml,
   extractJsonObject,
+  formatYtDlpCaptureError,
+  formatTranscriptParagraphs,
   normalizeBrowserCaptureAIResult,
-  parseWebVtt,
+  parseSubtitleText,
   protectArticleImages,
   restoreArticleImages,
   safeCaptureFileName,
+  selectPreferredSubtitleFile,
   selectedCaptureProvider,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
+  ytDlpCaptureArgs,
+  ytDlpSubtitleArgs,
   type BrowserCaptureAIResult,
   type BrowserCapturePageType,
 } from "./browser-capture-core";
@@ -639,12 +644,18 @@ export class BrowserCaptureServer {
         source: String(body.source ?? "extension").slice(0, 80),
       });
       const browserContent = String(body.content ?? "").trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const browserTranscript = String(body.transcript ?? "").trim().slice(0, MAX_SOURCE_CHARACTERS);
       if (pageType === "article" && browserContent.length >= 80) {
         this.capturedSources.set(job.id, {
           title: String(body.contentTitle ?? body.title ?? "").trim().slice(0, 500) || job.title,
           source: browserContent,
           author: String(body.author ?? "").trim().slice(0, 500) || undefined,
           publishedAt: String(body.publishedAt ?? "").trim().slice(0, 200) || undefined,
+        });
+      } else if (pageType === "video" && browserTranscript.length >= 20) {
+        this.capturedSources.set(job.id, {
+          title: String(body.contentTitle ?? body.title ?? "").trim().slice(0, 500) || job.title,
+          source: formatTranscriptParagraphs(browserTranscript),
         });
       }
       this.queue.push(job.id);
@@ -804,7 +815,7 @@ export class BrowserCaptureServer {
         lastWrittenContent = await this.host.app.vault.read(noteFile);
       } else {
         extracted = job.pageType === "video"
-          ? await this.extractVideo(job)
+          ? this.capturedSources.get(id) ?? await this.extractVideo(job)
           : job.pageType === "audio"
             ? await this.extractAudio(job, noteFile.path)
             : this.capturedSources.get(id) ?? await this.extractArticle(job);
@@ -1222,33 +1233,25 @@ export class BrowserCaptureServer {
     try {
       const titleResult = await runLocalCommand(
         downloader,
-        ["--skip-download", "--print", "%(title)s", job.url],
+        [...ytDlpCaptureArgs(job.url), "--skip-download", "--print", "%(title)s", job.url],
         "",
         90,
       );
       const title = titleResult.exitCode === 0
         ? titleResult.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || job.title
         : job.title;
-      const subtitleResult = await runLocalCommand(
+      await runLocalCommand(
         downloader,
-        [
-          "--skip-download",
-          "--write-subs",
-          "--write-auto-subs",
-          "--sub-langs",
-          "zh-Hans,zh-Hant,zh,en",
-          "--sub-format",
-          "vtt",
-          "-o",
-          join(directory, "source.%(ext)s"),
-          job.url,
-        ],
+        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), job.url),
         "",
         15 * 60,
       );
-      const subtitleFiles = (await readdir(directory)).filter((name) => name.endsWith(".vtt"));
-      if (subtitleFiles.length) {
-        const transcript = parseWebVtt(await readFile(join(directory, subtitleFiles[0]!), "utf8"));
+      const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
+      if (subtitleFile) {
+        const transcript = parseSubtitleText(
+          await readFile(join(directory, subtitleFile), "utf8"),
+          subtitleFile,
+        );
         if (transcript) return { title: title || "未命名视频", source: transcript };
       }
       // A subtitle lookup can fail even when the public audio remains downloadable.
@@ -1260,6 +1263,7 @@ export class BrowserCaptureServer {
       const audioResult = await runLocalCommand(
         downloader,
         [
+          ...ytDlpCaptureArgs(job.url),
           ...ffmpegLocationArgs(settings),
           "-x",
           "--audio-format",
@@ -1272,7 +1276,10 @@ export class BrowserCaptureServer {
         60 * 60,
       );
       if (audioResult.exitCode !== 0) {
-        throw new Error(audioResult.stderr.trim() || "视频音频下载失败");
+        throw new Error(formatYtDlpCaptureError(
+          `${audioResult.stderr}\n${audioResult.stdout}`,
+          job.url,
+        ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
       if (!audioFile) throw new Error("没有找到已下载的视频音频");
@@ -1314,7 +1321,7 @@ export class BrowserCaptureServer {
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
         transcriptPath = join(directory, transcriptFile);
       }
-      const transcript = (await readFile(transcriptPath, "utf8")).trim();
+      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
       if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
       return { title: title || "未命名视频", source: transcript };
     } finally {
@@ -1332,7 +1339,7 @@ export class BrowserCaptureServer {
     try {
       const titleResult = await runLocalCommand(
         downloader,
-        ["--skip-download", "--print", "%(title)s", job.url],
+        [...ytDlpCaptureArgs(job.url), "--skip-download", "--print", "%(title)s", job.url],
         "",
         90,
       );
@@ -1342,6 +1349,7 @@ export class BrowserCaptureServer {
       const audioResult = await runLocalCommand(
         downloader,
         [
+          ...ytDlpCaptureArgs(job.url),
           ...ffmpegLocationArgs(settings),
           "-x",
           "--audio-format",
@@ -1354,7 +1362,10 @@ export class BrowserCaptureServer {
         60 * 60,
       );
       if (audioResult.exitCode !== 0) {
-        throw new Error(audioResult.stderr.trim() || "音频下载失败");
+        throw new Error(formatYtDlpCaptureError(
+          `${audioResult.stderr}\n${audioResult.stdout}`,
+          job.url,
+        ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
       if (!audioFile) throw new Error("没有找到已下载的音频文件");
@@ -1392,7 +1403,7 @@ export class BrowserCaptureServer {
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
         transcriptPath = join(directory, transcriptFile);
       }
-      const transcript = (await readFile(transcriptPath, "utf8")).trim();
+      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
       if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
       return {
         title: title || job.title || "未命名音频",

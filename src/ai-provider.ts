@@ -4,8 +4,17 @@ import {
   FALLBACK_PROVIDER_MODELS,
   buildAntigravityArguments,
   formatCLIProviderError,
+  parseCodexModelCache,
+  parseCodeBuddyModels,
+  parseModelsFromHelp,
+  parsePlainModelList,
+  parseQoderModels,
   providerModelOptions,
 } from "./ai-provider-utils";
+import {
+  mergeExecutablePath,
+  resolveLocalExecutable,
+} from "./local-cli";
 
 export { automaticAIContentCharacterLimit, providerModelOptions } from "./ai-provider-utils";
 
@@ -17,7 +26,7 @@ export interface LocalCommandResult {
 
 const MAX_PROVIDER_OUTPUT = 2_000_000;
 type CLIProviderId = Extract<AIProviderId,
-  "codex-cli" | "claude-cli" | "antigravity-cli" | "qoder-cli" | "kimi-cli" | "minimax-cli" | "glm-cli" | "codebuddy-cli" | "workbuddy-cli">;
+  "codex-cli" | "claude-cli" | "antigravity-cli" | "qoder-cli" | "kimi-cli" | "minimax-cli" | "glm-cli" | "codebuddy-cli">;
 
 export interface AIProviderDetectionOptions {
   secretStorageAvailable: boolean;
@@ -34,7 +43,6 @@ const CLI_EXECUTABLES: Record<CLIProviderId, string[]> = {
   "minimax-cli": ["mmx"],
   "glm-cli": ["zai", "glm"],
   "codebuddy-cli": ["codebuddy"],
-  "workbuddy-cli": ["workbuddy"],
 };
 
 export function isCLIProvider(provider: AIProviderId): boolean {
@@ -65,10 +73,56 @@ export function providerName(provider: AIProviderId): string {
     "minimax-cli": "MiniMax CLI",
     "glm-cli": "GLM CLI",
     "codebuddy-cli": "CodeBuddy CLI",
-    "workbuddy-cli": "WorkBuddy CLI",
     "anthropic-api": "Anthropic API",
     "openai-compatible": "OpenAI 兼容接口",
   }[provider];
+}
+
+let loginShellPathPromise: Promise<string> | undefined;
+
+async function readLoginShellPath(): Promise<string> {
+  if (process.platform === "win32") return "";
+  if (!loginShellPathPromise) {
+    loginShellPathPromise = (async () => {
+      const { spawn } = require("node:child_process") as typeof import("node:child_process");
+      const shell = process.env.SHELL?.trim() || "/bin/zsh";
+      const marker = "__KNOWGROVE_LOGIN_PATH__";
+      return await new Promise<string>((resolve) => {
+        const child = spawn(
+          shell,
+          ["-ilc", `printf '\\n${marker}%s\\n' "$PATH"`],
+          { env: process.env, stdio: ["ignore", "pipe", "ignore"], shell: false },
+        );
+        let stdout = "";
+        const timer = globalThis.setTimeout(() => {
+          child.kill("SIGTERM");
+          resolve("");
+        }, 4_000);
+        child.stdout.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+          if (stdout.length > 100_000) stdout = stdout.slice(-100_000);
+        });
+        child.once("error", () => {
+          globalThis.clearTimeout(timer);
+          resolve("");
+        });
+        child.once("close", () => {
+          globalThis.clearTimeout(timer);
+          const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+          resolve(line?.slice(marker.length).trim() ?? "");
+        });
+      });
+    })();
+  }
+  return loginShellPathPromise;
+}
+
+function setEnvironmentPath(
+  environment: NodeJS.ProcessEnv,
+  value: string,
+): NodeJS.ProcessEnv {
+  const pathKey = Object.keys(environment).find((name) => name.toLowerCase() === "path") ?? "PATH";
+  return { ...environment, [pathKey]: value };
 }
 
 export async function runLocalCommand(
@@ -84,14 +138,36 @@ export async function runLocalCommand(
   const { join } = require("node:path") as typeof import("node:path");
   const { StringDecoder } = require("node:string_decoder") as typeof import("node:string_decoder");
   const workingDirectory = await mkdtemp(join(tmpdir(), "knowgrove-ai-"));
-  const executableDirectory = executable.includes("/") ? executable.slice(0, executable.lastIndexOf("/")) : "";
-  const pathEntries = [executableDirectory, "/opt/homebrew/bin", "/usr/local/bin", process.env.PATH]
-    .filter(Boolean);
+  const loginShellPath = await readLoginShellPath();
+  const resolvedExecutable = await resolveLocalExecutable(executable, { loginShellPath }) ?? executable;
+  let environment = setEnvironmentPath(
+    process.env,
+    mergeExecutablePath(resolvedExecutable, loginShellPath),
+  );
+  const isWindowsCommandScript = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(resolvedExecutable);
+  const spawnExecutable = isWindowsCommandScript
+    ? "powershell.exe"
+    : resolvedExecutable;
+  let spawnArguments = args;
+  if (isWindowsCommandScript) {
+    environment = {
+      ...environment,
+      KNOWGROVE_CLI_EXECUTABLE: resolvedExecutable,
+      KNOWGROVE_CLI_ARGUMENTS: JSON.stringify(args),
+    };
+    spawnArguments = [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$kgArgs = @(ConvertFrom-Json $env:KNOWGROVE_CLI_ARGUMENTS); & $env:KNOWGROVE_CLI_EXECUTABLE @kgArgs; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }",
+    ];
+  }
   try {
     return await new Promise<LocalCommandResult>((resolve, reject) => {
-      const child = spawn(executable, args, {
+      const child = spawn(spawnExecutable, spawnArguments, {
         cwd: workingDirectory,
-        env: { ...process.env, PATH: Array.from(new Set(pathEntries)).join(":") },
+        env: environment,
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
       });
@@ -111,6 +187,9 @@ export async function runLocalCommand(
         finish(() => reject(new Error(`${executable} 运行超过 ${timeoutSeconds} 秒，已停止`)));
       }, Math.max(5, timeoutSeconds) * 1_000);
       child.once("error", (error) => finish(() => reject(error)));
+      child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EPIPE") finish(() => reject(error));
+      });
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += stdoutDecoder.write(chunk);
         if (stdout.length > MAX_PROVIDER_OUTPUT) {
@@ -140,18 +219,17 @@ async function detectExecutable(
 ): Promise<AIProviderAvailability> {
   const executableNames = CLI_EXECUTABLES[id];
   const executableName = executableNames[0];
-  const { homedir } = require("node:os") as typeof import("node:os");
-  const { join } = require("node:path") as typeof import("node:path");
+  const loginShellPath = await readLoginShellPath();
+  const configuredExecutable = configuredPath.trim()
+    ? await resolveLocalExecutable(configuredPath, { loginShellPath })
+    : undefined;
+  const resolvedExecutables = await Promise.all(
+    executableNames.map((name) => resolveLocalExecutable(name, { loginShellPath })),
+  );
   const candidates = Array.from(new Set([
-    configuredPath.trim(),
-    ...executableNames.flatMap((name) => [
-      `/opt/homebrew/bin/${name}`,
-      `/usr/local/bin/${name}`,
-      join(homedir(), ".local", "bin", name),
-      join(homedir(), ".antigravity", "bin", name),
-      name,
-    ]),
-  ].filter(Boolean)));
+    configuredExecutable,
+    ...resolvedExecutables,
+  ].filter((candidate): candidate is string => Boolean(candidate))));
   for (const candidate of candidates) {
     try {
       const result = await runLocalCommand(candidate, ["--version"], "", 5);
@@ -172,38 +250,15 @@ async function detectExecutable(
             ? await readQoderConfiguredModel()
             : undefined,
         models: models.length ? models : FALLBACK_PROVIDER_MODELS[id],
-        supportsModelOverride: !["minimax-cli", "workbuddy-cli"].includes(id),
-        detail: id === "workbuddy-cli"
-          ? `${version || "已检测"} · ${candidate}；暂未发现稳定的公开非交互文本调用协议，因此不会用于属性生成`
-          : !readiness.available
+        supportsModelOverride: true,
+        detail: !readiness.available
             ? `${version || "已检测"} · ${candidate}；${readiness.detail}`
             : id === "glm-cli"
-              ? `${version || "已检测"} · ${candidate}；使用 zai/glm 兼容 CLI，建议先测试模型`
+              ? `${version || "已检测"} · ${candidate}；使用 zai/glm 兼容 CLI`
             : `${version || "已检测"} · ${candidate}${readiness.detail ? `；${readiness.detail}` : ""}`,
       };
     } catch {
       // Try the next well-known path.
-    }
-  }
-  if (id === "workbuddy-cli") {
-    const { access } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const appCandidates = [
-      "/Applications/WorkBuddy.app",
-      join(homedir(), "Applications", "WorkBuddy.app"),
-    ];
-    for (const appPath of appCandidates) {
-      try {
-        await access(appPath);
-        return {
-          id,
-          name: providerName(id),
-          available: false,
-          installed: true,
-          detail: `已安装 WorkBuddy 客户端（${appPath}），但没有检测到可供插件调用的 workbuddy CLI`,
-        };
-      } catch {
-        // Try the next application location.
-      }
     }
   }
   return {
@@ -211,7 +266,7 @@ async function detectExecutable(
     name: providerName(id),
     available: false,
     installed: false,
-    detail: `${executableName} 命令未检测到`,
+    detail: `${executableName} 命令未检测到；请在终端确认 ${executableName} --version 后重新检测`,
   };
 }
 
@@ -219,9 +274,6 @@ async function detectCLIReadiness(
   id: CLIProviderId,
   executable: string,
 ): Promise<{ available: boolean; detail?: string }> {
-  if (id === "workbuddy-cli") {
-    return { available: false, detail: "没有稳定的非交互调用协议" };
-  }
   if (id === "minimax-cli") {
     try {
       const result = await runLocalCommand(
@@ -246,23 +298,54 @@ async function detectCLIReadiness(
 }
 
 async function detectCLIModels(id: CLIProviderId, executable: string): Promise<string[]> {
-  const args = id === "antigravity-cli"
-    ? ["models"]
-    : id === "kimi-cli"
-        ? ["provider", "list", "--json"]
-        : [];
-  if (!args.length) return [];
-  try {
-    const result = await runLocalCommand(executable, args, "", 12);
-    if (result.exitCode !== 0) return [];
-    if (id === "kimi-cli") {
-      const parsed = JSON.parse(result.stdout) as { models?: Record<string, unknown> };
-      return Object.keys(parsed.models ?? {}).filter(Boolean).slice(0, 60);
+  const detected: string[] = [];
+  const append = (models: string[]): void => {
+    for (const model of models) {
+      if (!detected.includes(model)) detected.push(model);
+      if (detected.length >= 60) break;
     }
-    return result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 60);
-  } catch {
-    return [];
+  };
+  if (id === "codex-cli") append(await readCodexCachedModels());
+
+  const probes: string[][] = id === "antigravity-cli"
+    ? [["models"]]
+    : id === "qoder-cli"
+      ? [["--list-models"]]
+      : id === "kimi-cli"
+        ? [["provider", "list", "--json"]]
+        : id === "minimax-cli"
+          ? [["text", "chat", "--help"]]
+          : [["--help"]];
+
+  for (const args of probes) {
+    try {
+      const result = await runLocalCommand(executable, args, "", 15);
+      if (result.exitCode !== 0) continue;
+      const output = `${result.stdout}\n${result.stderr}`;
+      if (id === "kimi-cli") {
+        const parsed = JSON.parse(result.stdout) as {
+          models?: Record<string, unknown> | Array<{ id?: unknown; name?: unknown }>;
+        };
+        const models = Array.isArray(parsed.models)
+          ? parsed.models.map((model) => typeof model.id === "string"
+            ? model.id
+            : typeof model.name === "string" ? model.name : "")
+          : Object.keys(parsed.models ?? {});
+        append(models.filter(Boolean).slice(0, 60));
+      } else if (id === "codebuddy-cli") {
+        append(parseCodeBuddyModels(output));
+      } else if (id === "qoder-cli") {
+        append(parseQoderModels(output));
+      } else if (id === "antigravity-cli") {
+        append(parsePlainModelList(output));
+      } else {
+        append(parseModelsFromHelp(output));
+      }
+    } catch {
+      // Keep models found by another safe local source, then use the fallback.
+    }
   }
+  return detected;
 }
 
 async function readCodexConfiguredModel(): Promise<string | undefined> {
@@ -274,6 +357,17 @@ async function readCodexConfiguredModel(): Promise<string | undefined> {
     return content.match(/^model\s*=\s*["']([^"']+)["']/m)?.[1];
   } catch {
     return undefined;
+  }
+}
+
+async function readCodexCachedModels(): Promise<string[]> {
+  try {
+    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { homedir } = require("node:os") as typeof import("node:os");
+    const { join } = require("node:path") as typeof import("node:path");
+    return parseCodexModelCache(await readFile(join(homedir(), ".codex", "models_cache.json"), "utf8"));
+  } catch {
+    return [];
   }
 }
 
@@ -419,7 +513,6 @@ export async function detectAIProviders(
       detectExecutable("minimax-cli", settings.provider === "minimax-cli" ? settings.executablePath : ""),
       detectExecutable("glm-cli", settings.provider === "glm-cli" ? settings.executablePath : ""),
       detectExecutable("codebuddy-cli", settings.provider === "codebuddy-cli" ? settings.executablePath : ""),
-      detectExecutable("workbuddy-cli", settings.provider === "workbuddy-cli" ? settings.executablePath : ""),
     ])
     : [
       { id: "codex-cli" as const, name: providerName("codex-cli"), available: false, detail: "仅桌面版可用" },
@@ -430,7 +523,6 @@ export async function detectAIProviders(
       { id: "minimax-cli" as const, name: providerName("minimax-cli"), available: false, detail: "仅桌面版可用" },
       { id: "glm-cli" as const, name: providerName("glm-cli"), available: false, detail: "仅桌面版可用" },
       { id: "codebuddy-cli" as const, name: providerName("codebuddy-cli"), available: false, detail: "仅桌面版可用" },
-      { id: "workbuddy-cli" as const, name: providerName("workbuddy-cli"), available: false, detail: "仅桌面版可用" },
     ];
   const anthropic = await detectAnthropicAPI(settings, options);
   const openAICompatible = await detectOpenAICompatibleAPI(settings, options);
@@ -530,7 +622,9 @@ async function runKimi(settings: AIPropertySettings, prompt: string, executableP
 
 async function runMiniMax(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "mmx";
-  const result = await runLocalCommand(executable, ["text", "chat", "--message", prompt], "", settings.timeoutSeconds);
+  const args = ["text", "chat", "--message", prompt];
+  if (configuredModel(settings)) args.push("--model", configuredModel(settings));
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `MiniMax CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("MiniMax CLI 没有返回文本结果");
   return result.stdout;
@@ -621,9 +715,6 @@ export async function runAIProvider(
   if (settings.provider === "minimax-cli") return runMiniMax(settings, prompt, detected?.executablePath);
   if (settings.provider === "glm-cli") return runGLM(settings, prompt, detected?.executablePath);
   if (settings.provider === "codebuddy-cli") return runCodeBuddy(settings, prompt, detected?.executablePath);
-  if (settings.provider === "workbuddy-cli") {
-    throw new Error("WorkBuddy 尚未公开稳定的非交互文本 CLI 调用协议；当前只能检测安装状态，不能安全地用于属性生成");
-  }
   if (settings.provider === "anthropic-api") return runAnthropic(settings, prompt, apiKey);
   return runOpenAICompatible(settings, prompt, apiKey);
 }

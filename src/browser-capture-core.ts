@@ -76,6 +76,7 @@ const AUDIO_HOSTS = [
 
 const VIDEO_EXTENSIONS = /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i;
 const AUDIO_EXTENSIONS = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)(?:$|[?#])/i;
+const YT_DLP_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 export const BROWSER_CAPTURE_SKILLS: BrowserCaptureSkill[] = [
   {
@@ -117,6 +118,99 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
   } catch {
     return "article";
   }
+}
+
+export function isBilibiliCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "bilibili.com"
+      || host.endsWith(".bilibili.com")
+      || host === "b23.tv"
+      || host.endsWith(".b23.tv");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keep video extraction independent from a user's global yt-dlp config and use
+ * bounded retries. Bilibili rejects non-browser metadata requests on some
+ * networks, so public page headers are supplied without reading browser cookies.
+ */
+export function ytDlpCaptureArgs(url: string): string[] {
+  const args = [
+    "--ignore-config",
+    "--no-warnings",
+    "--no-playlist",
+    "--socket-timeout",
+    "30",
+    "--extractor-retries",
+    "3",
+    "--retries",
+    "5",
+    "--fragment-retries",
+    "5",
+  ];
+  if (isBilibiliCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      YT_DLP_BROWSER_USER_AGENT,
+      "--add-header",
+      "Referer:https://www.bilibili.com/",
+      "--add-header",
+      "Origin:https://www.bilibili.com",
+    );
+  }
+  return args;
+}
+
+export function ytDlpSubtitleArgs(outputTemplate: string, url: string): string[] {
+  return [
+    ...ytDlpCaptureArgs(url),
+    "--skip-download",
+    "--write-subs",
+    "--write-auto-subs",
+    "--sub-langs",
+    "all,-danmaku",
+    "--sub-format",
+    "vtt/srt/best",
+    "-o",
+    outputTemplate,
+    url,
+  ];
+}
+
+export function selectPreferredSubtitleFile(files: string[]): string | undefined {
+  const supported = files.filter((name) => /\.(?:vtt|srt|json3?|json)$/i.test(name));
+  const rank = (name: string): number => {
+    const normalized = name.toLowerCase();
+    if (/(?:^|[._-])zh[-_]?hans(?:[._-]|$)|zh[-_]?cn/.test(normalized)) return 0;
+    if (/(?:^|[._-])ai[-_]?zh(?:[._-]|$)/.test(normalized)) return 1;
+    if (/(?:^|[._-])zh(?:[._-]|$)/.test(normalized)) return 2;
+    if (/(?:^|[._-])zh[-_]?hant(?:[._-]|$)|zh[-_]?tw/.test(normalized)) return 3;
+    if (/(?:^|[._-])en(?:[._-]|$)/.test(normalized)) return 4;
+    return 10;
+  };
+  return supported.sort((left, right) => rank(left) - rank(right) || left.localeCompare(right))[0];
+}
+
+export function formatYtDlpCaptureError(stderr: string, url: string): string {
+  const cleaned = stderr
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^WARNING:\s*Your yt-dlp version .*older than 90 days/i.test(line));
+  const detail = cleaned.filter((line) => /^ERROR:/i.test(line)).at(-1)
+    ?? cleaned.at(-1)
+    ?? "视频音频下载失败";
+  if (isBilibiliCaptureUrl(url) && /(?:HTTP Error\s*)?412|Precondition Failed/i.test(stderr)) {
+    return "Bilibili 拒绝了当前下载组件的请求（HTTP 412）。KnowGrove 已使用浏览器请求头重试；请在设置 → Read It Later → 自动整理组件配置中点击“自动配置”更新组件后重试。";
+  }
+  if (/(?:HTTP Error\s*)?(?:401|403)|cookies-from-browser|Sign in to confirm|login required/i.test(stderr)) {
+    return "视频站点要求登录或拒绝了公开下载请求。KnowGrove 不会读取浏览器 Cookie；请确认链接可公开访问，或改用你有权访问的公开来源。";
+  }
+  return detail.replace(/^ERROR:\s*/i, "").slice(0, 800);
 }
 
 export function stripCaptureFrontmatter(markdown: string): string {
@@ -371,7 +465,11 @@ export function browserCapturePrompt(
     "只根据提供的材料工作，不补造事实；无法确认的人名、数字和术语标记为 [待核]。",
     "输出必须是一个 JSON 对象，不要使用 Markdown 代码围栏。",
     pageType !== "article"
-      ? "判断单人讲解或多人对话。mode 使用 single-speaker 或 multi-speaker；正文需去除口语赘词，多人对话使用 **说话人**：格式。"
+      ? [
+        "判断单人讲解或多人对话。mode 使用 single-speaker 或 multi-speaker；正文需去除口语赘词，多人对话使用 **说话人**：格式。",
+        "字幕换行只是时间切片，不是自然段。必须把碎片合并成语义完整的自然段，按主题使用 ### 小标题；禁止一条字幕占一行。",
+        "单人讲解每段围绕一个意思组织 2-5 个完整句子；多人对话也要合并同一说话人的连续短句，避免逐字稿式碎片排版。",
+      ].join("")
       : [
         "mode 固定为 article；正文重构为忠于原文、带 ### 小标题的知识笔记。",
         "删除正文开始前的作者栏、编辑栏、阅读器提示、头图、公众号引导和纯装饰符号；删除正文末尾的关注、推荐阅读、二维码、转载声明等平台噪音。",
@@ -397,7 +495,10 @@ export function browserCaptureChunkPrompt(
     `这是《${title}》的第 ${index}/${total} 段材料。`,
     "只整理这一段，不推断其他段落。输出必须是一个 JSON 对象。",
     pageType !== "article"
-      ? "将口语整理成忠于原意、带 ### 小标题的正文；明显多人对话使用 **说话人**：格式。"
+      ? [
+        "将口语整理成忠于原意、带 ### 小标题的正文；明显多人对话使用 **说话人**：格式。",
+        "忽略字幕原始换行，把连续碎片合并成自然段，禁止一条字幕占一行；单人讲解每段组织 2-5 个完整句子。",
+      ].join("")
       : [
         "将文章片段整理成忠于原文、带 ### 小标题的知识笔记。",
         "删除作者栏、编辑栏、阅读器提示、头图、关注引导和纯装饰符号。",
@@ -639,10 +740,92 @@ export function restoreArticleImages(bodyMarkdown: string, images: ProtectedArti
   return restored.replace(IMAGE_PLACEHOLDER_PATTERN, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function parseWebVtt(vtt: string): string {
-  const seen = new Set<string>();
+function transcriptJoiner(left: string, right: string): string {
+  if (!left || !right) return "";
+  if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]$/u.test(left)
+    || /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}，。！？；：、]/u.test(right)) {
+    return "";
+  }
+  return " ";
+}
+
+export function formatTranscriptParagraphs(source: string): string {
+  const fragments = source
+    .replace(/\r\n/g, "\n")
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const merged: string[] = [];
+  for (const fragment of fragments) {
+    const previous = merged.at(-1);
+    if (previous === fragment || previous?.startsWith(fragment)) continue;
+    if (previous && fragment.startsWith(previous)) {
+      merged[merged.length - 1] = fragment;
+      continue;
+    }
+    merged.push(fragment);
+  }
+  const continuous = merged.reduce(
+    (text, fragment) => text
+      ? `${text}${transcriptJoiner(text, fragment)}${fragment}`
+      : fragment,
+    "",
+  ).trim();
+  if (!continuous) return "";
+
+  const sentences = continuous.match(/[^。！？!?；;\n]+[。！？!?；;]?/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean)
+    ?? [continuous];
+  const readableUnits = sentences.flatMap((sentence) => {
+    if (sentence.length <= 280) return [sentence];
+    const chunks: string[] = [];
+    let remaining = sentence;
+    while (remaining.length > 280) {
+      const whitespace = remaining.lastIndexOf(" ", 280);
+      const splitAt = whitespace >= 140 ? whitespace : 240;
+      chunks.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks;
+  });
+  const paragraphs: string[] = [];
+  let current = "";
+  let sentenceCount = 0;
+  for (const sentence of readableUnits) {
+    const joiner = transcriptJoiner(current, sentence);
+    current = current ? `${current}${joiner}${sentence}` : sentence;
+    sentenceCount += 1;
+    if (current.length >= 180 || sentenceCount >= 4) {
+      paragraphs.push(current.trim());
+      current = "";
+      sentenceCount = 0;
+    }
+  }
+  if (current.trim()) paragraphs.push(current.trim());
+  return paragraphs.join("\n\n");
+}
+
+export function parseSubtitleText(subtitle: string, fileName = ""): string {
+  if (/\.json3?$|\.json$/i.test(fileName) || /^\s*[{[]/.test(subtitle)) {
+    try {
+      const parsed = JSON.parse(subtitle) as {
+        body?: Array<{ content?: unknown }>;
+        events?: Array<{ segs?: Array<{ utf8?: unknown }> }>;
+      };
+      const body = parsed.body?.map((item) => String(item.content ?? "").trim()).filter(Boolean) ?? [];
+      const events = parsed.events?.map((event) =>
+        event.segs?.map((segment) => String(segment.utf8 ?? "")).join("").trim() ?? "",
+      ).filter(Boolean) ?? [];
+      const jsonTranscript = [...body, ...events].join("\n");
+      if (jsonTranscript) return formatTranscriptParagraphs(jsonTranscript);
+    } catch {
+      // Some providers serve WebVTT with a JSON-looking preamble; continue with text parsing.
+    }
+  }
   const lines: string[] = [];
-  for (const rawLine of vtt.replace(/\r\n/g, "\n").split("\n")) {
+  for (const rawLine of subtitle.replace(/\r\n/g, "\n").split("\n")) {
     const line = rawLine
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
@@ -650,12 +833,19 @@ export function parseWebVtt(vtt: string): string {
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
       .trim();
-    if (!line || /^WEBVTT/.test(line) || /-->/.test(line) || /^\d+$/.test(line) || /^NOTE\b/.test(line)) continue;
-    if (seen.has(line)) continue;
-    seen.add(line);
+    if (!line
+      || /^WEBVTT/.test(line)
+      || /-->/.test(line)
+      || /^\d+$/.test(line)
+      || /^NOTE\b/.test(line)
+      || /^Kind:|^Language:/i.test(line)) continue;
     lines.push(line);
   }
-  return cleanText(lines.join("\n"));
+  return formatTranscriptParagraphs(lines.join("\n"));
+}
+
+export function parseWebVtt(vtt: string): string {
+  return parseSubtitleText(vtt, "subtitle.vtt");
 }
 
 export function safeCaptureFileName(value: string): string {

@@ -14,15 +14,21 @@ import {
   detectWhisperImplementation,
   datedArticleTitle,
   extractJsonObject,
+  formatTranscriptParagraphs,
+  formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
   normalizeBrowserCaptureAIResult,
+  parseSubtitleText,
   parseWebVtt,
   protectArticleImages,
   restoreArticleImages,
   safeCaptureFileName,
+  selectPreferredSubtitleFile,
   selectedCaptureProvider,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
+  ytDlpCaptureArgs,
+  ytDlpSubtitleArgs,
 } from "../src/browser-capture-core";
 
 test("browser capture classifies common video hosts", () => {
@@ -31,6 +37,48 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+});
+
+test("Bilibili extraction uses browser headers and bounded retries", () => {
+  const args = ytDlpCaptureArgs("https://www.bilibili.com/video/BV1aN3q69E8z");
+  assert.ok(args.includes("--ignore-config"));
+  assert.ok(args.includes("--extractor-retries"));
+  assert.ok(args.includes("Referer:https://www.bilibili.com/"));
+  assert.ok(args.includes("Origin:https://www.bilibili.com"));
+  assert.ok(args.includes("--user-agent"));
+  assert.equal(ytDlpCaptureArgs("https://www.youtube.com/watch?v=1").includes("--user-agent"), false);
+});
+
+test("video subtitle lookup requests every real subtitle language but excludes danmaku", () => {
+  const args = ytDlpSubtitleArgs(
+    "/tmp/source.%(ext)s",
+    "https://www.bilibili.com/video/BV1aN3q69E8z",
+  );
+  assert.equal(args[args.indexOf("--sub-langs") + 1], "all,-danmaku");
+  assert.equal(args[args.indexOf("--sub-format") + 1], "vtt/srt/best");
+  assert.ok(args.includes("--write-subs"));
+  assert.ok(args.includes("--write-auto-subs"));
+});
+
+test("subtitle file selection follows language preference without hard-coding availability", () => {
+  assert.equal(selectPreferredSubtitleFile([
+    "source.en.vtt",
+    "source.ai-zh.srt",
+    "source.ja.vtt",
+  ]), "source.ai-zh.srt");
+  assert.equal(selectPreferredSubtitleFile(["source.ja.vtt"]), "source.ja.vtt");
+  assert.equal(selectPreferredSubtitleFile(["source.danmaku.xml"]), undefined);
+});
+
+test("yt-dlp update warnings do not hide the actionable capture failure", () => {
+  const error = formatYtDlpCaptureError([
+    "WARNING: Your yt-dlp version (2026.02.21) is older than 90 days!",
+    "ERROR: [BiliBili] BV1: Unable to download JSON metadata: HTTP Error 412: Precondition Failed",
+  ].join("\n"), "https://www.bilibili.com/video/BV1");
+  assert.match(error, /Bilibili/);
+  assert.match(error, /HTTP 412/);
+  assert.match(error, /自动配置/);
+  assert.doesNotMatch(error, /older than 90 days/);
 });
 
 test("all capture types inherit the globally configured AI provider", () => {
@@ -232,12 +280,31 @@ test("browser capture splits long material and removes VTT metadata", () => {
     "WEBVTT",
     "",
     "00:00:00.000 --> 00:00:02.000",
-    "<c>第一句</c>",
+    "<c>第一句。</c>",
     "",
     "00:00:02.000 --> 00:00:04.000",
-    "第一句",
-    "第二句",
-  ].join("\n")), "第一句\n第二句");
+    "第一句。",
+    "第二句。",
+  ].join("\n")), "第一句。第二句。");
+});
+
+test("Bilibili JSON subtitles and Whisper fragments become readable paragraphs", () => {
+  assert.equal(parseSubtitleText(JSON.stringify({
+    body: [
+      { content: "第一句。" },
+      { content: "第二句。" },
+      { content: "第三句。" },
+      { content: "第四句。" },
+      { content: "第五句。" },
+    ],
+  }), "source.ai-zh.json"), "第一句。第二句。第三句。第四句。\n\n第五句。");
+  assert.equal(
+    formatTranscriptParagraphs("KnowGrove makes\nsubtitle fragments\nread naturally."),
+    "KnowGrove makes subtitle fragments read naturally.",
+  );
+  const punctuationFreeTranscript = formatTranscriptParagraphs("没有标点的转录片段".repeat(80));
+  assert.ok(punctuationFreeTranscript.split("\n\n").length > 2);
+  assert.ok(punctuationFreeTranscript.split("\n\n").every((paragraph) => paragraph.length <= 280));
 });
 
 test("browser capture builds a completed note while retaining source", () => {

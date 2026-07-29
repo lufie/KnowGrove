@@ -7,6 +7,8 @@ import {
   formatRuntimeBytes,
   platformArtifacts,
   runtimeManifestCandidates,
+  selectNewestRuntimeManifest,
+  shouldRestartRuntimeDownload,
   stableRuntimeJson,
   totalArtifactBytes,
   unsignedRuntimeManifest,
@@ -172,29 +174,46 @@ async function downloadFile(
   await mkdir(dirname(destination), { recursive: true });
   let lastError: unknown;
   for (const url of urls) {
-    try {
-      let existing = 0;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
-        existing = (await stat(destination)).size;
-      } catch {
-        existing = 0;
+        let existing = 0;
+        try {
+          existing = (await stat(destination)).size;
+        } catch {
+          existing = 0;
+        }
+        if (existing === expectedSize) return;
+        if (existing > expectedSize) {
+          await unlink(destination).catch(() => undefined);
+          onBytes(-existing);
+          existing = 0;
+        }
+        const handle = await open(destination, existing ? "a" : "w");
+        try {
+          await downloadFromUrl(url, handle, existing, onBytes);
+        } finally {
+          await handle.close();
+        }
+        const actual = (await stat(destination)).size;
+        if (actual !== expectedSize) throw new Error(`下载大小不完整：${actual}/${expectedSize}`);
+        return;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (shouldRestartRuntimeDownload(message)) {
+          let discarded = 0;
+          try {
+            discarded = (await stat(destination)).size;
+          } catch {
+            discarded = 0;
+          }
+          await unlink(destination).catch(() => undefined);
+          if (discarded) onBytes(-discarded);
+        }
+        if (attempt < 3) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
+        }
       }
-      if (existing > expectedSize) {
-        await unlink(destination).catch(() => undefined);
-        existing = 0;
-      }
-      const handle = await open(destination, existing ? "a" : "w");
-      try {
-        await downloadFromUrl(url, handle, existing, onBytes);
-      } finally {
-        await handle.close();
-      }
-      const actual = (await stat(destination)).size;
-      if (actual !== expectedSize) throw new Error(`下载大小不完整：${actual}/${expectedSize}`);
-      return;
-    } catch (error) {
-      lastError = error;
-      await unlink(destination).catch(() => undefined);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("所有运行包下载源都不可用");
@@ -213,7 +232,10 @@ async function downloadFromUrl(
   const https = require("node:https") as typeof import("node:https");
   await new Promise<void>((resolve, reject) => {
     const request = https.get(parsed, {
-      headers: offset ? { Range: `bytes=${offset}-` } : undefined,
+      headers: {
+        "User-Agent": "KnowGrove-Runtime",
+        ...(offset ? { Range: `bytes=${offset}-` } : {}),
+      },
     }, (response) => {
       const status = response.statusCode ?? 0;
       const location = response.headers.location;
@@ -245,7 +267,7 @@ async function downloadFromUrl(
       response.on("end", resolve);
       response.on("error", reject);
     });
-    request.setTimeout(30_000, () => request.destroy(new Error("运行包下载连接超时")));
+    request.setTimeout(60_000, () => request.destroy(new Error("运行包下载连接超时")));
     request.on("error", reject);
   });
 }
@@ -261,6 +283,7 @@ export class KnowGroveRuntimeManager {
     configuredUrl: string,
   ): Promise<{ manifest: KnowGroveRuntimeManifest; url: string }> {
     let lastError: unknown;
+    const available: Array<{ manifest: KnowGroveRuntimeManifest; url: string }> = [];
     for (const url of runtimeManifestCandidates(configuredUrl)) {
       try {
         const response = await requestUrl({ url, method: "GET", throw: false });
@@ -270,11 +293,13 @@ export class KnowGroveRuntimeManager {
         const manifest = validateRuntimeManifest(response.json);
         verifyManifestSignature(manifest);
         assertPluginVersion(manifest, this.host.getPluginVersion());
-        return { manifest, url };
+        available.push({ manifest, url });
       } catch (error) {
         lastError = error;
       }
     }
+    const newest = selectNewestRuntimeManifest(available);
+    if (newest) return newest;
     throw lastError instanceof Error ? lastError : new Error("没有可用的运行包清单地址");
   }
 
@@ -384,12 +409,24 @@ export class KnowGroveRuntimeManager {
     }
     const platform = detectRuntimePlatform(process.platform, process.arch);
     const tools = await this.findExistingTools();
+    const installed = await this.readInstallation();
     let sourceReachable = false;
     let sourceDetail = "正在检查 KnowGrove 运行包";
+    let packageSizeBytes: number | undefined;
+    let runtimeUpdateAvailable = false;
     try {
       const { manifest, url } = await this.fetchManifest(settings.manifestUrl);
       sourceReachable = true;
-      sourceDetail = `运行包 ${manifest.runtimeVersion} 可用 · ${new URL(url).hostname}`;
+      runtimeUpdateAvailable = Boolean(
+        installed
+        && installed.runtimeVersion !== "existing"
+        && compareRuntimeVersions(manifest.runtimeVersion, installed.runtimeVersion) > 0
+      );
+      sourceDetail = runtimeUpdateAvailable
+        ? `运行包 ${manifest.runtimeVersion} 可更新 · 当前 ${installed?.runtimeVersion} · ${new URL(url).hostname}`
+        : `运行包 ${manifest.runtimeVersion} 可用 · ${new URL(url).hostname}`;
+      const release = platform ? manifest.platforms[platform] : undefined;
+      if (release) packageSizeBytes = totalArtifactBytes(release.artifacts);
     } catch (error) {
       sourceDetail = error instanceof Error ? error.message : String(error);
     }
@@ -412,6 +449,7 @@ export class KnowGroveRuntimeManager {
       runtimeRoot: this.getRoot(),
       sourceReachable,
       sourceDetail,
+      packageSizeBytes,
       diskFreeBytes,
       tools,
       capabilities: [
@@ -420,7 +458,9 @@ export class KnowGroveRuntimeManager {
           id: "video",
           name: "视频解析",
           status: mediaReady ? "ready" : platform ? "needs-setup" : "unavailable",
-          detail: mediaReady ? "下载器与媒体引擎已就绪" : platform ? "需要配置媒体运行包" : "当前系统架构尚未支持",
+          detail: mediaReady
+            ? runtimeUpdateAvailable ? "下载器与媒体引擎已就绪，有新版组件可更新" : "下载器与媒体引擎已就绪"
+            : platform ? "需要配置媒体运行包" : "当前系统架构尚未支持",
         },
         {
           id: "audio",
@@ -440,23 +480,37 @@ export class KnowGroveRuntimeManager {
     if (!platform) throw new Error(`暂不支持当前系统：${process.platform}/${process.arch}`);
     const settings = this.host.getRuntimeSettings();
     onProgress({ phase: "checking", message: "正在检查已有运行环境", completedBytes: 0, totalBytes: 0 });
-    if (settings.mode !== "managed" && settings.preferExistingTools) {
-      const existing = await this.findExistingTools();
-      if (existing["yt-dlp"] && existing.ffmpeg && existing.whisper && existing["whisper-model"]) {
-        this.applyCapturePaths(existing);
-        settings.lastInstallError = "";
-        await this.host.saveSettings();
-        return {
-          runtimeVersion: "existing",
-          platform,
-          installedAt: new Date().toISOString(),
-          files: existing,
-        };
-      }
-      if (settings.mode === "existing") throw new Error("已有工具不完整，请安装缺失组件或切换为自动配置");
-    }
     try {
       const { manifest } = await this.fetchManifest(settings.manifestUrl);
+      if (settings.mode !== "managed" && settings.preferExistingTools) {
+        const existing = await this.findExistingTools();
+        if (existing["yt-dlp"] && existing.ffmpeg && existing.whisper && existing["whisper-model"]) {
+          const installed = await this.readInstallation();
+          const managedUpdateAvailable = settings.mode === "auto"
+            && installed
+            && installed.runtimeVersion !== "existing"
+            && compareRuntimeVersions(manifest.runtimeVersion, installed.runtimeVersion) > 0;
+          if (!managedUpdateAvailable) {
+            this.applyCapturePaths(existing);
+            settings.lastInstallError = "";
+            await this.host.saveSettings();
+            return {
+              runtimeVersion: installed?.runtimeVersion ?? "existing",
+              platform,
+              installedAt: installed?.installedAt ?? new Date().toISOString(),
+              files: existing,
+            };
+          }
+          onProgress({
+            phase: "checking",
+            message: `发现运行组件更新 ${installed.runtimeVersion} → ${manifest.runtimeVersion}`,
+            completedBytes: 0,
+            totalBytes: 0,
+          });
+        } else if (settings.mode === "existing") {
+          throw new Error("已有工具不完整，请安装缺失组件或切换为自动配置");
+        }
+      }
       const artifacts = platformArtifacts(manifest, platform);
       const totalBytes = totalArtifactBytes(artifacts);
       const free = await this.freeDiskBytes();
@@ -548,6 +602,12 @@ export class KnowGroveRuntimeManager {
         if (artifact.executable && process.platform !== "win32") await chmod(output, 0o755);
         files[artifact.id] = join(destination, artifact.target);
       }
+      onProgress({
+        phase: "installing",
+        message: "正在启用已校验的组件",
+        completedBytes,
+        totalBytes,
+      });
       try {
         if ((await stat(destination)).isDirectory()) {
           await rename(destination, backup);
