@@ -11,9 +11,9 @@
 | 产品形态 | Obsidian 桌面端插件 + 浏览器剪藏扩展 |
 | 当前产品版本 | 2.5.0（开发中） |
 | 本轮目标版本 | 2.5.0 首轮发布候选 |
-| PRD 版本 | 1.1.0 |
+| PRD 版本 | 1.2.0 |
 | 基线日期 | 2026-07-29 |
-| 文档状态 | 2.5.0 发布实施基线 |
+| 文档状态 | 2.5.0 发布候选与双源分发实施基线 |
 | 源代码仓库 | `https://github.com/lufie/KnowGrove`（私有） |
 
 ## 2. 产品愿景
@@ -462,17 +462,18 @@ Runtime 1.0.0 托管：
 | Runtime Skill Pack | 已实现 | 当前版本 `1.0.2` |
 | GitHub Runtime 工作流 | 已运行成功 | 三个平台构建和签名组装均通过，运行记录 `30378029343` |
 | Runtime 二进制产物 | 已生成 | Runtime `1.0.0`，包含 macOS Apple Silicon、macOS Intel 和 Windows x64 |
-| CNB 国内下载源 | 待账号认证后发布 | CNB 已登录，但首次创建公开组织仍要求完成平台实名认证 |
+| CNB 国内下载源 | 已发布并完成匿名下载、签名与插件内审计 | 公共仓库 `lufie-knowgrove/knowgrove-runtime` 的 `runtime-v1.0.0`，17 个稳定 Release 附件已上传，21 项组件地址全部可访问；Obsidian 实机识别主源为 `cnb.cool` |
 | GitHub Releases 备用源 | 已发布 | 公共仓库 `lufie/KnowGrove-runtime` 的 `runtime-v1.0.0` |
-| 插件默认清单地址 | 已内置 | 设置值留空时自动使用公共 Release 的 `runtime-manifest.json` |
+| 插件默认清单地址 | 已内置双源顺序 | 设置值留空时先读取 CNB 签名清单，失败后自动尝试 GitHub Release 清单 |
 | 新用户自动下载组件 | 已在 macOS Apple Silicon 实测 | 强制托管模式从默认清单下载约 610 MB，7 个组件全部通过大小和 SHA-256 校验并成功启用 |
 
 ### 8.4 地址说明
 
 - 本机浏览器服务：`http://127.0.0.1:47831`
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
-- 远程运行包清单：`https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json`
-- 国内运行包下载地址：**待 CNB 账号认证后发布**
+- 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.0/runtime-manifest.json`
+- 国内运行包发布地址：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/tag/runtime-v1.0.0`
+- GitHub 备用清单：`https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json`
 - GitHub Release 备用地址：`https://github.com/lufie/KnowGrove-runtime/releases/tag/runtime-v1.0.0`
 
 不得把本机地址写成远程服务器地址，也不得在远程清单和产物可访问之前宣称“安装即可自动下载组件”。
@@ -537,8 +538,8 @@ Runtime 1.0.0 托管：
 
 ## 11. 当前已知缺口
 
-1. CNB 国内主下载源仍需完成账号实名认证后发布；当前只有 GitHub 公共源。
-2. macOS Intel 和 Windows x64 已完成云端构建，仍需在干净实体环境完成插件内托管安装。
+1. macOS Intel 和 Windows x64 已完成云端构建，仍需在干净实体环境完成插件内托管安装。
+2. CNB 主清单与组件已发布，但还需从插件默认 CNB 清单执行一次完整的干净环境安装，并验证主源失败时切换 GitHub。
 3. WorkBuddy CLI 可检测到安装，但模型调用协议仍需持续验证。
 4. Safari 扩展、Chrome 商店分发和新用户安装流程需要独立发布验收。
 5. 真实图片生成依赖外部图片模型和密钥，默认关闭。
@@ -595,5 +596,6 @@ Runtime 1.0.0 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-29 | 2.5.0（候选） | 1.2.0 | 发布 / 调整 | 发布 CNB 国内 Runtime 1.0.0（17 个稳定附件），插件默认改为 CNB 主清单、GitHub 备用清单，并增加既有清单重签工具 | CNB 匿名下载、清单 SHA-256、Ed25519 签名、21 项远程组件与 Obsidian 插件内 `cnb.cool` 主源审计均已实测；完整干净机验收待完成 |
 | 2026-07-29 | 2.5.0（候选） | 1.1.0 | 新增 / 发布 | 完成 Runtime 1.0.0 三平台构建、签名清单、GitHub 公共分发和 macOS Apple Silicon 插件内远端安装；CNB 国内主源等待账号实名认证 | 已部署并完成 macOS 实测 |
 | 2026-07-28 | 2.4.26 | 1.0.0 | 建立基线 | 汇总 KnowGrove 当前全部产品能力、数据边界、Runtime 真实发布状态、验收标准和后续 PRD 维护规则 | 已建立文档；插件功能以当前实机版本为准 |

@@ -55,6 +55,10 @@ test("runtime platform detection only accepts supported desktop targets", () => 
 });
 
 test("runtime manifest sources use an optional override before the signed public release", () => {
+  assert.deepEqual(DEFAULT_RUNTIME_MANIFEST_URLS, [
+    "https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.0/runtime-manifest.json",
+    "https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json",
+  ]);
   assert.deepEqual(
     runtimeManifestCandidates("https://mirror.example/runtime-manifest.json"),
     [
