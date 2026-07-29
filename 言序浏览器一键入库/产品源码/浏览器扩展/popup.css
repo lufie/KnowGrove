@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  --ink: #17211b;
-  --muted: #6c756f;
-  --line: #dce3de;
-  --paper: #f6f8f5;
+  --ink: #241c1b;
+  --muted: #756a68;
+  --line: #eadfdd;
+  --paper: #fff9f7;
   --white: #ffffff;
-  --green: #1f6b4f;
-  --green-dark: #154b38;
-  --green-soft: #e3f1e9;
+  --brand: #f24b3f;
+  --brand-dark: #d83f35;
+  --brand-soft: #fff0ed;
   --amber: #a46616;
   --amber-soft: #fff3da;
   --red: #9b3b3b;
@@ -63,7 +63,7 @@ footer {
 
 .eyebrow {
   margin: 0 0 2px;
-  color: var(--green);
+  color: var(--brand);
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.13em;
@@ -110,7 +110,7 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 15px;
   background: var(--white);
-  box-shadow: 0 8px 22px rgba(31, 60, 43, 0.045);
+  box-shadow: 0 8px 22px rgba(93, 41, 35, 0.055);
 }
 
 .page-card {
@@ -130,8 +130,8 @@ h3 {
 .type-pill {
   border-radius: 999px;
   padding: 5px 9px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
 }
 
 .bridge-state {
@@ -139,7 +139,7 @@ h3 {
 }
 
 .bridge-state.is-online {
-  color: var(--green);
+  color: var(--brand);
 }
 
 .bridge-state.is-offline {
@@ -160,7 +160,7 @@ h3 {
 
 .skill-name {
   margin-bottom: 4px;
-  color: var(--green);
+  color: var(--brand);
   font-weight: 650;
 }
 
@@ -213,14 +213,14 @@ select {
 }
 
 .primary-button {
-  border: 1px solid var(--green);
-  background: var(--green);
+  border: 1px solid var(--brand);
+  background: var(--brand);
   color: var(--white);
 }
 
 .primary-button:hover:not(:disabled) {
-  border-color: var(--green-dark);
-  background: var(--green-dark);
+  border-color: var(--brand-dark);
+  background: var(--brand-dark);
 }
 
 .secondary-button {
@@ -270,7 +270,7 @@ select {
   height: 7px;
   margin-top: 13px;
   border-radius: 999px;
-  background: #e8ece9;
+  background: #f1e6e4;
 }
 
 .progress-bar {
@@ -278,7 +278,7 @@ select {
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--green), #63a783);
+  background: linear-gradient(90deg, var(--brand), #ff7b6f);
   transition: width 240ms ease;
 }
 
@@ -291,7 +291,7 @@ select {
 }
 
 .result-panel {
-  border-color: #bdd9c9;
+  border-color: #f6b4ad;
 }
 
 .result-panel.is-partial {
@@ -304,7 +304,7 @@ select {
 }
 
 .result-label {
-  color: var(--green) !important;
+  color: var(--brand) !important;
   font-size: 10px !important;
   font-weight: 750;
   letter-spacing: 0.1em;

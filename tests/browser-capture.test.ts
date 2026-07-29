@@ -144,7 +144,7 @@ test("KeepRec sparse capture template remains eligible for automatic organizatio
     "[打开原内容](<https://example.com/story>)",
     "",
     "## 整理",
-  ].join("\n"), "言续收集"), {
+  ].join("\n"), "言序收集"), {
     url: "https://example.com/story",
     title: "稍后整理的文章",
   });
@@ -444,7 +444,7 @@ test("browser capture failure note leaves a final retryable state", () => {
     error: "net::ERR_CONNECTION_CLOSED",
   });
   assert.match(failed, /KnowGrove采集状态: "部分完成"/);
-  assert.match(failed, /重新打开来源页面后，可以再次点击知流重试/);
+  assert.match(failed, /重新打开来源页面后，可以再次点击言序重试/);
   assert.match(failed, /net::ERR_CONNECTION_CLOSED/);
   assert.doesNotMatch(failed, /KnowGrove 正在提取/);
 });

@@ -111,7 +111,7 @@ async function ensureJobAlarm() {
 
 async function renderJobBadge(job) {
   if (job.status === "completed") {
-    await setBadge("✓", "#1f6b4f");
+    await setBadge("✓", "#f24b3f");
     return;
   }
   if (job.status === "partial") {
@@ -123,7 +123,7 @@ async function renderJobBadge(job) {
     return;
   }
   const progress = Math.max(0, Math.min(99, Math.round(Number(job.progress) || 0)));
-  await setBadge(`${progress}%`, "#356f8a");
+  await setBadge(`${progress}%`, "#f24b3f");
 }
 
 async function pollActiveJob() {
@@ -142,7 +142,7 @@ async function pollActiveJob() {
       await clearJobAlarm();
     }
   } catch (error) {
-    console.error("更新知流后台任务失败", error);
+    console.error("更新言序后台任务失败", error);
     await setBadge("!", "#9b3b3b");
   }
 }
@@ -181,7 +181,7 @@ async function submitFromContextMenu(info, tab) {
       createdAt: new Date().toISOString(),
     },
   });
-  await setBadge("0%", "#356f8a");
+  await setBadge("0%", "#f24b3f");
   await ensureJobAlarm();
 }
 
@@ -194,7 +194,7 @@ extensionApi.runtime.onInstalled.addListener((details) => {
         await extensionApi.runtime.openOptionsPage();
       }
     } catch (error) {
-      console.error("创建知流菜单失败", error);
+      console.error("创建言序菜单失败", error);
     }
   })();
 });
@@ -204,7 +204,7 @@ extensionApi.runtime.onStartup.addListener(() => {
     try {
       await ensureJobAlarm();
     } catch (error) {
-      console.error("恢复知流后台任务失败", error);
+      console.error("恢复言序后台任务失败", error);
     }
   })();
 });
@@ -233,7 +233,7 @@ extensionApi.storage.onChanged.addListener((changes, areaName) => {
       await renderJobBadge(job);
       await ensureJobAlarm();
     } catch (error) {
-      console.error("同步知流任务进度失败", error);
+      console.error("同步言序任务进度失败", error);
     }
   })();
 });
@@ -253,7 +253,7 @@ extensionApi.contextMenus.onClicked.addListener((info, tab) => {
     try {
       await submitFromContextMenu(info, tab);
     } catch (error) {
-      console.error("提交知流任务失败", error);
+      console.error("提交言序任务失败", error);
       await setBadge("!", "#9b3b3b");
       await extensionApi.storage.local.set({
         lastCaptureError: error instanceof Error ? error.message : String(error),

@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  --ink: #17211b;
-  --muted: #65716a;
-  --line: #dce4de;
-  --paper: #f4f7f3;
+  --ink: #241c1b;
+  --muted: #756a68;
+  --line: #eadfdd;
+  --paper: #fff9f7;
   --white: #fff;
-  --green: #1f6b4f;
-  --green-dark: #154b38;
-  --green-soft: #e5f2ea;
+  --brand: #f24b3f;
+  --brand-dark: #d83f35;
+  --brand-soft: #fff0ed;
   --red: #9b3b3b;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -33,7 +33,7 @@ header {
 
 .eyebrow {
   margin: 0 0 6px;
-  color: var(--green);
+  color: var(--brand);
   font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.14em;
@@ -83,7 +83,7 @@ header > p:last-child {
 }
 
 .setup-steps strong {
-  color: var(--green-dark);
+  color: var(--brand-dark);
   font-size: 12px;
 }
 
@@ -98,7 +98,7 @@ aside {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--white);
-  box-shadow: 0 12px 30px rgba(31, 60, 43, 0.045);
+  box-shadow: 0 12px 30px rgba(93, 41, 35, 0.055);
 }
 
 section {
@@ -150,7 +150,7 @@ small {
 .toggle-row input {
   width: 18px;
   height: 18px;
-  accent-color: var(--green);
+  accent-color: var(--brand);
 }
 
 .toggle-row span {
@@ -166,14 +166,14 @@ button {
 }
 
 .primary {
-  border: 1px solid var(--green);
-  background: var(--green);
+  border: 1px solid var(--brand);
+  background: var(--brand);
   color: var(--white);
 }
 
 .primary:hover {
-  border-color: var(--green-dark);
-  background: var(--green-dark);
+  border-color: var(--brand-dark);
+  background: var(--brand-dark);
 }
 
 .secondary {
@@ -205,7 +205,7 @@ button:disabled {
 }
 
 .status.success {
-  color: var(--green);
+  color: var(--brand);
 }
 
 .status.error {
@@ -221,7 +221,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px;
-  background: #fbfcfb;
+  background: #fffbfa;
 }
 
 .skill-card strong {
@@ -247,8 +247,8 @@ button:disabled {
 .skill-stages span {
   border-radius: 999px;
   padding: 4px 8px;
-  background: var(--green-soft);
-  color: var(--green-dark);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
   font-size: 10px;
   font-weight: 650;
 }
@@ -256,11 +256,11 @@ button:disabled {
 aside {
   margin-top: 18px;
   padding: 22px 24px;
-  background: var(--green-soft);
+  background: var(--brand-soft);
 }
 
 aside h2 {
-  color: var(--green-dark);
+  color: var(--brand-dark);
 }
 
 aside ul {
@@ -273,7 +273,7 @@ aside ul {
 code {
   border-radius: 5px;
   padding: 2px 5px;
-  background: #edf0ed;
+  background: #f3eae8;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 

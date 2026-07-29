@@ -75,7 +75,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     this.runtimeProgressUnsubscribe = undefined;
     containerEl.empty();
     containerEl.addClass("knowgrove-settings");
-    containerEl.createEl("h2", { text: "KnowGrove · 知识森林" });
+    containerEl.createEl("h2", { text: "言序 · KnowGrove" });
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。",

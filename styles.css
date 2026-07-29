@@ -1,4 +1,14 @@
-/* KnowGrove uses Obsidian theme variables exclusively so it follows the active theme. */
+/*
+ * 言序（KnowGrove）沿用 Obsidian 的排版与背景变量，
+ * 品牌交互色与言序 App 统一为暖朱红 #F24B3F。
+ */
+
+:root {
+  --knowgrove-brand: #f24b3f;
+  --knowgrove-brand-hover: #d83f35;
+  --knowgrove-brand-rgb: 242, 75, 63;
+  --knowgrove-brand-soft: rgba(242, 75, 63, 0.1);
+}
 
 .knowgrove-view {
   --rc-radius: var(--radius-m, 8px);
@@ -53,19 +63,19 @@
 }
 
 .knowgrove-view button.knowgrove-category:hover {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: var(--background-modifier-hover);
 }
 
 .knowgrove-view button.knowgrove-category.is-active {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: var(--background-modifier-hover);
 }
 
 .knowgrove-category-icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-category-icon svg {
@@ -90,7 +100,7 @@
 }
 
 .knowgrove-category.is-active .knowgrove-category-label {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-category-count {
@@ -284,7 +294,7 @@
 
 .knowgrove-view button.knowgrove-focus-action:hover {
   color: var(--color-yellow);
-  background: rgba(var(--interactive-accent-rgb), 0.1);
+  background: rgba(var(--knowgrove-brand-rgb), 0.1);
 }
 
 .knowgrove-status-action svg {
@@ -297,8 +307,8 @@
 }
 
 .knowgrove-view button.knowgrove-status-action:hover {
-  color: var(--text-accent);
-  background: rgba(var(--interactive-accent-rgb), 0.1);
+  color: var(--knowgrove-brand);
+  background: rgba(var(--knowgrove-brand-rgb), 0.1);
 }
 
 .knowgrove-more {
@@ -390,7 +400,7 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
   padding: var(--size-4-3, 12px);
-  border-inline-start: 3px solid var(--interactive-accent);
+  border-inline-start: 3px solid var(--knowgrove-brand);
   border-radius: 0 var(--radius-s) var(--radius-s) 0;
   color: var(--text-muted);
   background: var(--background-secondary);
@@ -547,11 +557,11 @@
   gap: 2px;
   margin-inline-start: 6px;
   padding: 0 5px;
-  border: 1px solid rgba(var(--interactive-accent-rgb), 0.3);
+  border: 1px solid rgba(var(--knowgrove-brand-rgb), 0.3);
   border-radius: 999px;
   box-shadow: none;
-  color: var(--text-accent);
-  background: rgba(var(--interactive-accent-rgb), 0.1);
+  color: var(--knowgrove-brand);
+  background: rgba(var(--knowgrove-brand-rgb), 0.1);
   font-family: var(--font-interface);
   font-size: var(--font-ui-smaller);
   line-height: 20px;
@@ -560,9 +570,9 @@
 
 .knowgrove-editor-pin:hover,
 .knowgrove-reading-pin:hover {
-  border-color: var(--interactive-accent);
+  border-color: var(--knowgrove-brand);
   color: var(--text-on-accent);
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
 }
 
 .knowgrove-editor-pin svg,
@@ -590,7 +600,7 @@
 .knowgrove-commented-text {
   border-radius: 2px;
   text-decoration-line: underline;
-  text-decoration-color: rgba(var(--interactive-accent-rgb), 0.8);
+  text-decoration-color: rgba(var(--knowgrove-brand-rgb), 0.8);
   text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
   cursor: pointer;
@@ -600,8 +610,8 @@
 .knowgrove-commented-text:hover,
 .knowgrove-commented-text:focus-visible {
   outline: none;
-  color: var(--text-accent);
-  background: rgba(var(--interactive-accent-rgb), 0.08);
+  color: var(--knowgrove-brand);
+  background: rgba(var(--knowgrove-brand-rgb), 0.08);
 }
 
 .knowgrove-selection-actions {
@@ -629,7 +639,7 @@
   padding: 4px;
   border: 0;
   border-radius: 999px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: transparent;
 }
 
@@ -643,7 +653,7 @@
 
 .knowgrove-selection-actions .clickable-icon:hover {
   color: var(--text-on-accent);
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
 }
 
 .knowgrove-selection-actions svg {
@@ -659,7 +669,7 @@
 .knowgrove-selection-actions.is-dragging .knowgrove-selection-drag-handle {
   cursor: grabbing;
   color: var(--text-on-accent);
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
 }
 
 /* Native block embeds should read like surrounding body copy, not a second document title. */
@@ -706,7 +716,7 @@
 
 @keyframes knowgrove-source-focus {
   0%, 35% {
-    background: rgba(var(--interactive-accent-rgb), 0.16);
+    background: rgba(var(--knowgrove-brand-rgb), 0.16);
   }
   100% {
     background: transparent;
@@ -759,9 +769,9 @@
 .knowgrove-sidebar-composer {
   margin-bottom: var(--size-4-4, 16px);
   padding: var(--size-4-3, 12px);
-  border: 1px solid rgba(var(--interactive-accent-rgb), 0.35);
+  border: 1px solid rgba(var(--knowgrove-brand-rgb), 0.35);
   border-radius: var(--radius-m);
-  background: rgba(var(--interactive-accent-rgb), 0.04);
+  background: rgba(var(--knowgrove-brand-rgb), 0.04);
 }
 
 .knowgrove-sidebar-section-label {
@@ -786,7 +796,7 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   padding: 0 0 0 var(--size-4-2, 8px);
-  border-inline-start: 2px solid var(--interactive-accent);
+  border-inline-start: 2px solid var(--knowgrove-brand);
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   line-height: var(--line-height-normal);
@@ -826,8 +836,8 @@
 }
 
 .knowgrove-sidebar-comment-card.is-active {
-  border-color: rgba(var(--interactive-accent-rgb), 0.65);
-  background: rgba(var(--interactive-accent-rgb), 0.045);
+  border-color: rgba(var(--knowgrove-brand-rgb), 0.65);
+  background: rgba(var(--knowgrove-brand-rgb), 0.045);
 }
 
 .knowgrove-sidebar-comment-top {
@@ -855,7 +865,7 @@
 }
 
 .knowgrove-sidebar-source-preview:hover {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: transparent;
 }
 
@@ -891,7 +901,7 @@
 
 .knowgrove-sidebar-add-target:hover,
 .knowgrove-sidebar-target-link:hover {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: transparent;
 }
 
@@ -1027,7 +1037,7 @@
 
 .knowgrove-tooltip-action {
   margin-top: var(--size-4-2, 8px);
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 /* Property workbench */
@@ -1100,7 +1110,7 @@
 .knowgrove-property-theory-card > span {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-theory-card svg {
@@ -1194,7 +1204,7 @@
 
 .knowgrove-property-stat > span {
   display: inline-flex;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-stat svg {
@@ -1235,7 +1245,7 @@
 .knowgrove-property-progress-bar {
   height: 100%;
   border-radius: inherit;
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
   transition: width 160ms ease;
 }
 
@@ -1258,9 +1268,9 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border: 1px solid rgba(var(--interactive-accent-rgb), 0.5);
+  border: 1px solid rgba(var(--knowgrove-brand-rgb), 0.5);
   border-radius: 999px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
 }
@@ -1299,7 +1309,7 @@
 
 .knowgrove-property-suggestion > span {
   display: inline-flex;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-suggestion svg {
@@ -1367,7 +1377,7 @@
 
 .knowgrove-property-inventory-coverage > div {
   height: 100%;
-  background: rgba(var(--interactive-accent-rgb), 0.7);
+  background: rgba(var(--knowgrove-brand-rgb), 0.7);
 }
 
 .knowgrove-property-issue-group + .knowgrove-property-issue-group {
@@ -1579,7 +1589,7 @@ button.knowgrove-property-flow-item:hover {
 .knowgrove-property-flow-step {
   display: grid;
   place-items: center;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-flow-step > span:first-child {
@@ -1850,7 +1860,7 @@ button.knowgrove-property-flow-item:hover {
 .knowgrove-tree-open svg {
   width: 15px;
   height: 15px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-domain-summary > .clickable-icon,
@@ -2000,7 +2010,7 @@ button.knowgrove-research-source-more:hover {
   display: inline-flex;
   flex: 0 0 auto;
   margin-top: 2px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-research-source-row svg {
@@ -2055,7 +2065,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-research-actions-heading svg {
   width: 16px;
   height: 16px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-research-actions-buttons {
@@ -2114,7 +2124,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-research-sources-ai svg {
   width: 14px;
   height: 14px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-research-sources-section {
@@ -2163,7 +2173,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-research-source-open > span {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-research-source-open > span svg {
@@ -2230,7 +2240,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-source-screening-heading svg {
   width: 16px;
   height: 16px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-source-screening-list {
@@ -2357,7 +2367,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-topic-card-title svg {
   width: 15px;
   height: 15px;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-topic-count {
@@ -2421,8 +2431,8 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-topic-stages span.is-current {
-  color: var(--text-accent);
-  background: rgba(var(--interactive-accent-rgb), 0.1);
+  color: var(--knowgrove-brand);
+  background: rgba(var(--knowgrove-brand-rgb), 0.1);
 }
 
 .knowgrove-topic-actions {
@@ -2522,7 +2532,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-creation-step[data-state="current"] {
-  border-color: var(--interactive-accent);
+  border-color: var(--knowgrove-brand);
   color: var(--text-normal);
 }
 
@@ -2590,7 +2600,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-creation-progress {
   margin-top: var(--size-4-3, 12px);
   padding: var(--size-4-3, 12px);
-  border-inline-start: 3px solid var(--interactive-accent);
+  border-inline-start: 3px solid var(--knowgrove-brand);
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
@@ -2797,12 +2807,12 @@ button.knowgrove-research-source-more:hover {
 
 .knowgrove-runtime-progress progress::-webkit-progress-value {
   border-radius: var(--radius-s);
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
 }
 
 .knowgrove-runtime-progress progress::-moz-progress-bar {
   border-radius: var(--radius-s);
-  background: var(--interactive-accent);
+  background: var(--knowgrove-brand);
 }
 
 .knowgrove-runtime-progress.is-error progress::-webkit-progress-value {
@@ -2823,7 +2833,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-runtime-progress-stage.is-active {
-  color: var(--interactive-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-runtime-progress-stage.is-done {
@@ -3039,7 +3049,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-creation-empty svg {
   width: 28px;
   height: 28px;
-  color: var(--interactive-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-rewrite-modal,
@@ -3151,7 +3161,7 @@ button.knowgrove-research-source-more:hover {
 
 .knowgrove-theme-source-title small {
   flex: 0 0 auto;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-theme-source-path {
@@ -3198,7 +3208,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-taxonomy-branch {
   min-width: 120px;
   padding: var(--size-4-2, 8px);
-  border-inline-start: 2px solid var(--interactive-accent);
+  border-inline-start: 2px solid var(--knowgrove-brand);
 }
 
 .knowgrove-taxonomy-branch > span {
@@ -3236,7 +3246,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-taxonomy-proposal {
   margin-top: var(--size-4-4, 16px);
   padding: var(--size-4-3, 12px);
-  border: 1px solid var(--interactive-accent);
+  border: 1px solid var(--knowgrove-brand);
   border-radius: var(--radius-m);
 }
 
@@ -3325,8 +3335,8 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-guide-status[data-state="compatible"] {
-  border-color: var(--color-green, var(--interactive-accent));
-  color: var(--color-green, var(--text-accent));
+  border-color: var(--color-green, var(--knowgrove-brand));
+  color: var(--color-green, var(--knowgrove-brand));
 }
 
 .knowgrove-property-guide-status[data-state="warning"] {
@@ -3350,7 +3360,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-guide-layer.is-protected {
-  border-color: var(--interactive-accent);
+  border-color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-guide-layer-heading {
@@ -3360,7 +3370,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-guide-layer-heading > span {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
 }
@@ -3407,7 +3417,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-guide-layer.is-protected .knowgrove-property-guide-tags span {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-guide-workflow-section {
@@ -3488,7 +3498,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-guide-guardrail[data-tone="stable"] {
-  border-inline-start-color: var(--interactive-accent);
+  border-inline-start-color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-guide-guardrail[data-tone="warning"] {
@@ -3497,7 +3507,7 @@ button.knowgrove-research-source-more:hover {
 
 .knowgrove-property-guide-guardrail > span {
   flex: 0 0 auto;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   font-size: var(--font-ui-small);
 }
 
@@ -3553,7 +3563,7 @@ button.knowgrove-research-source-more:hover {
 }
 
 .knowgrove-property-dimension-title span:last-child {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-dimension-setting textarea {
@@ -3589,7 +3599,7 @@ button.knowgrove-research-source-more:hover {
 
 .knowgrove-ai-progress > span {
   display: inline-flex;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-ai-progress svg {
@@ -3617,7 +3627,7 @@ button.knowgrove-research-source-more:hover {
 
 .knowgrove-property-batch-progress > span {
   display: inline-flex;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-batch-progress[data-state="warning"] > span {
@@ -3647,7 +3657,7 @@ button.knowgrove-research-source-more:hover {
 .knowgrove-property-batch-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--text-accent);
+  background: var(--knowgrove-brand);
   transition: width 180ms ease;
 }
 
@@ -3656,12 +3666,12 @@ button.knowgrove-research-source-more:hover {
   padding: 2px 8px;
   border: 0;
   box-shadow: none;
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: transparent;
 }
 
 .knowgrove-property-batch-dismiss:hover {
-  color: var(--text-accent-hover);
+  color: var(--knowgrove-brand-hover);
   background: transparent;
 }
 
@@ -3843,7 +3853,7 @@ button.knowgrove-property-matrix-title {
 
 button.knowgrove-property-matrix-title:hover,
 button.knowgrove-property-matrix-title:focus-visible {
-  color: var(--text-accent);
+  color: var(--knowgrove-brand);
   background: var(--background-modifier-hover);
 }
 
@@ -3856,7 +3866,7 @@ button.knowgrove-property-matrix-title:focus-visible {
 }
 
 .knowgrove-property-matrix-cell.is-edited {
-  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+  box-shadow: inset 0 0 0 1px var(--knowgrove-brand);
 }
 
 .knowgrove-property-matrix-input,
@@ -3880,8 +3890,8 @@ button.knowgrove-property-matrix-title:focus-visible {
 }
 
 .knowgrove-property-matrix-input:focus {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 1px var(--interactive-accent);
+  border-color: var(--knowgrove-brand);
+  box-shadow: 0 0 0 1px var(--knowgrove-brand);
   background: var(--background-primary);
 }
 
@@ -4068,7 +4078,7 @@ button.knowgrove-property-issue-row:hover {
 .knowgrove-property-issue-detail-heading svg {
   width: 16px;
   height: 16px;
-  color: var(--interactive-accent);
+  color: var(--knowgrove-brand);
 }
 
 .knowgrove-property-issue-kind {
@@ -4102,7 +4112,7 @@ button.knowgrove-property-issue-row:hover {
 .knowgrove-property-ai-preview {
   margin-top: var(--size-4-4, 16px);
   padding: var(--size-4-3, 12px);
-  border: 1px solid var(--interactive-accent);
+  border: 1px solid var(--knowgrove-brand);
   border-radius: var(--radius-s);
 }
 
