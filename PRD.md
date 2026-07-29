@@ -11,7 +11,7 @@
 | 产品形态 | Obsidian 桌面端插件 + 浏览器剪藏扩展 |
 | 当前产品版本 | 2.5.0（开发中） |
 | 本轮目标版本 | 2.5.0 首轮发布候选 |
-| PRD 版本 | 1.2.0 |
+| PRD 版本 | 1.2.1 |
 | 基线日期 | 2026-07-29 |
 | 文档状态 | 2.5.0 发布候选与双源分发实施基线 |
 | 源代码仓库 | `https://github.com/lufie/KnowGrove`（私有） |
@@ -471,6 +471,7 @@ Runtime 1.0.0 托管：
 
 - 本机浏览器服务：`http://127.0.0.1:47831`
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
+- 本地可分发文件夹：`release/KnowGrove-2.5.0-可分发文件/`
 - 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.0/runtime-manifest.json`
 - 国内运行包发布地址：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/tag/runtime-v1.0.0`
 - GitHub 备用清单：`https://github.com/lufie/KnowGrove-runtime/releases/latest/download/runtime-manifest.json`
@@ -596,6 +597,7 @@ Runtime 1.0.0 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-29 | 2.5.0（候选） | 1.2.1 | 发布准备 | 生成统一可分发文件夹，包含 Obsidian 插件 2.5.0、Chrome / Edge 剪藏扩展 0.3.1、安装说明和 SHA-256 校验文件；Runtime 继续由 CNB 主源自动下载 | 插件构建与浏览器扩展检查通过；分发目录结构和压缩包内容已校验 |
 | 2026-07-29 | 2.5.0（候选） | 1.2.0 | 发布 / 调整 | 发布 CNB 国内 Runtime 1.0.0（17 个稳定附件），插件默认改为 CNB 主清单、GitHub 备用清单，并增加既有清单重签工具 | CNB 匿名下载、清单 SHA-256、Ed25519 签名、21 项远程组件与 Obsidian 插件内 `cnb.cool` 主源审计均已实测；完整干净机验收待完成 |
 | 2026-07-29 | 2.5.0（候选） | 1.1.0 | 新增 / 发布 | 完成 Runtime 1.0.0 三平台构建、签名清单、GitHub 公共分发和 macOS Apple Silicon 插件内远端安装；CNB 国内主源等待账号实名认证 | 已部署并完成 macOS 实测 |
 | 2026-07-28 | 2.4.26 | 1.0.0 | 建立基线 | 汇总 KnowGrove 当前全部产品能力、数据边界、Runtime 真实发布状态、验收标准和后续 PRD 维护规则 | 已建立文档；插件功能以当前实机版本为准 |
