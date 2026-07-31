@@ -23,14 +23,28 @@ const VIDEO_HOSTS = [
   "weibo.tv",
 ];
 
+const AUDIO_HOSTS = [
+  "podcasts.apple.com",
+  "podcasts.google.com",
+  "music.163.com",
+  "audio.com",
+  "soundcloud.com",
+  "ximalaya.com",
+  "qingting.fm",
+];
+
 export function detectPageType(url) {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     const isWeiboVideo = host.endsWith("weibo.com") && parsed.pathname.startsWith("/tv");
+    if (
+      /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)(?:$|[?#])/i.test(parsed.href)
+      || AUDIO_HOSTS.some((candidate) => host === candidate || host.endsWith(`.${candidate}`))
+    ) return "audio";
     return isWeiboVideo || VIDEO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
-    )
+    ) || /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i.test(parsed.href)
       ? "video"
       : "article";
   } catch {
@@ -122,6 +136,9 @@ export async function capturePageContent(tabId) {
           document.querySelector("main"),
           document.querySelector("[role='main']"),
           ...document.querySelectorAll("article"),
+          ...document.querySelectorAll(
+            "[class*='conversation'],[class*='chat'],[class*='message-list'],[data-testid*='conversation'],[data-testid*='chat']",
+          ),
         ].filter((element, index, all) => element && all.indexOf(element) === index);
         const root = candidates
           .map((element) => ({ element, text: clean(element.innerText) }))
@@ -136,12 +153,20 @@ export async function capturePageContent(tabId) {
           }
           return "";
         };
+        const ogType = meta(["og:type", "twitter:card"]).toLowerCase();
+        const hasVideo = Boolean(
+          document.querySelector("video,meta[property^='og:video'],meta[name='twitter:player']"),
+        ) || /video|player/.test(ogType);
+        const hasAudio = Boolean(
+          document.querySelector("audio,meta[property^='og:audio']"),
+        ) || /audio|music/.test(ogType);
         return {
           title: clean(document.title).slice(0, 500),
           content: text,
           author: meta(["author", "article:author"]),
           publishedAt: meta(["article:published_time", "date", "datePublished"]),
           sourceKind: selection.length >= 80 ? "selection" : "rendered-page",
+          detectedType: hasVideo ? "video" : hasAudio ? "audio" : "article",
         };
       },
     });
@@ -233,7 +258,7 @@ export async function captureBilibiliTranscript(tabId) {
 }
 
 export function pageTypeLabel(pageType) {
-  return pageType === "video" ? "视频" : "文章";
+  return pageType === "video" ? "视频" : pageType === "audio" ? "音频" : "文章";
 }
 
 export function isSupportedPage(url) {

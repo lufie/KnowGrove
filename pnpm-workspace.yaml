@@ -1,3 +1,7 @@
+packages:
+  - cloud
+
 allowBuilds:
+  core-js: set this to true or false
   esbuild: true
 confirmModulesPurge: false

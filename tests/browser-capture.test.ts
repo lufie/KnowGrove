@@ -6,6 +6,7 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
   cleanArticleMarkdown,
@@ -14,6 +15,7 @@ import {
   detectWhisperImplementation,
   datedArticleTitle,
   extractJsonObject,
+  extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
@@ -23,6 +25,7 @@ import {
   protectArticleImages,
   restoreArticleImages,
   safeCaptureFileName,
+  sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
   splitBrowserCaptureText,
@@ -37,6 +40,54 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+});
+
+test("generic capture resolves short links and detects media from response metadata", () => {
+  assert.equal(classifyBrowserCaptureResource("https://short.example/a1", {
+    finalUrl: "https://www.bilibili.com/video/BV1",
+    contentType: "text/html; charset=utf-8",
+  }), "video");
+  assert.equal(classifyBrowserCaptureResource("https://files.example/download", {
+    contentType: "audio/mpeg",
+  }), "audio");
+  assert.equal(classifyBrowserCaptureResource("https://unknown.example/watch/42", {
+    contentType: "text/html",
+    html: '<meta content="video.other" property="og:type"><meta property="og:video" content="https://cdn.example/a">',
+  }), "video");
+  assert.equal(classifyBrowserCaptureResource("https://unknown.example/listen/42", {
+    contentType: "text/html",
+    html: '<audio controls src="https://cdn.example/episode.m4a"></audio>',
+  }), "audio");
+  assert.equal(classifyBrowserCaptureResource("https://www.doubao.com/thread/example", {
+    contentType: "text/html",
+    html: '<main data-testid="conversation">AI 对话分享内容</main>',
+  }), "article");
+});
+
+test("browser-rendered capture can target only a note with the same source URL", () => {
+  assert.equal(
+    sameCaptureResourceUrl(
+      "https://www.doubao.com/thread/example#answer",
+      "https://www.doubao.com/thread/example",
+    ),
+    true,
+  );
+  assert.equal(
+    sameCaptureResourceUrl(
+      "https://www.doubao.com/thread/example",
+      "https://www.doubao.com/thread/another",
+    ),
+    false,
+  );
+});
+
+test("dynamic AI share pages recover question and answer text from embedded router data", () => {
+  const source = extractStructuredCaptureTextFromScripts([
+    'window._ROUTER_DATA = {"loaderData":{"shareInfo":{"messages":[{"question":"怎么建立知识树？"},{"answer":"先建立领域，再持续归纳主题和课题。"}]}}};window.boot();',
+  ]);
+  assert.match(source, /怎么建立知识树/);
+  assert.match(source, /先建立领域/);
+  assert.doesNotMatch(source, /loaderData|shareInfo/);
 });
 
 test("Bilibili extraction uses browser headers and bounded retries", () => {

@@ -1,9 +1,9 @@
 {
   "name": "knowgrove-capture",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
-  "description": "识别浏览器中的文章或视频，通过本地 CLI 整理并保存到 Obsidian。",
+  "description": "识别浏览器中的文章、AI 对话、视频或音频，通过本地 CLI 整理并保存到 Obsidian。",
   "scripts": {
     "check": "node \"产品源码/开发工具/检查浏览器扩展.mjs\""
   },

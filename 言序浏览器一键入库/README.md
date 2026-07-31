@@ -2,7 +2,7 @@
 
 言序（KnowGrove）浏览器剪藏是 KnowGrove 的浏览器入口：点击一次，把当前文章或视频整理到当前 Obsidian Vault。
 
-版本：Chrome / Edge 扩展 `0.3.3`，需配合 KnowGrove `2.5.4` 或更高版本。
+版本：Chrome / Edge 扩展 `0.3.4`，需配合 KnowGrove `2.5.5` 或更高版本。
 
 ## 目录
 
@@ -31,9 +31,9 @@
 2. 保持 Obsidian 打开。
 3. 在 Chrome 或 Edge 的扩展开发者模式中加载 `产品源码/浏览器扩展/`。
 4. 点击扩展中的“连接 KnowGrove”，在 Obsidian 弹窗中允许。
-5. 打开文章或视频，点击“一键整理到 Obsidian”。
+5. 打开文章、AI 对话分享页、视频或音频，点击“一键整理到 Obsidian”。
 
-Bilibili 视频会优先读取当前登录页面可见的官方字幕；字幕只作为文字传给本机 KnowGrove，浏览器 Cookie 不会离开浏览器。没有可用字幕时，KnowGrove 才会下载公开音频并使用本机 Whisper 转录。
+扩展会读取用户主动点击时当前页面已经渲染的正文或对话内容；短链和陌生平台由 KnowGrove 根据最终地址、响应类型与页面媒体信息重新判断。音视频优先读取字幕，没有可用字幕时才下载公开音频并使用本机 Whisper 转录。浏览器 Cookie 不会离开浏览器。
 
 发布候选安装包生成后，会在仓库 `release/` 目录提供可直接解压加载的版本。
 

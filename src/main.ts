@@ -404,6 +404,7 @@ export default class KnowGrovePlugin extends Plugin {
       runProvider: (provider, prompt) => this.runBrowserCaptureProvider(provider, prompt),
       getSkillInstruction: (pageType) => this.getRuntimeSkillInstruction(pageType),
       suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
+      enrichCapturedFile: (file) => this.ensureNewNoteStatus(file),
     });
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
@@ -1522,6 +1523,10 @@ export default class KnowGrovePlugin extends Plugin {
         new Notice(`无法解析：${error instanceof Error ? error.message : String(error)}`, 7000);
       }
     }
+  }
+
+  async parseLinkNoteManually(file: TFile): Promise<void> {
+    await this.parseLinkNote(file, "manual");
   }
 
   private scheduleAutomaticLinkNote(file: TFile): void {

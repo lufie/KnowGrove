@@ -12,3 +12,4 @@ import "./block-drag.test";
 import "./brand-migration.test";
 import "./browser-capture.test";
 import "./runtime-core.test";
+import "./reading-menu.test";

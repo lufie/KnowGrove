@@ -106,6 +106,7 @@ Chinese (Simplified)
 
 | Version | Date | Changes | Status |
 | --- | --- | --- | --- |
+| 0.3.4 | 2026-07-30 | 支持短链最终地址识别、陌生站点媒体检测、豆包等动态 AI 对话页可见内容提取，以及文章、视频和音频统一整理 | Draft |
 | 0.3.3 | 2026-07-29 | 中文品牌统一为“言序”、英文品牌统一为“KnowGrove”，主题色同步言序 App 的暖朱红 `#F24B3F` | Draft |
 | 0.3.2 | 2026-07-29 | Bilibili 当前登录页字幕优先、动态字幕语言与自然段整理 | Draft |
 | 0.3.1 | 2026-07-27 | 优先提取当前标签页可见正文，修复登录态页面和失败状态回写 | Draft |
@@ -116,4 +117,4 @@ Chinese (Simplified)
 - 创建 128×128 PNG 图标和至少一张商店截图。
 - 发布隐私政策并填写可公开访问的 URL。
 - 填写并验证支持邮箱。
-- 用 Chrome Web Store 账号上传 `KnowGrove-Capture-0.3.3.zip`。
+- 用 Chrome Web Store 账号上传 `KnowGrove-Capture-0.3.4.zip`。
