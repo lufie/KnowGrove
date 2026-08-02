@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  attachmentFolderForNote,
   extractVaultReferenceTargets,
   isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
+  parentVaultPath,
   selectPreviouslyReferencedOrphanPaths,
+  uniqueAttachmentTargetPath,
 } from "../src/attachment-cleanup-core";
 import { createDefaultSettings } from "../src/types";
 
@@ -17,6 +21,29 @@ test("attachment cleanup is enabled by default but never implies automatic delet
   assert.equal(settings.lastAttachmentCleanupScanAt, 0);
   assert.deepEqual(settings.attachmentCleanupExcludedFolders, []);
   assert.deepEqual(settings.attachmentCleanupExtraExtensions, []);
+  assert.equal(settings.moveAttachmentsWithNote, false);
+  assert.equal(settings.autoOrganizeAttachments, false);
+  assert.equal(settings.sharedAttachmentHandling, "skip");
+});
+
+test("attachment organization follows the Obsidian global attachment location", () => {
+  assert.equal(parentVaultPath("Home/Notes/Topic.md"), "Home/Notes");
+  assert.equal(attachmentFolderForNote("Home/Notes/Topic.md", "/"), "");
+  assert.equal(attachmentFolderForNote("Home/Notes/Topic.md", "./"), "Home/Notes");
+  assert.equal(attachmentFolderForNote("Home/Notes/Topic.md", "./assets"), "Home/Notes/assets");
+  assert.equal(attachmentFolderForNote("Home/Notes/Topic.md", "Shared/assets"), "Shared/assets");
+});
+
+test("attachment organization uses folder boundaries and collision-safe names", () => {
+  assert.equal(isPathInsideVaultFolder("Home/Notes/assets/a.png", "Home/Notes"), true);
+  assert.equal(isPathInsideVaultFolder("Home/Notebook/a.png", "Home/Note"), false);
+  assert.equal(isPathInsideVaultFolder("a.png", ""), true);
+  assert.equal(isPathInsideVaultFolder("assets/a.png", ""), false);
+  assert.equal(uniqueAttachmentTargetPath("Home/Notes/assets", "image.png", []), "Home/Notes/assets/image.png");
+  assert.equal(
+    uniqueAttachmentTargetPath("Home/Notes/assets", "image.png", ["home/notes/assets/IMAGE.png", "Home/Notes/assets/image 2.png"]),
+    "Home/Notes/assets/image 3.png",
+  );
 });
 
 test("attachment cleanup only manages a conservative attachment allowlist", () => {

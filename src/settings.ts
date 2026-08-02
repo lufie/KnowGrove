@@ -389,11 +389,46 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }))
       .addButton((button) => button
         .setButtonText("立即检查")
-        .onClick(() => void this.plugin.scanUnreferencedAttachments()));
+        .onClick(() => void this.plugin.scanUnreferencedAttachments()))
+      .addButton((button) => button
+        .setButtonText("全面检查")
+        .onClick(() => void this.plugin.checkAttachmentLinkConsistency()));
 
     new Setting(containerEl)
-      .setName("附件检测排除目录")
-      .setDesc("通常无需修改。每行填写一个 Vault 相对路径；属性管理中的排除目录也会继续生效。")
+      .setName("附件随笔记移动")
+      .setDesc("关闭时不改变附件位置。开启后，移动笔记时只移动由该笔记独占、且位于原笔记目录内的附件；目标位置沿用 Obsidian 全局附件设置。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.moveAttachmentsWithNote)
+        .onChange(async (value) => {
+          this.plugin.settings.moveAttachmentsWithNote = value;
+          await this.plugin.savePluginData();
+        }));
+
+    new Setting(containerEl)
+      .setName("自动整理附件")
+      .setDesc("关闭时仍可从命令面板或笔记菜单手动预览整理。开启后，编辑笔记时自动把独占附件整理到 Obsidian 全局附件位置。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.autoOrganizeAttachments)
+        .onChange(async (value) => {
+          this.plugin.settings.autoOrganizeAttachments = value;
+          await this.plugin.savePluginData();
+        }));
+
+    new Setting(containerEl)
+      .setName("共享附件处理")
+      .setDesc("同一附件被多篇笔记引用时，默认跳过；选择复制后，为正在整理的笔记创建独立副本，并只修改该笔记的引用。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("skip", "跳过（推荐）")
+        .addOption("copy", "复制独立副本")
+        .setValue(this.plugin.settings.sharedAttachmentHandling)
+        .onChange(async (value) => {
+          this.plugin.settings.sharedAttachmentHandling = value === "copy" ? "copy" : "skip";
+          await this.plugin.savePluginData();
+        }));
+
+    new Setting(containerEl)
+      .setName("附件与链接排除目录")
+      .setDesc("清理、整理和一致性检查都会跳过这些 Vault 相对目录；属性管理中的排除目录也会继续生效。")
       .addTextArea((text) => {
         text.inputEl.rows = 3;
         text

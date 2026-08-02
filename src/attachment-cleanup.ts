@@ -1,22 +1,30 @@
-import { Modal, Notice, TFile, normalizePath, setIcon, type CachedMetadata } from "obsidian";
+import { Modal, Notice, TFile, TFolder, normalizePath, setIcon, type CachedMetadata } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import {
   extractVaultReferenceTargets,
+  attachmentFolderForNote,
   isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
+  parentVaultPath,
   selectPreviouslyReferencedOrphanPaths,
+  uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
 export {
+  attachmentFolderForNote,
   extractVaultReferenceTargets,
   isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
+  parentVaultPath,
   selectPreviouslyReferencedOrphanPaths,
+  uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
 
 const DAILY_SCAN_INTERVAL = 24 * 60 * 60 * 1_000;
@@ -39,6 +47,20 @@ export interface AttachmentCandidate {
 interface AttachmentReferenceSnapshot {
   all: Set<string>;
   content: Set<string>;
+}
+
+interface AttachmentMoveCandidate {
+  attachmentPath: string;
+  targetPath: string;
+  sourcePath: string;
+  action: "move" | "copy";
+  sharedSourceCount: number;
+}
+
+interface BrokenAttachmentReference {
+  sourcePath: string;
+  target: string;
+  matches: string[];
 }
 
 function attachmentKind(extension: string): string {
@@ -142,6 +164,79 @@ export class AttachmentCleanupModal extends Modal {
   }
 }
 
+class AttachmentMoveModal extends Modal {
+  private readonly selected = new Set<number>();
+
+  constructor(
+    private readonly plugin: KnowGrovePlugin,
+    private readonly candidates: AttachmentMoveCandidate[],
+    selectByDefault: boolean,
+    private readonly onApply: (candidates: AttachmentMoveCandidate[]) => Promise<void>,
+  ) {
+    super(plugin.app);
+    if (selectByDefault) candidates.forEach((_, index) => this.selected.add(index));
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("knowgrove-attachment-cleanup-shell");
+    this.render();
+  }
+
+  private render(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("knowgrove-attachment-cleanup-modal");
+    root.createEl("h2", { text: "附件整理预览" });
+    root.createEl("p", {
+      cls: "setting-item-description",
+      text: "目标目录沿用 Obsidian 的全局附件位置。共享附件只会复制，重名文件会自动使用新名称，不覆盖已有文件。",
+    });
+    const toolbar = root.createDiv("knowgrove-attachment-cleanup-toolbar");
+    toolbar.createSpan({ text: `${this.candidates.length} 项 · 已选择 ${this.selected.size} 项` });
+    const selectAll = toolbar.createEl("button", { text: this.selected.size === this.candidates.length ? "取消全选" : "全选" });
+    selectAll.addEventListener("click", () => {
+      if (this.selected.size === this.candidates.length) this.selected.clear();
+      else this.candidates.forEach((_, index) => this.selected.add(index));
+      this.render();
+    });
+
+    const list = root.createDiv("knowgrove-attachment-cleanup-list");
+    this.candidates.forEach((candidate, index) => {
+      const row = list.createEl("label", { cls: "knowgrove-attachment-cleanup-row" });
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = this.selected.has(index);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) this.selected.add(index);
+        else this.selected.delete(index);
+        this.render();
+      });
+      const icon = row.createSpan("knowgrove-attachment-cleanup-icon");
+      setIcon(icon, candidate.action === "copy" ? "copy" : "folder-input");
+      const copy = row.createDiv("knowgrove-attachment-cleanup-copy");
+      copy.createDiv({ cls: "knowgrove-attachment-cleanup-name", text: candidate.attachmentPath.split("/").pop() ?? candidate.attachmentPath });
+      copy.createDiv({ cls: "knowgrove-attachment-cleanup-path", text: `${candidate.attachmentPath} → ${candidate.targetPath}` });
+      copy.createDiv({ cls: "knowgrove-attachment-cleanup-path", text: `来源：${candidate.sourcePath}` });
+      row.createSpan({
+        cls: "knowgrove-attachment-cleanup-meta",
+        text: candidate.action === "copy" ? `共享 ${candidate.sharedSourceCount} 篇 · 复制` : "移动",
+      });
+    });
+
+    const actions = root.createDiv("knowgrove-attachment-cleanup-actions");
+    actions.createEl("button", { text: "取消" }).addEventListener("click", () => this.close());
+    const apply = actions.createEl("button", { cls: "mod-cta", text: "执行整理" });
+    apply.disabled = this.selected.size === 0;
+    apply.addEventListener("click", () => {
+      apply.disabled = true;
+      const selected = this.candidates.filter((_, index) => this.selected.has(index));
+      void this.onApply(selected).then(() => this.close()).catch((error) => {
+        apply.disabled = false;
+        new Notice(`附件整理失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+    });
+  }
+}
+
 export class AttachmentCleanupManager {
   private readonly sourceReferences = new Map<string, Set<string>>();
   private readonly sourceContentReferences = new Map<string, Set<string>>();
@@ -161,6 +256,7 @@ export class AttachmentCleanupManager {
   private readonly pendingMetadataSourcePaths = new Map<string, Set<string>>();
   private extraExtensionCacheKey = "";
   private extraExtensionCache: string[] = [];
+  private readonly organizingSources = new Set<string>();
 
   constructor(private readonly plugin: KnowGrovePlugin) {
     for (const [attachmentPath, usage] of Object.entries(plugin.data.attachmentUsage)) {
@@ -273,6 +369,17 @@ export class AttachmentCleanupManager {
 
   async handleRename(file: TFile, oldPath: string): Promise<void> {
     await this.ensureIndex();
+    const previousContentReferences = isAttachmentReferenceSource(oldPath)
+      ? this.referencesBeforeRefresh(oldPath, true)
+      : new Set<string>();
+    if (
+      file.extension === "md"
+      && this.plugin.settings.moveAttachmentsWithNote
+      && previousContentReferences.size
+    ) {
+      const plans = this.buildMovePlansForSource(file, previousContentReferences, oldPath, true);
+      await this.executeMovePlans(plans);
+    }
     this.sourceReferences.delete(oldPath);
     this.sourceContentReferences.delete(oldPath);
     if (this.isManagedAttachment(oldPath) || this.isManagedAttachment(file.path)) {
@@ -286,6 +393,74 @@ export class AttachmentCleanupManager {
       return;
     }
     if (isAttachmentReferenceSource(file.path)) this.scheduleSourceRefresh(file);
+  }
+
+  async organizeCurrentNote(file: TFile): Promise<void> {
+    if (file.extension !== "md") return;
+    await this.rebuildIndex();
+    const candidates = this.buildMovePlansForSource(file, this.referencesBeforeRefresh(file.path, true));
+    if (!candidates.length) {
+      new Notice("当前笔记的附件已经符合 Obsidian 全局附件位置，或共享附件已按设置跳过");
+      return;
+    }
+    new AttachmentMoveModal(this.plugin, candidates, true, (selected) => this.executeMovePlans(selected, true)).open();
+  }
+
+  async organizeAllAttachments(): Promise<void> {
+    await this.rebuildIndex();
+    const candidates: AttachmentMoveCandidate[] = [];
+    const reservedTargets = new Set(this.plugin.app.vault.getFiles().map((file) => file.path));
+    for (const [sourcePath, references] of this.sourceContentReferences) {
+      const source = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
+      if (!(source instanceof TFile) || source.extension !== "md" || this.isExcludedPath(source.path)) continue;
+      for (const candidate of this.buildMovePlansForSource(source, references, undefined, false, reservedTargets)) {
+        candidates.push(candidate);
+        reservedTargets.add(candidate.targetPath);
+      }
+    }
+    if (!candidates.length) {
+      new Notice("全库附件已经符合 Obsidian 全局附件位置，或共享附件已按设置跳过");
+      return;
+    }
+    new AttachmentMoveModal(this.plugin, candidates, false, (selected) => this.executeMovePlans(selected, true)).open();
+  }
+
+  async checkConsistency(): Promise<void> {
+    await this.rebuildIndex();
+    const attachments = this.managedAttachments();
+    const broken: BrokenAttachmentReference[] = [];
+    const sources = this.plugin.app.vault.getFiles().filter((file) => isAttachmentReferenceSource(file.path) && !this.isExcludedPath(file.path));
+    for (const source of sources) {
+      let content = "";
+      try {
+        content = await this.plugin.app.vault.cachedRead(source);
+      } catch {
+        continue;
+      }
+      for (const target of extractVaultReferenceTargets(content, source.extension)) {
+        if (!this.isManagedAttachment(target)) continue;
+        const resolved = this.plugin.app.metadataCache.getFirstLinkpathDest(target, source.path);
+        if (resolved instanceof TFile && this.isManagedAttachment(resolved.path)) continue;
+        const targetPath = normalizePath(target.split("#", 1)[0] ?? target).toLocaleLowerCase();
+        const targetName = targetPath.split("/").pop() ?? targetPath;
+        const matches = attachments
+          .filter((file) => file.name.toLocaleLowerCase() === targetName || file.path.toLocaleLowerCase() === targetPath)
+          .map((file) => file.path);
+        broken.push({ sourcePath: source.path, target, matches });
+      }
+    }
+
+    const shared = Array.from(this.attachmentSources()).filter(([, sourcePaths]) => sourcePaths.length > 1);
+    const misplaced: AttachmentMoveCandidate[] = [];
+    for (const [sourcePath, references] of this.sourceContentReferences) {
+      const source = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
+      if (!(source instanceof TFile) || source.extension !== "md") continue;
+      misplaced.push(...this.buildMovePlansForSource(source, references));
+    }
+    const orphaned = this.orphanCandidates(0);
+    const report = this.renderConsistencyReport(broken, shared, misplaced, orphaned);
+    await this.writeConsistencyReport(report);
+    new Notice(`附件与链接检查完成：断链 ${broken.length}，待整理 ${misplaced.length}，共享 ${shared.length}，历史失联 ${orphaned.length}`);
   }
 
   async scan(manual = true): Promise<void> {
@@ -383,11 +558,198 @@ export class AttachmentCleanupManager {
     if (next.content.size) this.sourceContentReferences.set(file.path, next.content);
     else this.sourceContentReferences.delete(file.path);
     if (this.recordCurrentUsage(this.sourceReferences, this.sourceContentReferences)) await this.plugin.savePluginData();
+    if (
+      file.extension === "md"
+      && this.plugin.settings.autoOrganizeAttachments
+      && !this.organizingSources.has(file.path)
+    ) {
+      const plans = this.buildMovePlansForSource(file, next.content);
+      if (plans.length) await this.executeMovePlans(plans);
+    }
     if (!this.plugin.settings.enableAttachmentCleanup) return;
     const removed = new Set(Array.from(previous).filter((path) => !next.all.has(path)));
     this.queuePotentialOrphans(removed, "reference-removed");
     const removedFromContent = new Set(Array.from(previousContent).filter((path) => !next.content.has(path)));
     this.queuePotentialOrphans(removedFromContent, "reference-removed", file.path);
+  }
+
+  private buildMovePlansForSource(
+    source: TFile,
+    references: Iterable<string>,
+    oldSourcePath?: string,
+    requireOldFolder = false,
+    existingPaths = new Set(this.plugin.app.vault.getFiles().map((file) => file.path)),
+  ): AttachmentMoveCandidate[] {
+    if (this.isExcludedPath(source.path)) return [];
+    const vaultWithConfig = this.plugin.app.vault as typeof this.plugin.app.vault & {
+      getConfig?: (key: string) => unknown;
+    };
+    const configuredFolder = String(vaultWithConfig.getConfig?.("attachmentFolderPath") ?? "/");
+    const targetFolder = attachmentFolderForNote(source.path, configuredFolder);
+    const oldFolder = parentVaultPath(oldSourcePath ?? source.path);
+    const ownerPath = oldSourcePath ?? source.path;
+    const sourcesByAttachment = this.attachmentSources();
+    const plans: AttachmentMoveCandidate[] = [];
+    for (const attachmentPath of new Set(references)) {
+      const attachment = this.plugin.app.vault.getAbstractFileByPath(attachmentPath);
+      if (!(attachment instanceof TFile) || !this.isManagedAttachment(attachment.path) || this.isExcludedPath(attachment.path)) continue;
+      if (parentVaultPath(attachment.path) === targetFolder) continue;
+      if (requireOldFolder && !isPathInsideVaultFolder(attachment.path, oldFolder)) continue;
+      const sourcePaths = sourcesByAttachment.get(attachment.path) ?? [];
+      const otherSources = sourcePaths.filter((path) => path !== ownerPath && path !== source.path);
+      const sharedSourceCount = Math.max(sourcePaths.length, otherSources.length + 1);
+      const action: "move" | "copy" = otherSources.length ? "copy" : "move";
+      if (action === "copy" && this.plugin.settings.sharedAttachmentHandling === "skip") continue;
+      const targetPath = uniqueAttachmentTargetPath(targetFolder, attachment.name, existingPaths);
+      if (targetPath === attachment.path) continue;
+      plans.push({ attachmentPath: attachment.path, targetPath, sourcePath: source.path, action, sharedSourceCount });
+      existingPaths.add(targetPath);
+    }
+    return plans;
+  }
+
+  private attachmentSources(): Map<string, string[]> {
+    const result = new Map<string, string[]>();
+    for (const [sourcePath, references] of this.sourceContentReferences) {
+      for (const attachmentPath of references) {
+        const sources = result.get(attachmentPath) ?? [];
+        sources.push(sourcePath);
+        result.set(attachmentPath, sources);
+      }
+    }
+    for (const sources of result.values()) sources.sort((left, right) => left.localeCompare(right, "zh-CN"));
+    return result;
+  }
+
+  private async executeMovePlans(candidates: AttachmentMoveCandidate[], showNotice = false): Promise<void> {
+    if (!candidates.length) return;
+    let moved = 0;
+    let copied = 0;
+    let skipped = 0;
+    for (const candidate of candidates) {
+      const attachment = this.plugin.app.vault.getAbstractFileByPath(candidate.attachmentPath);
+      const source = this.plugin.app.vault.getAbstractFileByPath(candidate.sourcePath);
+      if (!(attachment instanceof TFile) || !(source instanceof TFile) || this.plugin.app.vault.getAbstractFileByPath(candidate.targetPath)) {
+        skipped += 1;
+        continue;
+      }
+      await this.ensureFolder(parentVaultPath(candidate.targetPath));
+      this.organizingSources.add(source.path);
+      try {
+        if (candidate.action === "move") {
+          await this.plugin.app.fileManager.renameFile(attachment, candidate.targetPath);
+          moved += 1;
+        } else {
+          const data = await this.plugin.app.vault.readBinary(attachment);
+          const copiedFile = await this.plugin.app.vault.createBinary(candidate.targetPath, data);
+          const changed = await this.rewriteSourceReference(source, attachment, copiedFile);
+          if (!changed) {
+            await this.plugin.app.fileManager.trashFile(copiedFile);
+            skipped += 1;
+            continue;
+          }
+          copied += 1;
+        }
+      } finally {
+        this.organizingSources.delete(source.path);
+      }
+    }
+    await this.rebuildIndex();
+    if (showNotice || skipped) new Notice(`附件整理完成：移动 ${moved}，复制 ${copied}，跳过 ${skipped}`);
+  }
+
+  private async ensureFolder(path: string): Promise<void> {
+    if (!path) return;
+    let current = "";
+    for (const segment of path.split("/").filter(Boolean)) {
+      current = current ? `${current}/${segment}` : segment;
+      const existing = this.plugin.app.vault.getAbstractFileByPath(current);
+      if (existing instanceof TFolder) continue;
+      if (existing) throw new Error(`目标路径不是文件夹：${current}`);
+      await this.plugin.app.vault.createFolder(current);
+    }
+  }
+
+  private async rewriteSourceReference(source: TFile, previous: TFile, next: TFile): Promise<boolean> {
+    const cache = this.plugin.app.metadataCache.getFileCache(source);
+    if (!cache) return false;
+    const references = [...(cache.embeds ?? []), ...(cache.links ?? [])]
+      .filter((link) => this.plugin.app.metadataCache.getFirstLinkpathDest(link.link, source.path)?.path === previous.path)
+      .filter((link) => Number.isFinite(link.position?.start?.offset) && Number.isFinite(link.position?.end?.offset))
+      .sort((left, right) => right.position.start.offset - left.position.start.offset);
+    if (!references.length) return false;
+    let content = await this.plugin.app.vault.cachedRead(source);
+    const linkText = this.plugin.app.metadataCache.fileToLinktext(next, source.path, true);
+    for (const reference of references) {
+      const start = reference.position.start.offset;
+      const end = reference.position.end.offset;
+      const original = content.slice(start, end);
+      const embed = original.startsWith("!");
+      const subpath = reference.link.includes("#") ? `#${reference.link.split("#").slice(1).join("#")}` : "";
+      const display = reference.displayText && reference.displayText !== reference.link ? `|${reference.displayText}` : "";
+      const replacement = `${embed ? "!" : ""}[[${linkText}${subpath}${display}]]`;
+      content = `${content.slice(0, start)}${replacement}${content.slice(end)}`;
+    }
+    await this.plugin.app.vault.modify(source, content);
+    return true;
+  }
+
+  private renderConsistencyReport(
+    broken: BrokenAttachmentReference[],
+    shared: Array<[string, string[]]>,
+    misplaced: AttachmentMoveCandidate[],
+    orphaned: AttachmentCandidate[],
+  ): string {
+    const lines = [
+      "---",
+      "类型: 系统",
+      "状态: 已检查",
+      `检查时间: ${new Date().toISOString()}`,
+      "---",
+      "<!-- knowgrove:attachment-consistency-report -->",
+      "# 附件与链接检查",
+      "",
+      `- 断开的附件链接：${broken.length}`,
+      `- 位置待整理：${misplaced.length}`,
+      `- 多篇笔记共享附件：${shared.length}`,
+      `- 历史使用后失联：${orphaned.length}`,
+      "",
+      "## 断开的附件链接",
+      "",
+      ...(broken.length ? broken.map((issue) => `- \`${issue.sourcePath}\` → \`${issue.target}\`${issue.matches.length === 1 ? `；唯一候选：\`${issue.matches[0]}\`` : issue.matches.length > 1 ? `；存在 ${issue.matches.length} 个同名候选，未猜测` : "；未找到候选"}`) : ["- 无"]),
+      "",
+      "## 位置待整理",
+      "",
+      ...(misplaced.length ? misplaced.map((item) => `- \`${item.attachmentPath}\` → \`${item.targetPath}\`（来源：\`${item.sourcePath}\`）`) : ["- 无"]),
+      "",
+      "## 共享附件",
+      "",
+      ...(shared.length ? shared.map(([path, sources]) => `- \`${path}\`：${sources.map((source) => `\`${source}\``).join("、")}`) : ["- 无"]),
+      "",
+      "## 历史使用后失联",
+      "",
+      ...(orphaned.length ? orphaned.map((item) => `- \`${item.path}\`；历史来源：${item.previousSourcePaths?.map((source) => `\`${source}\``).join("、") || "未知"}`) : ["- 无"]),
+      "",
+      "> 此报告只记录问题，不会自动修改或删除文件。请使用“整理当前笔记附件”“整理全库附件”或“检查历史失联附件”预览后执行。",
+      "",
+    ];
+    return lines.join("\n");
+  }
+
+  private async writeConsistencyReport(content: string): Promise<void> {
+    const path = "_KnowGrove/附件与链接检查.md";
+    await this.ensureFolder(parentVaultPath(path));
+    const existing = this.plugin.app.vault.getAbstractFileByPath(path);
+    let file: TFile;
+    if (existing instanceof TFile) {
+      await this.plugin.app.vault.modify(existing, content);
+      file = existing;
+    } else if (existing) {
+      throw new Error(`报告路径已被文件夹占用：${path}`);
+    } else {
+      file = await this.plugin.app.vault.create(path, content);
+    }
+    await this.plugin.app.workspace.getLeaf(true).openFile(file);
   }
 
   private async readReferenceSnapshot(

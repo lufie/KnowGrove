@@ -2,6 +2,7 @@ import type { KnowGroveRuntimeSettings } from "./runtime-core";
 
 export type ReadingFilter = "unread" | "finished";
 export type RecentFileMode = "opened" | "modified" | "created";
+export type SharedAttachmentHandling = "skip" | "copy";
 export type PropertyValueType = "text" | "single" | "multi" | "date" | "checkbox";
 export type PropertyFillStrategy = "none" | "file-name" | "empty-list" | "fixed";
 export type PropertyRuleOrigin = "system" | "user" | "inferred";
@@ -172,6 +173,9 @@ export interface KnowGroveSettings {
   enableAttachmentCleanup: boolean;
   attachmentCleanupExcludedFolders: string[];
   attachmentCleanupExtraExtensions: string[];
+  moveAttachmentsWithNote: boolean;
+  autoOrganizeAttachments: boolean;
+  sharedAttachmentHandling: SharedAttachmentHandling;
   enableTopicIndex: boolean;
   lastAttachmentCleanupScanAt: number;
   recentFileMode: RecentFileMode;
@@ -418,6 +422,9 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   enableAttachmentCleanup: true,
   attachmentCleanupExcludedFolders: [],
   attachmentCleanupExtraExtensions: [],
+  moveAttachmentsWithNote: false,
+  autoOrganizeAttachments: false,
+  sharedAttachmentHandling: "skip",
   enableTopicIndex: true,
   lastAttachmentCleanupScanAt: 0,
   recentFileMode: "opened",

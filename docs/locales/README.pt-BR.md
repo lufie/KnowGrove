@@ -4,7 +4,7 @@
 
 O KnowGrove é um espaço de conhecimento local para o Obsidian. Ele transforma materiais dispersos em tópicos conectados, evidências, pesquisas e conhecimento reutilizável.
 
-Versão atual: `2.6.2`
+Versão atual: `2.7.0`
 
 ## Principais recursos
 

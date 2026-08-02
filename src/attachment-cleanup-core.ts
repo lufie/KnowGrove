@@ -34,6 +34,51 @@ export function isAttachmentReferenceSource(path: string): boolean {
   return SOURCE_EXTENSIONS.has(extension);
 }
 
+export function parentVaultPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const separator = normalized.lastIndexOf("/");
+  return separator < 0 ? "" : normalized.slice(0, separator);
+}
+
+export function attachmentFolderForNote(notePath: string, attachmentFolderPath: string): string {
+  const noteFolder = parentVaultPath(notePath);
+  const configured = attachmentFolderPath.trim().replace(/\\/g, "/");
+  if (!configured || configured === "/") return "";
+  if (configured === "." || configured === "./") return noteFolder;
+  if (configured.startsWith("./")) {
+    const relative = configured.slice(2).replace(/^\/+|\/+$/g, "");
+    return [noteFolder, relative].filter(Boolean).join("/");
+  }
+  return configured.replace(/^\/+|\/+$/g, "");
+}
+
+export function isPathInsideVaultFolder(path: string, folder: string): boolean {
+  const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const normalizedFolder = folder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  return normalizedFolder
+    ? normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`)
+    : !normalizedPath.includes("/");
+}
+
+export function uniqueAttachmentTargetPath(
+  folder: string,
+  fileName: string,
+  existingPaths: Iterable<string>,
+): string {
+  const existing = new Set(Array.from(existingPaths, (path) => path.toLocaleLowerCase()));
+  const normalizedFolder = folder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const candidate = [normalizedFolder, fileName].filter(Boolean).join("/");
+  if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
+  const extensionIndex = fileName.lastIndexOf(".");
+  const stem = extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
+  const extension = extensionIndex > 0 ? fileName.slice(extensionIndex) : "";
+  for (let index = 2; index < 10_000; index += 1) {
+    const next = [normalizedFolder, `${stem} ${index}${extension}`].filter(Boolean).join("/");
+    if (!existing.has(next.toLocaleLowerCase())) return next;
+  }
+  return [normalizedFolder, `${stem} ${Date.now()}${extension}`].filter(Boolean).join("/");
+}
+
 export function isAttachmentCleanupExcludedPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
   const segments = normalized.split("/").filter(Boolean);

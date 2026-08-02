@@ -674,6 +674,28 @@ export default class KnowGrovePlugin extends Plugin {
       name: "检查历史失联附件",
       callback: () => void this.scanUnreferencedAttachments(),
     });
+    this.addCommand({
+      id: "check-attachment-link-consistency",
+      name: "检查附件与链接一致性",
+      callback: () => void this.checkAttachmentLinkConsistency(),
+    });
+    this.addCommand({
+      id: "organize-current-note-attachments",
+      name: "整理当前笔记附件",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "md") {
+          new Notice("请先打开一篇 Markdown 笔记");
+          return;
+        }
+        void this.organizeNoteAttachments(file);
+      },
+    });
+    this.addCommand({
+      id: "organize-all-attachments",
+      name: "整理全库附件",
+      callback: () => void this.organizeAllAttachments(),
+    });
 
     this.registerEvent(this.app.vault.on("create", (file) => {
       if (file instanceof TFile) {
@@ -732,6 +754,15 @@ export default class KnowGrovePlugin extends Plugin {
           .setIcon("download")
           .onClick(() => void this.parseLinkNote(file, "manual")));
       }
+      menu.addSeparator();
+      menu.addItem((item) => item
+        .setTitle("KnowGrove：整理此笔记附件")
+        .setIcon("folder-input")
+        .onClick(() => void this.organizeNoteAttachments(file)));
+      menu.addItem((item) => item
+        .setTitle("KnowGrove：检查附件与链接")
+        .setIcon("list-checks")
+        .onClick(() => void this.checkAttachmentLinkConsistency()));
     }));
     this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, context) => {
       if (!(context instanceof MarkdownView) || !context.file) return;
@@ -790,6 +821,18 @@ export default class KnowGrovePlugin extends Plugin {
 
   async scanUnreferencedAttachments(): Promise<void> {
     await this.attachmentCleanupManager?.scan(true);
+  }
+
+  async checkAttachmentLinkConsistency(): Promise<void> {
+    await this.attachmentCleanupManager?.checkConsistency();
+  }
+
+  async organizeNoteAttachments(file: TFile): Promise<void> {
+    await this.attachmentCleanupManager?.organizeCurrentNote(file);
+  }
+
+  async organizeAllAttachments(): Promise<void> {
+    await this.attachmentCleanupManager?.organizeAllAttachments();
   }
 
   refreshAttachmentCleanupConfiguration(): void {
@@ -1240,6 +1283,9 @@ export default class KnowGrovePlugin extends Plugin {
           ? normalizeAttachmentExtensions(savedSettings.attachmentCleanupExtraExtensions
             .filter((extension): extension is string => typeof extension === "string"))
           : [...defaults.attachmentCleanupExtraExtensions],
+        moveAttachmentsWithNote: savedSettings?.moveAttachmentsWithNote === true,
+        autoOrganizeAttachments: savedSettings?.autoOrganizeAttachments === true,
+        sharedAttachmentHandling: savedSettings?.sharedAttachmentHandling === "copy" ? "copy" : "skip",
         aiProperties: {
           ...defaults.aiProperties,
           ...(savedAIProperties ?? {}),
