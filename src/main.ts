@@ -824,7 +824,18 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async checkAttachmentLinkConsistency(): Promise<void> {
-    await this.attachmentCleanupManager?.checkConsistency();
+    const manager = this.attachmentCleanupManager;
+    if (!manager) {
+      new Notice("附件检查组件尚未就绪，请重新加载插件后再试");
+      return;
+    }
+    new Notice("正在检查附件与链接…");
+    try {
+      await manager.checkConsistency();
+    } catch (error) {
+      console.error("KnowGrove attachment consistency check failed", error);
+      new Notice(`附件检查失败：${error instanceof Error ? error.message : String(error)}`, 7000);
+    }
   }
 
   async organizeNoteAttachments(file: TFile): Promise<void> {

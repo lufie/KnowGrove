@@ -441,11 +441,15 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       },
     )
       .addButton((button) => button
-        .setButtonText("立即检查")
-        .onClick(() => void this.plugin.scanUnreferencedAttachments()))
-      .addButton((button) => button
-        .setButtonText("全面检查")
-        .onClick(() => void this.plugin.checkAttachmentLinkConsistency()));
+        .setButtonText("检查附件")
+        .onClick(async () => {
+          button.setDisabled(true).setButtonText("正在检查");
+          try {
+            await this.plugin.checkAttachmentLinkConsistency();
+          } finally {
+            button.setDisabled(false).setButtonText("检查附件");
+          }
+        }));
 
     this.addClickableToggleSetting(
       containerEl,
