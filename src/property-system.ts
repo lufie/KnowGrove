@@ -18,8 +18,7 @@ const SYSTEM_FILE_NAMES = new Set(["AGENTS.md", "DESIGN.md", "SKILL.md"]);
 const SYSTEM_PATH_SEGMENTS = new Set([".git", ".obsidian", "node_modules"]);
 const SYSTEM_DIMENSION_IDS = new Set(["file-name", "type", "status", "domain", "topic"]);
 export const PROPERTY_BASE_MANAGED_MARKER = "# KnowGrove managed property Base";
-export const PROPERTY_RULE_SCHEMA_VERSION = 7;
-export const LEGACY_FOCUS_PROPERTY_NAMES = ["重点关注"] as const;
+export const PROPERTY_RULE_SCHEMA_VERSION = 8;
 
 interface PropertyFlowRule {
   viewName: string;
@@ -27,10 +26,7 @@ interface PropertyFlowRule {
   statuses?: readonly string[];
 }
 
-export interface ExternalFocusPropertyRule {
-  enabled: boolean;
-  propertyName: string;
-  aliases?: readonly string[];
+export interface PropertyAuditOptions {
   reading?: {
     propertyName: string;
     readingValue: string;
@@ -40,7 +36,7 @@ export interface ExternalFocusPropertyRule {
 
 export const PROPERTY_FLOW_RULES = {
   input: {
-    viewName: "📥 输入与收藏",
+    viewName: "📥 输入队列",
     types: ["输入资料"],
     statuses: ["待整理", "待归类", "待沉淀", "处理失败"],
   },
@@ -336,7 +332,7 @@ function validateAllowedValues(dimension: PropertyDimensionConfig, value: unknow
 
 function auditReadingStatus(
   snapshot: PropertyNoteSnapshot,
-  rule: NonNullable<ExternalFocusPropertyRule["reading"]>,
+  rule: NonNullable<PropertyAuditOptions["reading"]>,
 ): { issues: PropertyAuditIssue[]; operations: PropertyChangeOperation[] } {
   const propertyName = rule.propertyName.trim();
   if (!propertyName) return { issues: [], operations: [] };
@@ -584,7 +580,7 @@ function auditDimension(
 export function auditPropertySnapshots(
   snapshots: PropertyNoteSnapshot[],
   settings: PropertySystemSettings,
-  focusRule?: ExternalFocusPropertyRule,
+  options?: PropertyAuditOptions,
 ): PropertyAudit {
   const governed = snapshots.filter((snapshot) => isPropertyGovernedPath(snapshot.path, settings));
   const issues: PropertyAuditIssue[] = [];
@@ -605,50 +601,10 @@ export function auditPropertySnapshots(
       fileIssues.push(...result.issues);
       operations.push(...result.operations);
     }
-    if (focusRule?.reading) {
-      const reading = auditReadingStatus(snapshot, focusRule.reading);
+    if (options?.reading) {
+      const reading = auditReadingStatus(snapshot, options.reading);
       fileIssues.push(...reading.issues);
       operations.push(...reading.operations);
-    }
-    const focusProperty = focusRule?.propertyName.trim() ?? "";
-    const focusAliases = (focusRule?.aliases ?? [])
-      .map((alias) => alias.trim())
-      .filter(Boolean);
-    const hasFocusProperty = [focusProperty, ...focusAliases]
-      .some((property) => Object.prototype.hasOwnProperty.call(frontmatter, property));
-    if (focusRule?.enabled
-      && focusProperty
-      && noteType === settings.trackedNoteType
-      && !settings.dimensions.some((dimension) => dimension.name === focusProperty)
-      && !hasFocusProperty) {
-      const focusDimension: PropertyDimensionConfig = {
-        id: "knowgrove-external-focus",
-        name: focusProperty,
-        description: "外部输入资料的收藏开关。",
-        aliases: [],
-        valueType: "checkbox",
-        required: false,
-        requiredForTypes: [settings.trackedNoteType],
-        allowedValues: [],
-        fillStrategy: "fixed",
-        defaultValue: "false",
-      };
-      fileIssues.push(issue(
-        snapshot,
-        focusDimension,
-        "missing",
-        "外部输入资料缺少收藏开关，自动补为未选中",
-        true,
-        undefined,
-        false,
-      ));
-      operations.push({
-        kind: "set",
-        property: focusProperty,
-        before: undefined,
-        after: false,
-        reason: "为外部输入资料补齐收藏 Checkbox",
-      });
     }
     const creationDateProperty = settings.creationDateProperty.trim() || "创建时间";
     if (frontmatter.类型 === "输入资料"
@@ -736,7 +692,6 @@ export function initializeTrackedNoteFrontmatter(
   readingValue: string,
   createdDate: string,
   deferredProperties: ReadonlySet<string> = new Set<string>(),
-  focusProperty = "",
 ): boolean {
   const hasOwn = (property: string) => Object.prototype.hasOwnProperty.call(frontmatter, property);
   if (!settings.initializeTrackedNotes) {
@@ -755,11 +710,6 @@ export function initializeTrackedNoteFrontmatter(
     ["领域", []],
     ["主题", []],
   ];
-  if (focusProperty.trim()) {
-    const hasLegacyFocus = focusProperty.trim() === "收藏"
-      && LEGACY_FOCUS_PROPERTY_NAMES.some((property) => hasOwn(property));
-    if (!hasLegacyFocus) requiredValues.push([focusProperty.trim(), false]);
-  }
   const additions = new Map<string, unknown>();
   for (const [property, value] of requiredValues) {
     if (deferredProperties.has(property)) continue;

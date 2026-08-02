@@ -69,6 +69,41 @@ export function renameKnowledgeThemePropertyValues(
   });
 }
 
+export function renameRawKnowledgeTopicPropertyValues(
+  values: string[],
+  previousName: string,
+  nextName: string,
+): string[] {
+  const previousKey = normalizeKnowledgeNameKey(previousName);
+  const renamed = values.map((value) => {
+    const trimmed = value.trim();
+    if (normalizeKnowledgeNameKey(normalizeKnowledgeTopic(trimmed)) !== previousKey) return trimmed;
+    return /^\[\[/.test(trimmed) ? `[[${nextName}]]` : nextName;
+  }).filter(Boolean);
+  const seen = new Set<string>();
+  return renamed.filter((value) => {
+    const key = normalizeKnowledgeNameKey(normalizeKnowledgeTopic(value));
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function removeKnowledgeTopicPropertyValues(
+  values: string[],
+  topicName: string,
+  workspacePath = "",
+): string[] {
+  const topicKey = normalizeKnowledgeNameKey(topicName);
+  const workspaceTarget = workspacePath.replace(/\.md$/i, "").toLocaleLowerCase();
+  return values.filter((value) => {
+    const trimmed = value.trim();
+    const target = /^\[\[([^\]|#]+)/.exec(trimmed)?.[1]?.replace(/\.md$/i, "").toLocaleLowerCase() ?? "";
+    return normalizeKnowledgeNameKey(normalizeKnowledgeTopic(trimmed)) !== topicKey
+      && (!workspaceTarget || target !== workspaceTarget);
+  });
+}
+
 export function migrateKnowledgeThemeDomains(
   currentDomains: string[],
   previousThemeDomains: string[],
@@ -273,6 +308,9 @@ export function buildKnowledgeThemes(
   const themes = Array.from(accumulators.values()).map((accumulator): KnowledgeThemeSummary => {
     const paths = topicWorkspacePaths(accumulator.name);
     const workspace = accumulator.workspace ?? byPath.get(paths.notePath);
+    const parentName = normalizeKnowledgeTopic(typeof workspace?.frontmatter?.上级主题 === "string"
+      ? workspace.frontmatter.上级主题
+      : "") || undefined;
     const configuredStage = typeof workspace?.frontmatter?.当前阶段 === "string"
       ? workspace.frontmatter.当前阶段.trim() as PDSAStage
       : undefined;
@@ -322,6 +360,7 @@ export function buildKnowledgeThemes(
       .sort((left, right) => right.total - left.total || left.name.localeCompare(right.name, "zh-CN"));
     return {
       name: accumulator.name,
+      parentName,
       domains,
       total: documents.length,
       stageCounts,
@@ -453,6 +492,7 @@ export function buildKnowledgeThemeNote(theme: KnowledgeThemeSummary, now = new 
     "状态: 进行中",
     ...yamlList("领域", theme.domains.slice(0, 2)),
     `主题名称: ${yamlDoubleQuoted(theme.name)}`,
+    ...(theme.parentName ? [`上级主题: ${yamlDoubleQuoted(theme.parentName)}`] : []),
     "固定主题: true",
     ...yamlList("研究课题", theme.researchQuestions),
     "当前阶段: P",

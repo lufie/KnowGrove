@@ -24,6 +24,7 @@ import {
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
+  whisperNeedsPcmConversion,
   cleanArticleMarkdown,
   extractArticleFromHtml,
   extractJsonObject,
@@ -57,6 +58,7 @@ export interface BrowserCaptureJob {
   providerId: AIProviderId;
   source: string;
   targetPath?: string;
+  mediaPath?: string;
   status: BrowserCaptureJobStatus;
   phase: string;
   phaseLabel: string;
@@ -111,7 +113,6 @@ interface ExtractedSource {
 }
 
 const HOST = "127.0.0.1";
-const JOBS_PATH = ".obsidian/plugins/knowgrove/browser-capture-jobs.json";
 const MAX_REQUEST_BYTES = 512_000;
 const MAX_SOURCE_CHARACTERS = 240_000;
 const PAIRING_LIFETIME_MS = 2 * 60 * 1_000;
@@ -382,7 +383,12 @@ async function resolveCaptureTool(
     ];
   for (const candidate of candidates) {
     try {
-      const result = await runLocalCommand(candidate, ["--version"], "", 8);
+      const result = await runLocalCommand(
+        candidate,
+        executableName === "ffmpeg" ? ["-version"] : ["--version"],
+        "",
+        8,
+      );
       if (result.exitCode === 0) return candidate;
     } catch {
       // Try the next explicit path without invoking a shell.
@@ -563,7 +569,9 @@ export class BrowserCaptureServer {
     );
     if (existing) return existing;
     const url = candidate?.url ?? interrupted!.url;
-    const pageType = interrupted?.pageType ?? classifyBrowserCaptureUrl(url);
+    const pageType = candidate?.pageType
+      ?? interrupted?.pageType
+      ?? classifyBrowserCaptureUrl(url);
     const providerId = selectedCaptureProvider(this.host.getSettings().aiProperties.provider, pageType);
     const job = await this.createJob({
       url,
@@ -572,6 +580,7 @@ export class BrowserCaptureServer {
       providerId,
       source: `link-note-${source}${interrupted ? "-resume" : ""}`,
       targetPath: file.path,
+      mediaPath: candidate?.mediaPath,
       resumeFromRaw: Boolean(interrupted),
     });
     this.queue.push(job.id);
@@ -770,8 +779,9 @@ export class BrowserCaptureServer {
 
   private async loadJobs(): Promise<void> {
     try {
-      if (!(await this.host.app.vault.adapter.exists(JOBS_PATH))) return;
-      const parsed = JSON.parse(await this.host.app.vault.adapter.read(JOBS_PATH)) as { jobs?: BrowserCaptureJob[] };
+      const jobsPath = this.jobsPath();
+      if (!(await this.host.app.vault.adapter.exists(jobsPath))) return;
+      const parsed = JSON.parse(await this.host.app.vault.adapter.read(jobsPath)) as { jobs?: BrowserCaptureJob[] };
       for (const job of parsed.jobs ?? []) {
         if (!FINISHED_STATUSES.has(job.status)) {
           job.status = "failed";
@@ -792,12 +802,16 @@ export class BrowserCaptureServer {
     const jobs = [...this.jobs.values()]
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, 100);
-    await this.host.app.vault.adapter.write(JOBS_PATH, `${JSON.stringify({ jobs }, null, 2)}\n`);
+    await this.host.app.vault.adapter.write(this.jobsPath(), `${JSON.stringify({ jobs }, null, 2)}\n`);
+  }
+
+  private jobsPath(): string {
+    return normalizePath(`${this.host.app.vault.configDir}/plugins/knowgrove/browser-capture-jobs.json`);
   }
 
   private async createJob(payload: Pick<
     BrowserCaptureJob,
-    "url" | "title" | "pageType" | "providerId" | "source" | "targetPath" | "resumeFromRaw"
+    "url" | "title" | "pageType" | "providerId" | "source" | "targetPath" | "mediaPath" | "resumeFromRaw"
   >): Promise<BrowserCaptureJob> {
     const skill = browserCaptureSkill(payload.pageType);
     const job: BrowserCaptureJob = {
@@ -857,7 +871,7 @@ export class BrowserCaptureServer {
         progress: 5,
         message: "正在先把链接和标题写入 Vault",
       });
-      if (!job.resumeFromRaw && !this.capturedSources.has(id)) {
+      if (!job.resumeFromRaw && !job.mediaPath && !this.capturedSources.has(id)) {
         await this.probeCaptureTarget(job);
       }
       noteFile = job.targetPath
@@ -876,7 +890,11 @@ export class BrowserCaptureServer {
           }
         } else {
           const candidate = detectLinkNoteCandidate(current, noteFile.basename);
-          if (!candidate || candidate.url !== job.url) {
+          if (
+            !candidate
+            || candidate.url !== job.url
+            || (job.mediaPath && candidate.mediaPath !== job.mediaPath)
+          ) {
             throw new Error("笔记在排队期间已经补写正文或更换链接，已停止自动覆盖");
           }
         }
@@ -912,7 +930,9 @@ export class BrowserCaptureServer {
         extracted = job.pageType === "video"
           ? this.capturedSources.get(id) ?? await this.extractVideo(job)
           : job.pageType === "audio"
-            ? await this.extractAudio(job, noteFile.path)
+            ? job.mediaPath
+              ? await this.extractLocalAudio(job, noteFile.path)
+              : await this.extractAudio(job, noteFile.path)
             : this.capturedSources.get(id) ?? await this.extractArticle(job);
         this.capturedSources.delete(id);
         if (job.pageType === "article") {
@@ -948,7 +968,12 @@ export class BrowserCaptureServer {
           await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter) => {
             frontmatter["文件名"] = noteFile!.basename;
             frontmatter["标题"] = extracted!.title;
-            if (!Object.prototype.hasOwnProperty.call(frontmatter, "来源")) frontmatter["来源"] = job.url;
+            if (
+              job.url
+              && !Object.prototype.hasOwnProperty.call(frontmatter, "来源")
+            ) {
+              frontmatter["来源"] = job.url;
+            }
             if (!Object.prototype.hasOwnProperty.call(frontmatter, "内容类型")) frontmatter["内容类型"] = captureContentType(job.pageType);
             if (!Object.prototype.hasOwnProperty.call(frontmatter, "采集时间")) frontmatter["采集时间"] = new Date().toISOString();
             const statusProperty = this.host.getSettings().statusProperty;
@@ -1463,6 +1488,110 @@ export class BrowserCaptureServer {
       const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
       if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
       return { title: title || "未命名视频", source: transcript };
+    } finally {
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async extractLocalAudio(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+  ): Promise<ExtractedSource> {
+    const linkPath = job.mediaPath?.trim() ?? "";
+    if (!linkPath) throw new Error("本地语音笔记没有可用的音频引用");
+    const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
+    const exact = this.host.app.vault.getAbstractFileByPath(normalizePath(linkPath));
+    const mediaFile = linked instanceof TFile
+      ? linked
+      : exact instanceof TFile
+        ? exact
+        : undefined;
+    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(mediaFile.path)) {
+      throw new Error(`找不到本地语音文件：${linkPath}`);
+    }
+
+    const settings = this.host.getSettings().browserCapture;
+    const { access, mkdtemp, readFile, readdir, rm, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const { extname, join } = require("node:path") as typeof import("node:path");
+    const directory = await mkdtemp(join(tmpdir(), "knowgrove-local-audio-"));
+    try {
+      const extension = extname(mediaFile.name) || ".m4a";
+      const audioPath = join(directory, `source${extension}`);
+      const audio = await this.host.app.vault.readBinary(mediaFile);
+      await writeFile(audioPath, Buffer.from(audio));
+      await this.updateJob(job.id, {
+        progress: 30,
+        message: "已读取本地语音，正在检测本机 Whisper",
+      });
+      const whisper = await resolveWhisperExecutable(settings.whisperPath);
+      const implementation = detectWhisperImplementation(whisper);
+      const model = settings.whisperModel.trim() || "small";
+      const cppModelPath = implementation === "whisper-cpp"
+        ? await resolveWhisperCppModel(model)
+        : undefined;
+      let whisperAudioPath = audioPath;
+      if (whisperNeedsPcmConversion(implementation, audioPath)) {
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        whisperAudioPath = join(directory, "whisper-input.wav");
+        await this.updateJob(job.id, {
+          progress: 34,
+          message: "正在把本地语音转换为 Whisper 可读取的音频",
+        });
+        const conversion = await runLocalCommand(ffmpeg, [
+          "-y",
+          "-i",
+          audioPath,
+          "-ar",
+          "16000",
+          "-ac",
+          "1",
+          "-c:a",
+          "pcm_s16le",
+          whisperAudioPath,
+        ], "", 20 * 60);
+        if (conversion.exitCode !== 0) {
+          throw new Error(conversion.stderr.trim() || "本地语音格式转换失败");
+        }
+      }
+      const invocation = buildWhisperInvocation({
+        implementation,
+        audioPath: whisperAudioPath,
+        outputDirectory: directory,
+        model,
+        cppModelPath,
+      });
+      await this.updateJob(job.id, {
+        progress: 38,
+        message: implementation === "whisper-cpp"
+          ? `正在使用 whisper.cpp ${model} 转录本地语音`
+          : `正在使用 Whisper ${model} 转录本地语音`,
+      });
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      if (whisperResult.exitCode !== 0) {
+        throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
+      }
+      let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
+      if (!transcriptPath) {
+        const transcriptFile = (await readdir(directory))
+          .find((name) => name.endsWith(".txt"));
+        if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
+        transcriptPath = join(directory, transcriptFile);
+      }
+      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
+      if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+      return {
+        title: job.title || mediaFile.basename || "语音记录",
+        source: transcript,
+        mediaPath: mediaFile.path,
+      };
     } finally {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
     }

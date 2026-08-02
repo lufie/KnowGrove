@@ -12,6 +12,8 @@ export function selectedCaptureProvider(
 export interface LinkNoteCandidate {
   url: string;
   title: string;
+  pageType?: BrowserCapturePageType;
+  mediaPath?: string;
 }
 
 export interface InterruptedCaptureCandidate extends LinkNoteCandidate {
@@ -297,13 +299,16 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   const urls = Array.from(body.matchAll(/https?:\/\/[^\s<>()\]]+/gi))
     .map((match) => match[0]!.replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
   const uniqueUrls = Array.from(new Set(urls));
+  if (uniqueUrls.length === 0) {
+    return detectLocalAudioNoteCandidate(markdown, body, fallbackTitle);
+  }
   if (uniqueUrls.length !== 1) return null;
   const url = uniqueUrls[0]!;
   const withoutLinks = body
     .replace(/!?\[[^\]]*]\(https?:\/\/[^)]+\)/gi, " ")
     .replace(/https?:\/\/[^\s<>()\]]+/gi, " ")
     .replace(/^#{1,6}\s+.*$/gm, " ")
-    .replace(/^>\s*(?:来源|链接|收藏|待处理|稍后阅读|KnowGrove).*$|^\s*[-*]\s*(?:来源|链接)\s*[:：].*$/gim, " ")
+    .replace(/^>\s*(?:来源|链接|待处理|稍后阅读|KnowGrove).*$|^\s*[-*]\s*(?:来源|链接)\s*[:：].*$/gim, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/\s+/g, "");
   if (withoutLinks.length > 120 || body.length > 1_500) return null;
@@ -311,6 +316,42 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   return {
     url,
     title: normalizedLinkNoteTitle(heading || fallbackTitle, url),
+  };
+}
+
+function detectLocalAudioNoteCandidate(
+  markdown: string,
+  body: string,
+  fallbackTitle: string,
+): LinkNoteCandidate | null {
+  const embeddedMedia = Array.from(body.matchAll(/!\[\[([^\]]+)]]/g))
+    .map((match) => match[1]!.split("|")[0]!.trim())
+    .filter((path) => /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(path));
+  const frontmatterMedia = frontmatterScalar(markdown, ["audio", "音频", "语音文件"])
+    .replace(/^!?\[\[|\]\]$/g, "")
+    .split("|")[0]!
+    .trim();
+  if (frontmatterMedia && /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(frontmatterMedia)) {
+    embeddedMedia.push(frontmatterMedia);
+  }
+  const mediaPaths = Array.from(new Set(embeddedMedia));
+  if (mediaPaths.length !== 1) return null;
+
+  const withoutTemplate = body
+    .replace(/!\[\[[^\]]+]]/g, " ")
+    .replace(/^#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*[-*]\s+(?:无|没有|暂无)\s*$/gim, " ")
+    .replace(/^(?:中断记录|整理记录|语音记录)\s*$/gim, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/\s+/g, "");
+  if (withoutTemplate.length > 120 || body.length > 1_500) return null;
+
+  const heading = body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim() ?? "";
+  return {
+    url: "",
+    title: normalizedLinkNoteTitle(heading || fallbackTitle, ""),
+    pageType: "audio",
+    mediaPath: mediaPaths[0]!,
   };
 }
 
@@ -385,6 +426,14 @@ export function detectWhisperImplementation(executable: string): WhisperImplemen
   return name.includes("whisper-cli") || name.includes("whisper-cpp")
     ? "whisper-cpp"
     : "openai-whisper";
+}
+
+export function whisperNeedsPcmConversion(
+  implementation: WhisperImplementation,
+  audioPath: string,
+): boolean {
+  return implementation === "whisper-cpp"
+    && !/\.(?:flac|mp3|ogg|wav)$/i.test(audioPath);
 }
 
 export function buildWhisperInvocation(input: {
@@ -1023,7 +1072,7 @@ export function buildRawCaptureNote(input: {
   pageType: BrowserCapturePageType;
   title: string;
   fileName?: string;
-  url: string;
+  url?: string;
   source: string;
   author?: string;
   publishedAt?: string;
@@ -1042,7 +1091,7 @@ export function buildRawCaptureNote(input: {
     "---",
     ...(input.fileName ? [`文件名: ${yamlString(input.fileName)}`] : []),
     `标题: ${yamlString(input.title)}`,
-    `来源: ${yamlString(input.url)}`,
+    ...(input.url ? [`来源: ${yamlString(input.url)}`] : []),
     `内容类型: ${yamlString(contentType)}`,
     `采集时间: ${yamlString(input.capturedAt)}`,
     ...(input.author ? [`作者: ${yamlString(input.author)}`] : []),
@@ -1117,7 +1166,16 @@ export function buildEnhancedCaptureNote(
       ? "对话记录"
       : pageType === "audio" ? "音频正文" : "视频正文"
     : "整理正文";
-  const mediaSection = rawNote.match(/^##\s+原始音频\s*$[\s\S]*?(?=^##\s+|\s*$)/m)?.[0]?.trim() ?? "";
+  const mediaHeading = rawNote.match(/^##\s+原始音频\s*$/m);
+  let mediaSection = "";
+  if (mediaHeading?.index !== undefined) {
+    const fromHeading = rawNote.slice(mediaHeading.index);
+    const afterHeading = fromHeading.slice(mediaHeading[0].length);
+    const nextHeadingOffset = afterHeading.search(/^##\s+/m);
+    mediaSection = fromHeading
+      .slice(0, nextHeadingOffset >= 0 ? mediaHeading[0].length + nextHeadingOffset : undefined)
+      .trim();
+  }
   return [
     completedFrontmatter,
     "",

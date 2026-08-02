@@ -174,21 +174,6 @@ export class ReadingListView extends ItemView {
     body.createDiv({ cls: "knowgrove-note-meta", text: relativePath });
 
     const actions = card.createDiv("knowgrove-note-actions");
-    if (this.plugin.settings.focusPropertyEnabled) {
-      const focused = this.plugin.isFocusFile(file);
-      const focusButton = actions.createEl("button", {
-        cls: `clickable-icon knowgrove-focus-action${focused ? " is-focused" : ""}`,
-        attr: {
-          "aria-label": focused ? `取消收藏：${file.basename}` : `收藏：${file.basename}`,
-          "aria-pressed": String(focused),
-        },
-      });
-      setIcon(focusButton, "star");
-      focusButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void this.plugin.toggleFocus(file);
-      });
-    }
     const statusButton = actions.createEl("button", {
       cls: `clickable-icon knowgrove-status-action is-${classification}`,
       attr: {

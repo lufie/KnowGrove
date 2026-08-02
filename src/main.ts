@@ -11,12 +11,14 @@ import {
   TFile,
   TFolder,
   type WorkspaceLeaf,
+  getLanguage,
   getFrontMatterInfo,
   normalizePath,
   parseYaml,
   setIcon,
 } from "obsidian";
 import { AIPropertyBatchModal } from "./ai-property-modal";
+import { AttachmentCleanupManager } from "./attachment-cleanup";
 import {
   buildAIBatchPropertyPrompt,
   aiManagedDimensions,
@@ -50,6 +52,7 @@ import {
   createCommentEditorExtension,
   refreshCommentEditorDecorations,
 } from "./editor-extension";
+import { createWordLikeEditingExtension } from "./word-like-editing";
 import {
   findMarkdownBlockRange,
   formatBlockEmbedInsertion,
@@ -90,12 +93,15 @@ import {
   mergeThemeSynthesis,
   migrateKnowledgeThemeDomains,
   knowledgeNamesMatch,
+  normalizeKnowledgeNameKey,
   normalizeKnowledgeTopic,
   parseThemePlanningResponse,
   parseThemeSynthesisResponse,
   rankThemeSourceCandidates,
   rankResearchTopicSourceCandidates,
+  removeKnowledgeTopicPropertyValues,
   renameKnowledgeThemePropertyValues,
+  renameRawKnowledgeTopicPropertyValues,
   researchTopicKeywords,
   RESEARCH_TOPIC_WORKSPACE_ROOT,
   researchTopicWorkspacePaths,
@@ -124,12 +130,14 @@ import {
 import type { ReferenceDraft } from "./reference-modals";
 import { COMMENTS_VIEW_TYPE, CommentsSidebarView } from "./comment-sidebar";
 import { READING_VIEW_TYPE, ReadingListView } from "./reading-view";
+import { TOPIC_INDEX_VIEW_TYPE, TopicIndexView } from "./topic-index-view";
 import {
   finishDelayMilliseconds,
   hasRecentEditorActivity,
   isAtReadingEnd,
   isDocumentEndVisible,
 } from "./reading-progress";
+import { isRecentDocumentPath, selectRecentDocumentPaths } from "./recent-files";
 import {
   captureReferenceSourceContext,
   hasBlockAnchor,
@@ -137,6 +145,7 @@ import {
   repairReferenceAnchor,
 } from "./reference-repair";
 import { KnowGroveSettingTab } from "./settings";
+import { installKnowGroveLocalization, setKnowGroveLanguage } from "./i18n";
 import { KnowGroveRuntimeManager, type RuntimeInstallProgress } from "./runtime-manager";
 import {
   formatRuntimeBytes,
@@ -225,7 +234,6 @@ import {
   initializeTrackedNoteFrontmatter,
   isManagedPropertyBaseContent,
   isPropertyGovernedPath,
-  LEGACY_FOCUS_PROPERTY_NAMES,
   localDateFromTimestamp,
   normalizePropertyDimensions,
   operationStillApplies,
@@ -345,6 +353,7 @@ export default class KnowGrovePlugin extends Plugin {
     uiMigrationVersion: 0,
     settings: createDefaultSettings(),
     references: {},
+    attachmentUsage: {},
   };
   settings: KnowGroveSettings = createDefaultSettings();
   private tooltipEl?: HTMLElement;
@@ -364,9 +373,16 @@ export default class KnowGrovePlugin extends Plugin {
   private readonly repairingSourcePaths = new Set<string>();
   private readonly pendingNewNoteInitializations = new Map<string, PendingNewNoteInitialization>();
   private readingViewActivation?: Promise<void>;
+  private topicIndexActivation?: Promise<void>;
+  private topicIndexRibbonEl?: HTMLElement;
   private propertyWorkbenchActivation?: Promise<void>;
   private creationAssistantActivation?: Promise<CreationAssistantView | null>;
   private coreSidebarMaintenanceTimer?: number;
+  private recentFilesRenderTimer?: number;
+  private recentFilesObserver?: MutationObserver;
+  private recentFilesObserverTarget?: HTMLElement;
+  private recentFilesCollapsed = false;
+  private renderingRecentFiles = false;
   private latestPropertyCapture?: PropertyCaptureStatus;
   private aiProviderAvailability?: AIProviderAvailability[];
   private aiDetectionPromise?: Promise<AIProviderAvailability[]>;
@@ -387,9 +403,15 @@ export default class KnowGrovePlugin extends Plugin {
   private readonly runtimeInstallProgressListeners = new Set<(progress: RuntimeInstallProgress) => void>();
   private linkNoteScanPromise?: Promise<number>;
   private startupLinkNoteScanTimer?: number;
+  private readonly automaticLinkNoteTimers = new Map<string, number>();
+  private attachmentCleanupManager?: AttachmentCleanupManager;
+  private disposeLocalization?: () => void;
 
   async onload(): Promise<void> {
     await this.loadPluginData();
+    setKnowGroveLanguage(getLanguage());
+    this.disposeLocalization = installKnowGroveLocalization(this.app.workspace.containerEl.ownerDocument);
+    this.register(() => this.disposeLocalization?.());
     this.runtimeManager = new KnowGroveRuntimeManager({
       getRuntimeSettings: () => this.settings.runtime,
       getCaptureSettings: () => this.settings.browserCapture,
@@ -406,6 +428,7 @@ export default class KnowGrovePlugin extends Plugin {
       suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
       enrichCapturedFile: (file) => this.ensureNewNoteStatus(file),
     });
+    this.attachmentCleanupManager = new AttachmentCleanupManager(this);
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
       if (!nonce || !this.browserCaptureServer) {
@@ -447,14 +470,18 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerView(READING_VIEW_TYPE, (leaf) => new ReadingListView(leaf, this));
     this.registerView(LEGACY_READING_VIEW_TYPE, (leaf) => new ReadingListView(leaf, this, LEGACY_READING_VIEW_TYPE));
     this.registerView(COMMENTS_VIEW_TYPE, (leaf) => new CommentsSidebarView(leaf, this));
+    this.registerView(TOPIC_INDEX_VIEW_TYPE, (leaf) => new TopicIndexView(leaf, this));
     this.registerView(PROPERTY_WORKBENCH_VIEW_TYPE, (leaf) => new PropertyWorkbenchView(leaf, this));
     this.registerView(CREATION_ASSISTANT_VIEW_TYPE, (leaf) => new CreationAssistantView(leaf, this));
     this.addRibbonIcon("library-big", "打开阅读列表", () => void this.activateReadingView());
+    this.topicIndexRibbonEl = this.addRibbonIcon("list-tree", "打开主题", () => void this.activateTopicIndex());
+    this.syncTopicIndexAvailability();
     this.addRibbonIcon("database-zap", "打开工作台", () => void this.activatePropertyWorkbench());
     this.addRibbonIcon("wand-sparkles", "整理新链接文档", () => void this.scanPendingLinkNotes(true));
     this.addSettingTab(new KnowGroveSettingTab(this.app, this));
     this.registerEditorExtension(createCommentEditorExtension(this));
     this.registerEditorExtension(createBlockDragEditorExtension(this));
+    this.registerEditorExtension(createWordLikeEditingExtension(this));
     this.registerMarkdownPostProcessor((el, context) => this.decorateReadingView(el, context.sourcePath));
     this.registerMarkdownCodeBlockProcessor("knowgrove-research-actions", (_source, el, context) => {
       this.renderResearchTopicActions(el, context.sourcePath);
@@ -464,10 +491,16 @@ export default class KnowGrovePlugin extends Plugin {
     });
     this.app.workspace.onLayoutReady(() => {
       void this.runStartupMigrations();
+      this.attachmentCleanupManager?.start();
       this.scheduleCoreSidebarMaintenance(600);
+      this.scheduleRecentFilesSection(650);
     });
-    this.registerEvent(this.app.workspace.on("layout-change", () => this.scheduleCoreSidebarMaintenance()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.scheduleCoreSidebarMaintenance();
+      this.scheduleRecentFilesSection();
+    }));
     this.register(() => window.clearTimeout(this.coreSidebarMaintenanceTimer));
+    this.register(() => window.clearTimeout(this.recentFilesRenderTimer));
     this.initializeSelectionCommentButton();
     this.initializeBlockEmbedFallback();
     this.registerDomEvent(
@@ -493,6 +526,11 @@ export default class KnowGrovePlugin extends Plugin {
       id: "open-property-workbench",
       name: "打开工作台",
       callback: () => void this.activatePropertyWorkbench(),
+    });
+    this.addCommand({
+      id: "open-topic-index",
+      name: "打开主题",
+      callback: () => void this.activateTopicIndex(),
     });
     this.addCommand({
       id: "check-runtime-environment",
@@ -556,16 +594,6 @@ export default class KnowGrovePlugin extends Plugin {
       id: "mark-current-note-finished",
       name: `将当前笔记标为${this.settings.finishedStatus}`,
       checkCallback: (checking) => this.withActiveTrackedFile(checking, (file) => this.setReadingStatus(file, this.settings.finishedStatus)),
-    });
-    this.addCommand({
-      id: "toggle-current-note-focus",
-      name: "切换当前笔记的收藏状态",
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!this.settings.focusPropertyEnabled || !file || file.extension !== "md") return false;
-        if (!checking) void this.toggleFocus(file);
-        return true;
-      },
     });
     this.addCommand({
       id: "comment-and-reference-selection",
@@ -641,28 +669,41 @@ export default class KnowGrovePlugin extends Plugin {
       name: "整理新链接文档",
       callback: () => void this.scanPendingLinkNotes(true),
     });
+    this.addCommand({
+      id: "scan-unreferenced-attachments",
+      name: "检查历史失联附件",
+      callback: () => void this.scanUnreferencedAttachments(),
+    });
 
     this.registerEvent(this.app.vault.on("create", (file) => {
       if (file instanceof TFile) {
         this.trackNewNoteInitialization(file);
         this.scheduleAutomaticLinkNote(file);
+        this.attachmentCleanupManager?.scheduleSourceRefresh(file);
       }
       this.refreshReadingViews();
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof TFile) this.handlePendingNewNoteModify(file);
+      if (file instanceof TFile) {
+        this.handlePendingNewNoteModify(file);
+        this.scheduleAutomaticLinkNote(file);
+        this.attachmentCleanupManager?.scheduleSourceRefresh(file);
+      }
       this.scheduleBlockEmbedHydration();
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (file instanceof TFile) void this.attachmentCleanupManager?.handleRename(file, oldPath);
       void this.handleRename(file, oldPath);
     }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (file instanceof TFile) void this.attachmentCleanupManager?.handleDelete(file);
       void this.handleDelete(file);
       this.refreshReadingViews();
     }));
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
       this.refreshReadingViews();
       this.scheduleReferenceRepair(file);
+      this.attachmentCleanupManager?.refreshSourceAfterMetadataChange(file);
     }));
     this.registerEvent(this.app.workspace.on("quick-preview", (file) => {
       this.lastEditorChangeAt.set(file.path, Date.now());
@@ -677,10 +718,10 @@ export default class KnowGrovePlugin extends Plugin {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
       if (file) this.refreshCommentSidebars(file.path);
+      this.scheduleRecentFilesSection(30);
     }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof TFile) || file.extension !== "md") return;
-      if (this.settings.focusPropertyEnabled) this.addFocusMenuItem(menu, file);
       if (this.isTrackedFile(file)) this.addStatusMenuItems(menu, file);
       if (Platform.isDesktopApp) {
         menu.addItem((item) => item
@@ -719,11 +760,22 @@ export default class KnowGrovePlugin extends Plugin {
     this.aiBatchCancelRequested = true;
     void this.browserCaptureServer?.stop();
     this.runtimeInstallProgressListeners.clear();
+    this.attachmentCleanupManager?.stop();
+    this.disposeLocalization?.();
+    this.disposeLocalization = undefined;
     window.clearTimeout(this.startupRuntimeBootstrapTimer);
     window.clearTimeout(this.refreshTimer);
     window.clearTimeout(this.referenceRepairTimer);
     window.clearTimeout(this.blockEmbedHydrationTimer);
+    for (const timer of this.automaticLinkNoteTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    this.automaticLinkNoteTimers.clear();
     this.blockEmbedObserver?.disconnect();
+    this.recentFilesObserver?.disconnect();
+    this.recentFilesObserver = undefined;
+    this.recentFilesObserverTarget = undefined;
+    this.app.workspace.containerEl.querySelectorAll(".knowgrove-recent-files").forEach((element) => element.remove());
     this.resetAutoCompletionTracking();
     this.hideCommentTooltip();
     this.hideSelectionCommentButton();
@@ -731,6 +783,10 @@ export default class KnowGrovePlugin extends Plugin {
     for (const path of Array.from(this.pendingNewNoteInitializations.keys())) {
       this.clearPendingNewNoteInitialization(path);
     }
+  }
+
+  async scanUnreferencedAttachments(): Promise<void> {
+    await this.attachmentCleanupManager?.scan(true);
   }
 
   private initializeSelectionCommentButton(): void {
@@ -1106,13 +1162,19 @@ export default class KnowGrovePlugin extends Plugin {
     const brandMigration = migrateLegacyBrandValue(current ?? legacy ?? {});
     const saved = brandMigration.value;
     const defaults = createDefaultSettings();
-    const savedSettings = saved?.settings as Partial<KnowGroveSettings> | undefined;
+    const savedSettingsRecord = {
+      ...((saved?.settings as Record<string, unknown> | undefined) ?? {}),
+    };
+    const needsFocusSettingsRemoval = Object.prototype.hasOwnProperty.call(savedSettingsRecord, "focusPropertyEnabled")
+      || Object.prototype.hasOwnProperty.call(savedSettingsRecord, "focusPropertyName");
+    delete savedSettingsRecord.focusPropertyEnabled;
+    delete savedSettingsRecord.focusPropertyName;
+    const savedSettings = savedSettingsRecord as Partial<KnowGroveSettings>;
     const autoProcessNewNotes = savedSettings?.autoMarkNewNotes ?? defaults.autoMarkNewNotes;
     const savedAIProperties = savedSettings?.aiProperties;
     const savedBrowserCapture = savedSettings?.browserCapture;
     const savedRuntime = savedSettings?.runtime;
     const savedCreationStudio = savedSettings?.creationStudio;
-    const migrateLegacyFocusProperty = savedSettings?.focusPropertyName?.trim() === "重点关注";
     const savedPropertySystem = savedSettings?.propertySystem as Partial<PropertySystemSettings> | undefined;
     const savedDimensions = Array.isArray(savedPropertySystem?.dimensions) && savedPropertySystem.dimensions.length
       ? savedPropertySystem.dimensions
@@ -1161,9 +1223,6 @@ export default class KnowGrovePlugin extends Plugin {
         autoMarkNewNotes: autoProcessNewNotes,
         defaultTargetFolder: "",
         defaultTargetHeading: "评论",
-        focusPropertyName: migrateLegacyFocusProperty
-          ? defaults.focusPropertyName
-          : savedSettings?.focusPropertyName ?? defaults.focusPropertyName,
         aiProperties: {
           ...defaults.aiProperties,
           ...(savedAIProperties ?? {}),
@@ -1214,6 +1273,20 @@ export default class KnowGrovePlugin extends Plugin {
         },
       },
       references: saved.references ?? {},
+      attachmentUsage: Object.fromEntries(Object.entries(saved.attachmentUsage ?? {}).flatMap(([path, raw]) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+        const record = raw as Partial<KnowGroveData["attachmentUsage"][string]>;
+        return [[normalizePath(path), {
+          firstReferencedAt: typeof record.firstReferencedAt === "number" ? record.firstReferencedAt : Date.now(),
+          lastReferencedAt: typeof record.lastReferencedAt === "number" ? record.lastReferencedAt : Date.now(),
+          lastSourcePaths: Array.isArray(record.lastSourcePaths)
+            ? record.lastSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+            : [],
+          lastContentSourcePaths: Array.isArray(record.lastContentSourcePaths)
+            ? record.lastContentSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+            : [],
+        }]];
+      })),
     };
     this.settings = this.data.settings;
     if (
@@ -1223,7 +1296,7 @@ export default class KnowGrovePlugin extends Plugin {
       || needsAutoProcessMigration
       || needsKeepAudioSourceMigration
       || needsAIProviderMigration
-      || migrateLegacyFocusProperty
+      || needsFocusSettingsRemoval
     ) {
       await this.savePluginData();
     }
@@ -1245,6 +1318,123 @@ export default class KnowGrovePlugin extends Plugin {
     }, delay);
   }
 
+  private scheduleRecentFilesSection(delay = 80): void {
+    window.clearTimeout(this.recentFilesRenderTimer);
+    this.recentFilesRenderTimer = window.setTimeout(() => {
+      this.recentFilesRenderTimer = undefined;
+      this.ensureRecentFilesSection();
+    }, delay);
+  }
+
+  refreshRecentFiles(): void {
+    this.scheduleRecentFilesSection(0);
+  }
+
+  private ensureRecentFilesSection(): void {
+    const explorerLeaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+    const filesContainer = explorerLeaf?.view.containerEl.querySelector<HTMLElement>(".nav-files-container");
+    if (!filesContainer) return;
+
+    if (this.recentFilesObserverTarget !== filesContainer) {
+      this.recentFilesObserver?.disconnect();
+      this.recentFilesObserverTarget = filesContainer;
+      this.recentFilesObserver = new MutationObserver(() => {
+        if (this.renderingRecentFiles) return;
+        if (!filesContainer.querySelector(":scope > .knowgrove-recent-files")) {
+          this.scheduleRecentFilesSection(20);
+        }
+      });
+      this.recentFilesObserver.observe(filesContainer, { childList: true });
+    }
+
+    const allFiles = this.app.vault.getFiles();
+    const existingPaths = new Set(allFiles.map((file) => file.path));
+    const workspaceWithHistory = this.app.workspace as typeof this.app.workspace & {
+      getLastOpenFiles?: () => string[];
+    };
+    const mode = this.settings.recentFileMode;
+    const limit = Math.max(3, Math.min(20, Math.round(this.settings.recentFileLimit)));
+    let history: string[];
+    if (mode === "created") {
+      history = allFiles
+        .filter((file) => isRecentDocumentPath(file.path))
+        .sort((left, right) => right.stat.ctime - left.stat.ctime)
+        .map((file) => file.path);
+    } else if (mode === "modified") {
+      history = allFiles
+        .filter((file) => isRecentDocumentPath(file.path))
+        .sort((left, right) => right.stat.mtime - left.stat.mtime)
+        .map((file) => file.path);
+    } else {
+      history = workspaceWithHistory.getLastOpenFiles?.call(this.app.workspace) ?? [];
+      if (!history.length) {
+        history = allFiles
+          .filter((file) => isRecentDocumentPath(file.path))
+          .sort((left, right) => right.stat.mtime - left.stat.mtime)
+          .map((file) => file.path);
+      }
+    }
+    const recentPaths = selectRecentDocumentPaths(history, existingPaths, limit);
+
+    const activePath = this.app.workspace.getActiveFile()?.path ?? "";
+    const signature = `${mode}|${limit}|${this.recentFilesCollapsed ? "closed" : "open"}|${activePath}|${recentPaths.join("\n")}`;
+    const current = filesContainer.querySelector<HTMLElement>(":scope > .knowgrove-recent-files");
+    if (current?.dataset.signature === signature) return;
+
+    this.renderingRecentFiles = true;
+    current?.remove();
+    const section = filesContainer.ownerDocument.createElement("div");
+    section.className = `tree-item nav-folder knowgrove-recent-files${this.recentFilesCollapsed ? " is-collapsed" : ""}`;
+    section.dataset.signature = signature;
+
+    const title = section.createDiv({
+      cls: "tree-item-self nav-folder-title is-clickable mod-collapsible knowgrove-recent-title",
+      attr: { "aria-label": this.recentFilesCollapsed ? "展开最近文件" : "收起最近文件" },
+    });
+    const collapseIcon = title.createDiv({
+      cls: `tree-item-icon collapse-icon${this.recentFilesCollapsed ? " is-collapsed" : ""}`,
+    });
+    setIcon(collapseIcon, "right-triangle");
+    title.createDiv({ cls: "tree-item-inner nav-folder-title-content", text: "最近" });
+    const children = section.createDiv({ cls: "tree-item-children nav-folder-children knowgrove-recent-children" });
+    children.hidden = this.recentFilesCollapsed;
+    for (const path of recentPaths) {
+      const file = this.app.vault.getFileByPath(path);
+      if (!file) continue;
+      const item = children.createDiv({ cls: "tree-item nav-file knowgrove-recent-file" });
+      const row = item.createDiv({
+        cls: `tree-item-self nav-file-title tappable is-clickable${path === activePath ? " is-active" : ""}`,
+        attr: { "data-path": path, "aria-label": path },
+      });
+      row.createDiv({ cls: "tree-item-inner nav-file-title-content", text: file.basename });
+      if (file.extension !== "md") row.createDiv({ cls: "nav-file-tag", text: file.extension });
+      row.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const openInNewLeaf = event.metaKey || event.ctrlKey;
+        void this.app.workspace.getLeaf(openInNewLeaf).openFile(file);
+      });
+      row.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const menu = new Menu();
+        this.app.workspace.trigger("file-menu", menu, file, "file-explorer");
+        menu.showAtMouseEvent(event);
+      });
+    }
+
+    title.addEventListener("click", () => {
+      this.recentFilesCollapsed = !this.recentFilesCollapsed;
+      section.toggleClass("is-collapsed", this.recentFilesCollapsed);
+      collapseIcon.toggleClass("is-collapsed", this.recentFilesCollapsed);
+      children.hidden = this.recentFilesCollapsed;
+      title.setAttr("aria-label", this.recentFilesCollapsed ? "展开最近文件" : "收起最近文件");
+      section.dataset.signature = `${mode}|${limit}|${this.recentFilesCollapsed ? "closed" : "open"}|${activePath}|${recentPaths.join("\n")}`;
+    });
+
+    filesContainer.prepend(section);
+    this.renderingRecentFiles = false;
+  }
+
   private async ensureCoreSidebarViews(): Promise<void> {
     const readingLeaf = this.keepSingleCoreSidebarView(
       READING_VIEW_TYPE,
@@ -1253,6 +1443,18 @@ export default class KnowGrovePlugin extends Plugin {
     if (!readingLeaf) {
       const readingLeaf = this.app.workspace.getLeftLeaf(false);
       if (readingLeaf) await readingLeaf.setViewState({ type: READING_VIEW_TYPE, active: false });
+    }
+    if (this.settings.enableTopicIndex) {
+      const topicLeaf = this.keepSingleCoreSidebarView(
+        TOPIC_INDEX_VIEW_TYPE,
+        (leaf) => leaf.view instanceof TopicIndexView,
+      );
+      if (!topicLeaf) {
+        const topicLeaf = this.app.workspace.getLeftLeaf(false);
+        if (topicLeaf) await topicLeaf.setViewState({ type: TOPIC_INDEX_VIEW_TYPE, active: false });
+      }
+    } else {
+      for (const leaf of this.app.workspace.getLeavesOfType(TOPIC_INDEX_VIEW_TYPE)) leaf.detach();
     }
     const workbenchLeaf = this.keepSingleCoreSidebarView(
       PROPERTY_WORKBENCH_VIEW_TYPE,
@@ -1536,15 +1738,24 @@ export default class KnowGrovePlugin extends Plugin {
       || this.settings.trackedFolder.trim(),
     ).replace(/^\/+|\/+$/g, "");
     if (folder && file.path !== folder && !file.path.startsWith(`${folder}/`)) return;
-    const attempt = (remaining: number): void => {
-      window.setTimeout(() => {
+
+    const existingTimer = this.automaticLinkNoteTimers.get(file.path);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+      this.automaticLinkNoteTimers.delete(file.path);
+    }
+
+    const attempt = (remaining: number, delay: number): void => {
+      const timer = window.setTimeout(() => {
+        this.automaticLinkNoteTimers.delete(file.path);
         const current = this.app.vault.getAbstractFileByPath(file.path);
         if (!(current instanceof TFile)) return;
         void this.parseLinkNote(current, "auto").catch(() => undefined);
-        if (remaining > 1) attempt(remaining - 1);
-      }, remaining === 3 ? 1_500 : 2_500);
+        if (remaining > 1) attempt(remaining - 1, 2_500);
+      }, delay);
+      this.automaticLinkNoteTimers.set(file.path, timer);
     };
-    attempt(3);
+    attempt(3, 1_500);
   }
 
   private automaticLinkNoteFolder(): string {
@@ -2125,36 +2336,6 @@ export default class KnowGrovePlugin extends Plugin {
     new Notice(automatic ? `已读到文末，《${file.basename}》自动标为${value}` : `已将《${file.basename}》标为${value}`);
   }
 
-  isFocusFile(file: TFile): boolean {
-    if (!this.settings.focusPropertyEnabled) return false;
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-    const properties = this.settings.focusPropertyName.trim() === "收藏"
-      ? [this.settings.focusPropertyName, ...LEGACY_FOCUS_PROPERTY_NAMES]
-      : [this.settings.focusPropertyName];
-    return properties.some((property) => {
-      const value = frontmatter?.[property];
-      return value === true || value === "true";
-    });
-  }
-
-  async toggleFocus(file: TFile): Promise<void> {
-    if (!this.settings.focusPropertyEnabled) return;
-    const property = this.settings.focusPropertyName.trim();
-    if (!property) {
-      new Notice("请先在设置中填写收藏属性名");
-      return;
-    }
-    const next = !this.isFocusFile(file);
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
-      frontmatter[property] = next;
-      if (property === "收藏") {
-        for (const legacyProperty of LEGACY_FOCUS_PROPERTY_NAMES) delete frontmatter[legacyProperty];
-      }
-    });
-    this.refreshReadingViews();
-    new Notice(next ? `已收藏《${file.basename}》` : `已取消收藏《${file.basename}》`);
-  }
-
   resetAutoCompletionTracking(): void {
     window.clearTimeout(this.autoCompletionTimer);
     this.autoCompletionTimer = undefined;
@@ -2222,6 +2403,20 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
+  async activateTopicIndex(): Promise<void> {
+    if (!this.settings.enableTopicIndex) {
+      new Notice("主题列表已在增强功能中关闭");
+      return;
+    }
+    if (this.topicIndexActivation) return this.topicIndexActivation;
+    this.topicIndexActivation = this.activateTopicIndexOnce();
+    try {
+      await this.topicIndexActivation;
+    } finally {
+      this.topicIndexActivation = undefined;
+    }
+  }
+
   private async activateReadingViewOnce(): Promise<void> {
     const existing = this.keepSingleCoreSidebarView(
       READING_VIEW_TYPE,
@@ -2245,6 +2440,35 @@ export default class KnowGrovePlugin extends Plugin {
     }
     if (!existing) await leaf.setViewState({ type: PROPERTY_WORKBENCH_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async activateTopicIndexOnce(): Promise<void> {
+    const existing = this.keepSingleCoreSidebarView(
+      TOPIC_INDEX_VIEW_TYPE,
+      (leaf) => leaf.view instanceof TopicIndexView,
+    );
+    const leaf = existing ?? this.app.workspace.getLeftLeaf(false);
+    if (!leaf) {
+      new Notice("无法打开主题");
+      return;
+    }
+    if (!existing) await leaf.setViewState({ type: TOPIC_INDEX_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  async setTopicIndexEnabled(enabled: boolean): Promise<void> {
+    this.settings.enableTopicIndex = enabled;
+    await this.savePluginData();
+    this.syncTopicIndexAvailability();
+    if (enabled) {
+      await this.ensureCoreSidebarViews();
+      return;
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(TOPIC_INDEX_VIEW_TYPE)) leaf.detach();
+  }
+
+  private syncTopicIndexAvailability(): void {
+    if (this.topicIndexRibbonEl) this.topicIndexRibbonEl.hidden = !this.settings.enableTopicIndex;
   }
 
   async scanPropertyWorkspace(forceFreshPaths: ReadonlySet<string> = new Set()): Promise<PropertyWorkspaceSnapshot> {
@@ -2286,9 +2510,6 @@ export default class KnowGrovePlugin extends Plugin {
     }
     const analysis = analyzePropertyInventory(snapshots, this.settings.propertySystem);
     const audit = auditPropertySnapshots(snapshots, this.settings.propertySystem, {
-      enabled: this.settings.focusPropertyEnabled,
-      propertyName: this.settings.focusPropertyName,
-      aliases: this.settings.focusPropertyName === "收藏" ? LEGACY_FOCUS_PROPERTY_NAMES : [],
       reading: {
         propertyName: this.settings.statusProperty,
         readingValue: this.settings.readingStatus,
@@ -2309,6 +2530,7 @@ export default class KnowGrovePlugin extends Plugin {
       unassignedTopicFiles: knowledge.unassignedFiles,
     };
     this.refreshPropertyWorkbenches(snapshot);
+    this.refreshTopicIndexViews(snapshot);
     return snapshot;
   }
 
@@ -2365,6 +2587,12 @@ export default class KnowGrovePlugin extends Plugin {
   refreshPropertyWorkbenches(snapshot?: PropertyWorkspaceSnapshot): void {
     for (const leaf of this.app.workspace.getLeavesOfType(PROPERTY_WORKBENCH_VIEW_TYPE)) {
       if (leaf.view instanceof PropertyWorkbenchView) leaf.view.refresh(snapshot);
+    }
+  }
+
+  refreshTopicIndexViews(snapshot?: PropertyWorkspaceSnapshot): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(TOPIC_INDEX_VIEW_TYPE)) {
+      if (leaf.view instanceof TopicIndexView) leaf.view.refresh(snapshot);
     }
   }
 
@@ -4161,11 +4389,108 @@ export default class KnowGrovePlugin extends Plugin {
           if (values.length) frontmatter.主题 = values;
         });
       }
+      for (const childTheme of snapshot.knowledgeThemes.filter((candidate) =>
+        candidate.parentName && knowledgeNamesMatch(candidate.parentName, theme.name))) {
+        const childFile = this.app.vault.getAbstractFileByPath(childTheme.workspacePath);
+        if (!(childFile instanceof TFile)) continue;
+        await this.app.fileManager.processFrontMatter(childFile, (frontmatter) => {
+          frontmatter.上级主题 = name;
+        });
+      }
       const refreshed = await this.scanPropertyWorkspace();
       const renamed = refreshed.knowledgeThemes.find((candidate) => candidate.name === name);
       if (renamed) await this.ensureKnowledgeThemeFiles(renamed);
       new Notice(`主题已重命名为“${name}”，同步更新 ${affectedDocuments.length} 篇笔记属性`);
     }).open();
+  }
+
+  openRenameIndexedTopic(theme: KnowledgeThemeSummary): void {
+    if (theme.workspaceExists) {
+      this.openRenameKnowledgeTheme(theme);
+      return;
+    }
+    new RenameKnowledgeNodeModal(this, "批量重命名主题", theme.name, async (name) => {
+      if (knowledgeNamesMatch(name, theme.name)) return;
+      const snapshot = await this.scanPropertyWorkspace();
+      if (snapshot.knowledgeThemes.some((candidate) => knowledgeNamesMatch(candidate.name, name))) {
+        throw new Error(`主题“${name}”已经存在`);
+      }
+      const affectedDocuments = snapshot.knowledgeDocuments.filter((document) =>
+        document.topics.some((topic) => knowledgeNamesMatch(topic, theme.name)));
+      for (const document of affectedDocuments) {
+        const file = this.app.vault.getAbstractFileByPath(document.path);
+        if (!(file instanceof TFile)) continue;
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          const values = renameRawKnowledgeTopicPropertyValues(stringValues(frontmatter.主题), theme.name, name);
+          if (values.length) frontmatter.主题 = values;
+          else delete frontmatter.主题;
+        });
+      }
+      await this.scanPropertyWorkspace(new Set(affectedDocuments.map((document) => document.path)));
+      new Notice(`主题已重命名为“${name}”，同步更新 ${affectedDocuments.length} 篇笔记`);
+    }).open();
+  }
+
+  confirmDeleteIndexedTopic(theme: KnowledgeThemeSummary, relatedCount = theme.documents.length): void {
+    const managedMessage = theme.workspaceExists
+      ? "主题工作区与课题目录会移入 Obsidian 回收站，来源文档不会被删除。"
+      : "来源文档不会被删除。";
+    new CreationConfirmModal(
+      this,
+      `删除主题“${theme.name}”`,
+      `将从 ${relatedCount} 篇关联笔记中移除这个主题。${managedMessage} 该操作不会删除笔记里的其他主题。`,
+      "删除主题",
+      () => this.deleteIndexedTopic(theme),
+    ).open();
+  }
+
+  private async deleteIndexedTopic(theme: KnowledgeThemeSummary): Promise<void> {
+    const snapshot = await this.scanPropertyWorkspace();
+    const currentTheme = snapshot.knowledgeThemes.find((candidate) => knowledgeNamesMatch(candidate.name, theme.name)) ?? theme;
+    const affectedDocuments = snapshot.knowledgeDocuments.filter((document) =>
+      document.topics.some((topic) => knowledgeNamesMatch(topic, theme.name)));
+    for (const document of affectedDocuments) {
+      const file = this.app.vault.getAbstractFileByPath(document.path);
+      if (!(file instanceof TFile)) continue;
+      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        const values = removeKnowledgeTopicPropertyValues(
+          stringValues(frontmatter.主题),
+          theme.name,
+          currentTheme.workspacePath,
+        );
+        if (values.length) frontmatter.主题 = values;
+        else delete frontmatter.主题;
+      });
+    }
+    let detachedChildren = 0;
+    for (const childTheme of snapshot.knowledgeThemes.filter((candidate) =>
+      candidate.parentName && knowledgeNamesMatch(candidate.parentName, currentTheme.name))) {
+      const childFile = this.app.vault.getAbstractFileByPath(childTheme.workspacePath);
+      if (!(childFile instanceof TFile)) continue;
+      await this.app.fileManager.processFrontMatter(childFile, (frontmatter) => {
+        delete frontmatter.上级主题;
+      });
+      detachedChildren += 1;
+    }
+    let trashedArtifacts = 0;
+    if (currentTheme.workspaceExists) {
+      const paths = topicWorkspacePaths(theme.name);
+      const artifactPaths = [
+        `${RESEARCH_TOPIC_WORKSPACE_ROOT}/${safeTopicFileName(theme.name)}`,
+        researchSourceStatePath(paths.notePath),
+        legacyResearchSourceStatePath(paths.notePath),
+        paths.basePath,
+        paths.notePath,
+      ];
+      for (const path of artifactPaths) {
+        const artifact = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!artifact) continue;
+        await this.app.fileManager.trashFile(artifact);
+        trashedArtifacts += 1;
+      }
+    }
+    await this.scanPropertyWorkspace(new Set(affectedDocuments.map((document) => document.path)));
+    new Notice(`已删除主题“${theme.name}”：更新 ${affectedDocuments.length} 篇笔记${detachedChildren ? `，${detachedChildren} 个子主题已移到顶层` : ""}${trashedArtifacts ? `，${trashedArtifacts} 项工作区内容已移入回收站` : ""}`);
   }
 
   openRenameKnowledgeResearchTopic(theme: KnowledgeThemeSummary, topic: KnowledgeResearchTopicSummary): void {
@@ -4401,10 +4726,11 @@ export default class KnowGrovePlugin extends Plugin {
       new KnowledgeThemeManagerModal(
         this,
         current,
+        snapshot.knowledgeThemes,
         snapshot.knowledgeDocuments,
         (questions) => this.planKnowledgeTheme(current, snapshot.knowledgeDocuments, questions),
-        async (domains, questions, paths) => {
-          await this.updateKnowledgeTheme(current, snapshot.knowledgeThemes, snapshot.knowledgeDocuments, domains, questions, paths);
+        async (domains, parentName, questions, paths) => {
+          await this.updateKnowledgeTheme(current, snapshot.knowledgeThemes, snapshot.knowledgeDocuments, domains, parentName, questions, paths);
         },
       ).open();
     } catch (error) {
@@ -4418,10 +4744,25 @@ export default class KnowGrovePlugin extends Plugin {
     allThemes: KnowledgeThemeSummary[],
     candidates: KnowledgeThemeSummary["documents"],
     domains: string[],
+    parentName: string,
     researchQuestions: string[],
     sourcePaths: string[],
   ): Promise<void> {
-    const nextTheme = { ...theme, domains };
+    const normalizedParentName = parentName.trim();
+    if (normalizedParentName) {
+      const byName = new Map(allThemes.map((candidate) => [normalizeKnowledgeNameKey(candidate.name), candidate]));
+      let current = byName.get(normalizeKnowledgeNameKey(normalizedParentName));
+      if (!current) throw new Error(`上级主题“${normalizedParentName}”不存在`);
+      const visited = new Set<string>();
+      while (current) {
+        const key = normalizeKnowledgeNameKey(current.name);
+        if (knowledgeNamesMatch(current.name, theme.name)) throw new Error("主题层级不能形成循环");
+        if (visited.has(key)) throw new Error("现有主题层级中存在循环，请先清理上级主题");
+        visited.add(key);
+        current = current.parentName ? byName.get(normalizeKnowledgeNameKey(current.parentName)) : undefined;
+      }
+    }
+    const nextTheme = { ...theme, domains, parentName: normalizedParentName || undefined };
     const workspace = await this.ensureKnowledgeThemeFiles(nextTheme);
     const selected = new Set(sourcePaths);
     const documents = candidates.filter((document) => selected.has(document.path));
@@ -4459,6 +4800,8 @@ export default class KnowGrovePlugin extends Plugin {
     await this.app.fileManager.processFrontMatter(workspace, (frontmatter) => {
       frontmatter.固定主题 = true;
       frontmatter.领域 = domains;
+      if (normalizedParentName) frontmatter.上级主题 = normalizedParentName;
+      else delete frontmatter.上级主题;
       frontmatter.研究课题 = researchQuestions;
       delete frontmatter.资料范围;
       delete frontmatter.课题范围;
@@ -4508,7 +4851,7 @@ export default class KnowGrovePlugin extends Plugin {
     });
     await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
     await this.scanPropertyWorkspace();
-    new Notice(`“${theme.name}”已更新：${domains.join(" / ")}，同步 ${affectedDocuments.length} 篇笔记`);
+    new Notice(`“${theme.name}”已更新：${domains.join(" / ")}${normalizedParentName ? `，上级主题 ${normalizedParentName}` : "，顶层主题"}，同步 ${affectedDocuments.length} 篇笔记`);
   }
 
   private async planKnowledgeTheme(
@@ -5268,7 +5611,6 @@ export default class KnowGrovePlugin extends Plugin {
           this.settings.readingStatus,
           localDateFromTimestamp(file.stat.ctime),
           deferredProperties,
-          this.settings.focusPropertyEnabled ? this.settings.focusPropertyName : "",
         );
         initializedFrontmatter = JSON.parse(JSON.stringify(frontmatter)) as Record<string, unknown>;
       });
@@ -5294,11 +5636,7 @@ export default class KnowGrovePlugin extends Plugin {
         path: file.path,
         basename: file.basename,
         frontmatter: initializedFrontmatter,
-      }], this.settings.propertySystem, {
-        enabled: this.settings.focusPropertyEnabled,
-        propertyName: this.settings.focusPropertyName,
-        aliases: this.settings.focusPropertyName === "收藏" ? LEGACY_FOCUS_PROPERTY_NAMES : [],
-      });
+      }], this.settings.propertySystem);
       const needsReview = audit.nonCompliantFiles > 0 || Boolean(aiError);
       this.updatePropertyCapture({
         path: file.path,
@@ -5308,7 +5646,7 @@ export default class KnowGrovePlugin extends Plugin {
           ? `基础属性已保存；AI 处理失败：${aiError}`
           : needsReview
             ? "AI 已完成处理，仍有属性未通过当前规则。"
-            : "基础属性和 AI 语义属性已完成，已进入“输入与收藏”。",
+            : "基础属性和 AI 语义属性已完成，已进入“输入队列”。",
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -5335,14 +5673,6 @@ export default class KnowGrovePlugin extends Plugin {
       .setIcon("circle-check-big")
       .setChecked(this.classifyStatus(file) === "finished")
       .onClick(() => void this.setReadingStatus(file, this.settings.finishedStatus)));
-  }
-
-  private addFocusMenuItem(menu: Menu, file: TFile): void {
-    menu.addItem((item) => item
-      .setTitle(this.isFocusFile(file) ? "取消收藏" : "收藏")
-      .setIcon("star")
-      .setChecked(this.isFocusFile(file))
-      .onClick(() => void this.toggleFocus(file)));
   }
 
   async createCommentFromDraft(draft: CommentSelectionDraft, comment: string): Promise<ReferenceRecord | null> {

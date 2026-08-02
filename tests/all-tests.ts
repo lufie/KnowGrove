@@ -13,3 +13,8 @@ import "./brand-migration.test";
 import "./browser-capture.test";
 import "./runtime-core.test";
 import "./reading-menu.test";
+import "./recent-files.test";
+import "./topic-index.test";
+import "./word-like-editing.test";
+import "./attachment-cleanup.test";
+import "./i18n.test";

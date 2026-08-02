@@ -13,6 +13,7 @@ import {
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
+  whisperNeedsPcmConversion,
   datedArticleTitle,
   extractJsonObject,
   extractStructuredCaptureTextFromScripts,
@@ -165,6 +166,36 @@ test("link-note detection accepts one link with a title and rejects substantive 
   ].join("\n")), null);
 });
 
+test("link-note detection accepts a sparse local voice note and rejects completed or substantive audio notes", () => {
+  const voiceSession = [
+    "---",
+    "文件名: 2026-07-31 105448 语音记录",
+    "type: voice-session",
+    "audio: \"[[2026-07-31 105448 语音记录.m4a]]\"",
+    "tags: [voice-note]",
+    "---",
+    "# 语音记录 2026-07-31 10:54",
+    "",
+    "![[2026-07-31 105448 语音记录.m4a]]",
+    "",
+    "## 中断记录",
+    "",
+    "- 无",
+    "",
+    "## 整理记录",
+  ].join("\n");
+  assert.deepEqual(detectLinkNoteCandidate(voiceSession, "2026-07-31 105448 语音记录"), {
+    url: "",
+    title: "语音记录 2026-07-31 10:54",
+    pageType: "audio",
+    mediaPath: "2026-07-31 105448 语音记录.m4a",
+  });
+  assert.equal(detectLinkNoteCandidate(`${voiceSession}\n\n${"这是用户已经整理好的正文。".repeat(20)}`), null);
+  assert.equal(detectLinkNoteCandidate(
+    voiceSession.replace("---\n# 语音记录", "KnowGrove采集状态: 已完成\n---\n# 语音记录"),
+  ), null);
+});
+
 test("startup link-note scan selects newest Markdown files only inside the configured folder", () => {
   assert.deepEqual(latestLinkNoteScanFiles([
     { path: "Home/📬输入/旧链接.md", mtime: 10 },
@@ -268,6 +299,9 @@ test("interrupted raw capture can resume AI organization without downloading the
 test("video transcription supports both Whisper CLIs", () => {
   assert.equal(detectWhisperImplementation("/opt/homebrew/bin/whisper"), "openai-whisper");
   assert.equal(detectWhisperImplementation("/opt/homebrew/bin/whisper-cli"), "whisper-cpp");
+  assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.m4a"), true);
+  assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.wav"), false);
+  assert.equal(whisperNeedsPcmConversion("openai-whisper", "/tmp/voice.m4a"), false);
   assert.deepEqual(buildWhisperInvocation({
     implementation: "openai-whisper",
     audioPath: "/tmp/audio.mp3",
@@ -481,9 +515,25 @@ test("audio capture keeps the original media as an Obsidian embed and retains th
     bodyMarkdown: "### 对话\n\n**甲**：内容",
   });
   assert.match(completed, /## 原始音频/);
+  assert.match(completed, /!\[\[Home\/📬输入\/附件\/音视频\/访谈录音\.m4a]]/);
   assert.match(completed, /## 对话记录/);
   assert.match(completed, /## 完整逐字稿\n\n这是逐字稿。/);
   assert.doesNotMatch(completed, /file:\/\//);
+});
+
+test("local audio capture omits a fake source URL and keeps an Obsidian media reference", () => {
+  const raw = buildRawCaptureNote({
+    pageType: "audio",
+    title: "语音记录",
+    source: "这是本地语音逐字稿。",
+    mediaPath: "Home/📬输入/assets/语音记录.m4a",
+    capturedAt: "2026-07-31T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  assert.doesNotMatch(raw, /^来源:/m);
+  assert.match(raw, /!\[\[Home\/📬输入\/assets\/语音记录\.m4a]]/);
+  assert.doesNotMatch(raw, /file:\/\//);
 });
 
 test("browser capture failure note leaves a final retryable state", () => {
