@@ -4,16 +4,17 @@
 
 ## 1. 当前结论
 
-KnowGrove 源代码仓库已经公开，`2.6.0` 正式 GitHub Release 已发布，安装资产齐全，可以提交 Obsidian 社区插件目录。
+KnowGrove 源代码仓库已经公开，`2.6.1` 正式 GitHub Release 与社区目录公开条目均已创建；官方自动审核仍在运行，尚不能描述为已通过社区审核。
 
 已完成：
 
 1. 源代码已合并到公开仓库默认分支 `main`。
-2. 正式标签和 Release 均为 `2.6.0`，与 `manifest.json` 一致。
+2. 正式标签和 Release 均为 `2.6.1`，与 `manifest.json` 一致。
 3. Release 已包含 `main.js`、`manifest.json` 和 `styles.css`，不包含用户数据或密钥。
 4. GitHub 自动发布工作流、217 项插件测试和生产构建均已通过。
+5. 社区条目 `https://community.obsidian.md/plugins/knowgrove` 已公开，审核记录正确识别版本 `2.6.1` 与提交 `c9453e0`。
 
-待完成：使用 Obsidian 账号登录 `https://community.obsidian.md`，绑定 GitHub 账号，在 **Plugins → New plugin** 提交仓库 URL，并处理自动审核反馈。
+待完成：等待官方自动审核与后续人工审核；如审核提出问题，按反馈修复并发布新的补丁版本。
 
 插件 ID `knowgrove` 当前未在 Obsidian 社区插件清单中发现冲突，但正式提交当天仍需再次核对。
 
@@ -69,8 +70,8 @@ git diff --check
 
 ```bash
 # 确认 manifest.json、package.json、versions.json 都是同一版本
-git tag 2.6.0
-git push origin 2.6.0
+git tag 2.6.1
+git push origin 2.6.1
 ```
 
 工作流会验证标签与 Manifest 版本一致，并上传：
