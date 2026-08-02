@@ -1,17 +1,21 @@
-import { Modal, Notice, TFile, normalizePath, setIcon } from "obsidian";
+import { Modal, Notice, TFile, normalizePath, setIcon, type CachedMetadata } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import {
   extractVaultReferenceTargets,
+  isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  normalizeAttachmentExtensions,
   selectPreviouslyReferencedOrphanPaths,
 } from "./attachment-cleanup-core";
 export {
   extractVaultReferenceTargets,
+  isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  normalizeAttachmentExtensions,
   selectPreviouslyReferencedOrphanPaths,
 } from "./attachment-cleanup-core";
 
@@ -28,6 +32,8 @@ export interface AttachmentCandidate {
   size: number;
   modifiedAt: number;
   metadataSourcePaths?: string[];
+  lastReferencedAt?: number;
+  previousSourcePaths?: string[];
 }
 
 interface AttachmentReferenceSnapshot {
@@ -108,6 +114,13 @@ export class AttachmentCleanupModal extends Modal {
       const copy = row.createDiv("knowgrove-attachment-cleanup-copy");
       copy.createDiv({ cls: "knowgrove-attachment-cleanup-name", text: candidate.name });
       copy.createDiv({ cls: "knowgrove-attachment-cleanup-path", text: candidate.path });
+      const evidence = [
+        candidate.lastReferencedAt ? `上次引用 ${new Date(candidate.lastReferencedAt).toLocaleString()}` : "",
+        candidate.previousSourcePaths?.length
+          ? `历史来源 ${candidate.previousSourcePaths.slice(0, 2).join("、")}${candidate.previousSourcePaths.length > 2 ? ` 等 ${candidate.previousSourcePaths.length} 篇` : ""}`
+          : "",
+      ].filter(Boolean).join(" · ");
+      if (evidence) copy.createDiv({ cls: "knowgrove-attachment-cleanup-path", text: evidence });
       row.createSpan({ cls: "knowgrove-attachment-cleanup-meta", text: `${attachmentKind(candidate.extension)} · ${formatBytes(candidate.size)}` });
     }
 
@@ -134,15 +147,20 @@ export class AttachmentCleanupManager {
   private readonly sourceContentReferences = new Map<string, Set<string>>();
   private readonly pendingPreviousReferences = new Map<string, Set<string>>();
   private readonly pendingPreviousContentReferences = new Map<string, Set<string>>();
+  private readonly deletedSourceSnapshots = new Map<string, AttachmentReferenceSnapshot>();
+  private readonly deletedSourceSnapshotTimers = new Map<string, number>();
   private initialized = false;
   private indexing?: Promise<void>;
   private readonly refreshTimers = new Map<string, number>();
   private dailyTimer?: number;
+  private configurationRefreshTimer?: number;
   private promptScheduled = false;
   private scanPromise?: Promise<void>;
   private pendingPromptReason: AttachmentCleanupReason = "reference-removed";
   private readonly pendingPromptPaths = new Set<string>();
   private readonly pendingMetadataSourcePaths = new Map<string, Set<string>>();
+  private extraExtensionCacheKey = "";
+  private extraExtensionCache: string[] = [];
 
   constructor(private readonly plugin: KnowGrovePlugin) {
     for (const [attachmentPath, usage] of Object.entries(plugin.data.attachmentUsage)) {
@@ -166,8 +184,40 @@ export class AttachmentCleanupManager {
 
   stop(): void {
     if (this.dailyTimer !== undefined) window.clearInterval(this.dailyTimer);
+    if (this.configurationRefreshTimer !== undefined) window.clearTimeout(this.configurationRefreshTimer);
     for (const timer of this.refreshTimers.values()) window.clearTimeout(timer);
+    for (const timer of this.deletedSourceSnapshotTimers.values()) window.clearTimeout(timer);
     this.refreshTimers.clear();
+    this.deletedSourceSnapshotTimers.clear();
+    this.deletedSourceSnapshots.clear();
+  }
+
+  configurationChanged(): void {
+    this.initialized = false;
+    this.extraExtensionCacheKey = "";
+    if (this.configurationRefreshTimer !== undefined) window.clearTimeout(this.configurationRefreshTimer);
+    this.configurationRefreshTimer = window.setTimeout(() => {
+      this.configurationRefreshTimer = undefined;
+      void this.rebuildIndex();
+    }, 600);
+  }
+
+  captureSourceBeforeDelete(file: TFile, previousCache: CachedMetadata | null): void {
+    if (!isAttachmentReferenceSource(file.path)) return;
+    const attachmentFiles = this.managedAttachments();
+    const snapshot = previousCache
+      ? this.referenceSnapshotFromCache(file, previousCache, attachmentFiles, false)
+      : { all: new Set<string>(), content: new Set<string>() };
+    for (const path of this.referencesBeforeRefresh(file.path)) snapshot.all.add(path);
+    for (const path of this.referencesBeforeRefresh(file.path, true)) snapshot.content.add(path);
+    if (!snapshot.all.size) return;
+    const existingTimer = this.deletedSourceSnapshotTimers.get(file.path);
+    if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+    this.deletedSourceSnapshots.set(file.path, snapshot);
+    this.deletedSourceSnapshotTimers.set(file.path, window.setTimeout(() => {
+      this.deletedSourceSnapshots.delete(file.path);
+      this.deletedSourceSnapshotTimers.delete(file.path);
+    }, 5_000));
   }
 
   scheduleSourceRefresh(file: TFile): void {
@@ -192,11 +242,16 @@ export class AttachmentCleanupManager {
   }
 
   async handleDelete(file: TFile): Promise<void> {
-    const previousBeforeIndex = isAttachmentReferenceSource(file.path)
+    const captured = this.deletedSourceSnapshots.get(file.path);
+    const capturedTimer = this.deletedSourceSnapshotTimers.get(file.path);
+    if (capturedTimer !== undefined) window.clearTimeout(capturedTimer);
+    this.deletedSourceSnapshots.delete(file.path);
+    this.deletedSourceSnapshotTimers.delete(file.path);
+    const previousBeforeIndex = captured?.all ?? (isAttachmentReferenceSource(file.path)
       ? this.referencesBeforeRefresh(file.path)
-      : new Set<string>();
+      : new Set<string>());
     await this.ensureIndex();
-    if (isManagedAttachmentPath(file.path)) {
+    if (this.isManagedAttachment(file.path)) {
       for (const references of this.sourceReferences.values()) references.delete(file.path);
       for (const references of this.sourceContentReferences.values()) references.delete(file.path);
       if (this.plugin.data.attachmentUsage[file.path]) {
@@ -220,7 +275,7 @@ export class AttachmentCleanupManager {
     await this.ensureIndex();
     this.sourceReferences.delete(oldPath);
     this.sourceContentReferences.delete(oldPath);
-    if (isManagedAttachmentPath(oldPath) || isManagedAttachmentPath(file.path)) {
+    if (this.isManagedAttachment(oldPath) || this.isManagedAttachment(file.path)) {
       const previousUsage = this.plugin.data.attachmentUsage[oldPath];
       if (previousUsage) {
         this.plugin.data.attachmentUsage[file.path] = previousUsage;
@@ -374,13 +429,24 @@ export class AttachmentCleanupManager {
   ): AttachmentReferenceSnapshot | null {
     const cache = this.plugin.app.metadataCache.getFileCache(file);
     if (!cache) return null;
+    return this.referenceSnapshotFromCache(file, cache, attachmentFiles, true);
+  }
+
+  private referenceSnapshotFromCache(
+    file: TFile,
+    cache: CachedMetadata,
+    attachmentFiles: TFile[],
+    includeResolvedLinks: boolean,
+  ): AttachmentReferenceSnapshot {
     const all = new Set<string>();
     const content = new Set<string>();
-    const resolved = this.plugin.app.metadataCache.resolvedLinks[file.path] ?? {};
-    for (const target of Object.keys(resolved)) {
-      const resolvedFile = this.plugin.app.vault.getAbstractFileByPath(normalizePath(target));
-      if (resolvedFile instanceof TFile && isManagedAttachmentPath(resolvedFile.path) && !this.isExcludedPath(resolvedFile.path)) {
-        all.add(resolvedFile.path);
+    if (includeResolvedLinks) {
+      const resolved = this.plugin.app.metadataCache.resolvedLinks[file.path] ?? {};
+      for (const target of Object.keys(resolved)) {
+        const resolvedFile = this.plugin.app.vault.getAbstractFileByPath(normalizePath(target));
+        if (resolvedFile instanceof TFile && this.isManagedAttachment(resolvedFile.path) && !this.isExcludedPath(resolvedFile.path)) {
+          all.add(resolvedFile.path);
+        }
       }
     }
     for (const link of cache.frontmatterLinks ?? []) this.addResolvedTarget(all, file, link.link, attachmentFiles);
@@ -389,10 +455,8 @@ export class AttachmentCleanupManager {
       this.addResolvedTarget(content, file, embed.link, attachmentFiles);
     }
     for (const link of cache.links ?? []) {
-      if (isManagedAttachmentPath(link.link.split("#", 1)[0] ?? "")) {
-        this.addResolvedTarget(all, file, link.link, attachmentFiles);
-        this.addResolvedTarget(content, file, link.link, attachmentFiles);
-      }
+      this.addResolvedTarget(all, file, link.link, attachmentFiles);
+      this.addResolvedTarget(content, file, link.link, attachmentFiles);
     }
     return { all, content };
   }
@@ -405,7 +469,7 @@ export class AttachmentCleanupManager {
 
   private addResolvedTarget(result: Set<string>, source: TFile, target: string, attachmentFiles: TFile[]): void {
     const resolved = this.plugin.app.metadataCache.getFirstLinkpathDest(target, source.path);
-    if (resolved instanceof TFile && isManagedAttachmentPath(resolved.path) && !this.isExcludedPath(resolved.path)) {
+    if (resolved instanceof TFile && this.isManagedAttachment(resolved.path) && !this.isExcludedPath(resolved.path)) {
       result.add(resolved.path);
       return;
     }
@@ -422,15 +486,30 @@ export class AttachmentCleanupManager {
   }
 
   private managedAttachments(files = this.plugin.app.vault.getFiles()): TFile[] {
-    return files.filter((file) => isManagedAttachmentPath(file.path) && !this.isExcludedPath(file.path));
+    const extraExtensions = this.extraAttachmentExtensions();
+    return files.filter((file) => isManagedAttachmentPath(file.path, extraExtensions) && !this.isExcludedPath(file.path));
+  }
+
+  private isManagedAttachment(path: string): boolean {
+    return isManagedAttachmentPath(path, this.extraAttachmentExtensions());
+  }
+
+  private extraAttachmentExtensions(): string[] {
+    const values = this.plugin.settings.attachmentCleanupExtraExtensions;
+    const key = JSON.stringify(values);
+    if (key !== this.extraExtensionCacheKey) {
+      this.extraExtensionCacheKey = key;
+      this.extraExtensionCache = normalizeAttachmentExtensions(values);
+    }
+    return this.extraExtensionCache;
   }
 
   private isExcludedPath(path: string): boolean {
     if (isAttachmentCleanupExcludedPath(path)) return true;
-    return this.plugin.settings.propertySystem.excludedFolders.some((folder) => {
-      const normalizedFolder = normalizePath(folder.trim()).replace(/^\/+|\/+$/g, "");
-      return Boolean(normalizedFolder) && (path === normalizedFolder || path.startsWith(`${normalizedFolder}/`));
-    });
+    return isAttachmentCleanupExcludedByFolders(path, [
+      ...this.plugin.settings.propertySystem.excludedFolders,
+      ...this.plugin.settings.attachmentCleanupExcludedFolders,
+    ]);
   }
 
   private referencedPaths(): Set<string> {
@@ -452,13 +531,18 @@ export class AttachmentCleanupManager {
       Date.now(),
       gracePeriod,
     ));
-    return attachments.filter((file) => orphanPaths.has(file.path)).map((file) => ({
-      path: file.path,
-      name: file.name,
-      extension: file.extension.toLowerCase(),
-      size: file.stat.size,
-      modifiedAt: file.stat.mtime,
-    }));
+    return attachments.filter((file) => orphanPaths.has(file.path)).map((file) => {
+      const usage = this.plugin.data.attachmentUsage[file.path];
+      return {
+        path: file.path,
+        name: file.name,
+        extension: file.extension.toLowerCase(),
+        size: file.stat.size,
+        modifiedAt: file.stat.mtime,
+        lastReferencedAt: usage?.lastReferencedAt,
+        previousSourcePaths: usage?.lastSourcePaths,
+      };
+    });
   }
 
   private async promptIfNowOrphan(
@@ -476,7 +560,8 @@ export class AttachmentCleanupManager {
         : [];
       if (referenced.has(path) && !metadataSourcePaths) return [];
       const file = this.plugin.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile) || !isManagedAttachmentPath(file.path) || this.isExcludedPath(file.path)) return [];
+      if (!(file instanceof TFile) || !this.isManagedAttachment(file.path) || this.isExcludedPath(file.path)) return [];
+      const usage = this.plugin.data.attachmentUsage[file.path];
       return [{
         path: file.path,
         name: file.name,
@@ -484,6 +569,8 @@ export class AttachmentCleanupManager {
         size: file.stat.size,
         modifiedAt: file.stat.mtime,
         metadataSourcePaths: metadataSourcePaths ?? undefined,
+        lastReferencedAt: usage?.lastReferencedAt,
+        previousSourcePaths: usage?.lastSourcePaths,
       }];
     });
     if (candidates.length) {
@@ -533,7 +620,7 @@ export class AttachmentCleanupManager {
     let skipped = 0;
     for (const path of paths) {
       const file = this.plugin.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile) || referenced.has(path) || !isManagedAttachmentPath(path) || this.isExcludedPath(path)) {
+      if (!(file instanceof TFile) || referenced.has(path) || !this.isManagedAttachment(path) || this.isExcludedPath(path)) {
         skipped += 1;
         continue;
       }
@@ -607,7 +694,7 @@ export class AttachmentCleanupManager {
     let changed = false;
     for (const attachmentPath of Object.keys(this.plugin.data.attachmentUsage)) {
       const file = this.plugin.app.vault.getAbstractFileByPath(attachmentPath);
-      if (file instanceof TFile && isManagedAttachmentPath(file.path)) continue;
+      if (file instanceof TFile && this.isManagedAttachment(file.path)) continue;
       delete this.plugin.data.attachmentUsage[attachmentPath];
       changed = true;
     }

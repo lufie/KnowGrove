@@ -59,6 +59,12 @@ const ENGLISH: Record<string, string> = {
   "附件冗余检测": "Orphaned attachment check",
   "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。": "Tracks only attachments previously used by notes and alerts when the last reference is removed. Never treats never-referenced files as cleanup candidates.",
   "立即检查": "Check now",
+  "附件检测排除目录": "Excluded attachment folders",
+  "通常无需修改。每行填写一个 Vault 相对路径；属性管理中的排除目录也会继续生效。": "Usually no changes are needed. Enter one vault-relative path per line. Folders excluded from property management also remain excluded.",
+  "例如：Archive/长期保留": "Example: Archive/Keep",
+  "额外附件格式": "Additional attachment types",
+  "通常无需修改。仅添加默认未覆盖的附件扩展名；Markdown、Canvas 和 Base 不会被当作附件。": "Usually no changes are needed. Add only attachment extensions not covered by default. Markdown, Canvas, and Bases are never treated as attachments.",
+  "例如：zip, psd": "Example: zip, psd",
   "最近文件依据": "Recent files based on",
   "控制文件列表顶部“最近”展示哪些文档。": "Choose which notes appear in Recent at the top of the file explorer.",
   "最近操作": "Recently opened",
@@ -244,7 +250,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   "zh-TW": {
     "大模型配置": "AI 模型設定", "属性管理": "屬性管理", "知识工作台": "知識工作區", "增强功能": "增強功能",
     "收集箱路径": "收集匣路徑", "自动整理新内容": "自動整理新內容", "阅读习惯设置": "閱讀習慣",
-    "主题列表": "主題列表", "附件冗余检测": "孤立附件檢查", "最近文件依据": "最近檔案依據",
+    "主题列表": "主題列表", "附件冗余检测": "孤立附件檢查", "附件检测排除目录": "附件檢查排除資料夾", "额外附件格式": "其他附件格式", "最近文件依据": "最近檔案依據",
     "最近操作": "最近開啟", "最近编辑": "最近編輯", "最近新建": "最近建立", "删除多余空行": "刪除多餘空行",
     "启用评论": "啟用評論", "自动整理组件配置": "自動整理元件", "浏览器剪藏": "瀏覽器剪藏",
     "手机端剪藏": "行動裝置剪藏", "剪藏内容解析": "剪藏內容解析", "模型选择": "模型供應商",
@@ -257,7 +263,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ja: {
     "大模型配置": "AIモデル", "属性管理": "プロパティ管理", "知识工作台": "ナレッジワークスペース", "增强功能": "拡張機能",
     "收集箱路径": "受信トレイフォルダー", "自动整理新内容": "新しいコンテンツを自動整理", "阅读习惯设置": "読書設定",
-    "主题列表": "トピック一覧", "附件冗余检测": "孤立した添付ファイルの確認", "最近文件依据": "最近のファイルの基準",
+    "主题列表": "トピック一覧", "附件冗余检测": "孤立した添付ファイルの確認", "附件检测排除目录": "添付ファイル検査の除外フォルダー", "额外附件格式": "追加の添付ファイル形式", "最近文件依据": "最近のファイルの基準",
     "最近操作": "最近開いた項目", "最近编辑": "最近編集した項目", "最近新建": "最近作成した項目", "删除多余空行": "余分な空行を削除",
     "启用评论": "コメントを有効化", "自动整理组件配置": "コンテンツ処理コンポーネント", "浏览器剪藏": "ブラウザーキャプチャ",
     "手机端剪藏": "モバイルキャプチャ", "剪藏内容解析": "キャプチャの処理", "模型选择": "モデルプロバイダー",
@@ -270,7 +276,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ko: {
     "大模型配置": "AI 모델", "属性管理": "속성 관리", "知识工作台": "지식 작업 공간", "增强功能": "향상 기능",
     "收集箱路径": "받은 편지함 폴더", "自动整理新内容": "새 콘텐츠 자동 정리", "阅读习惯设置": "읽기 환경설정",
-    "主题列表": "주제 목록", "附件冗余检测": "고아 첨부 파일 검사", "最近文件依据": "최근 파일 기준",
+    "主题列表": "주제 목록", "附件冗余检测": "고아 첨부 파일 검사", "附件检测排除目录": "첨부 파일 검사 제외 폴더", "额外附件格式": "추가 첨부 파일 형식", "最近文件依据": "최근 파일 기준",
     "最近操作": "최근에 연 파일", "最近编辑": "최근에 편집한 파일", "最近新建": "최근에 만든 파일", "删除多余空行": "불필요한 빈 줄 제거",
     "启用评论": "댓글 사용", "自动整理组件配置": "콘텐츠 처리 구성 요소", "浏览器剪藏": "브라우저 캡처",
     "手机端剪藏": "모바일 캡처", "剪藏内容解析": "캡처 처리", "模型选择": "모델 공급자", "模型名称": "모델",
@@ -282,7 +288,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   de: {
     "大模型配置": "KI-Modell", "属性管理": "Eigenschaften", "知识工作台": "Wissensarbeitsbereich", "增强功能": "Erweiterungen",
     "收集箱路径": "Posteingangsordner", "自动整理新内容": "Neue Inhalte automatisch verarbeiten", "阅读习惯设置": "Leseeinstellungen",
-    "主题列表": "Themenliste", "附件冗余检测": "Verwaiste Anhänge prüfen", "最近文件依据": "Zuletzt verwendet nach",
+    "主题列表": "Themenliste", "附件冗余检测": "Verwaiste Anhänge prüfen", "附件检测排除目录": "Ausgeschlossene Anhangsordner", "额外附件格式": "Zusätzliche Anhangsformate", "最近文件依据": "Zuletzt verwendet nach",
     "最近操作": "Zuletzt geöffnet", "最近编辑": "Zuletzt bearbeitet", "最近新建": "Zuletzt erstellt", "删除多余空行": "Zusätzliche Leerzeilen entfernen",
     "启用评论": "Kommentare aktivieren", "自动整理组件配置": "Komponenten zur Inhaltsverarbeitung", "浏览器剪藏": "Browser-Erfassung",
     "手机端剪藏": "Mobile Erfassung", "剪藏内容解析": "Erfasste Inhalte verarbeiten", "模型选择": "Modellanbieter", "模型名称": "Modell",
@@ -294,7 +300,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   fr: {
     "大模型配置": "Modèle d’IA", "属性管理": "Gestion des propriétés", "知识工作台": "Espace de connaissances", "增强功能": "Améliorations",
     "收集箱路径": "Dossier de réception", "自动整理新内容": "Traiter automatiquement le nouveau contenu", "阅读习惯设置": "Préférences de lecture",
-    "主题列表": "Liste des sujets", "附件冗余检测": "Vérifier les pièces jointes orphelines", "最近文件依据": "Fichiers récents selon",
+    "主题列表": "Liste des sujets", "附件冗余检测": "Vérifier les pièces jointes orphelines", "附件检测排除目录": "Dossiers de pièces jointes exclus", "额外附件格式": "Formats de pièce jointe supplémentaires", "最近文件依据": "Fichiers récents selon",
     "最近操作": "Ouverture récente", "最近编辑": "Modification récente", "最近新建": "Création récente", "删除多余空行": "Supprimer les lignes vides en trop",
     "启用评论": "Activer les commentaires", "自动整理组件配置": "Composants de traitement", "浏览器剪藏": "Capture du navigateur",
     "手机端剪藏": "Capture mobile", "剪藏内容解析": "Traitement des captures", "模型选择": "Fournisseur du modèle", "模型名称": "Modèle",
@@ -306,7 +312,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   es: {
     "大模型配置": "Modelo de IA", "属性管理": "Gestión de propiedades", "知识工作台": "Espacio de conocimiento", "增强功能": "Mejoras",
     "收集箱路径": "Carpeta de entrada", "自动整理新内容": "Procesar contenido nuevo automáticamente", "阅读习惯设置": "Preferencias de lectura",
-    "主题列表": "Lista de temas", "附件冗余检测": "Comprobar adjuntos huérfanos", "最近文件依据": "Archivos recientes según",
+    "主题列表": "Lista de temas", "附件冗余检测": "Comprobar adjuntos huérfanos", "附件检测排除目录": "Carpetas de adjuntos excluidas", "额外附件格式": "Formatos de adjuntos adicionales", "最近文件依据": "Archivos recientes según",
     "最近操作": "Abiertos recientemente", "最近编辑": "Editados recientemente", "最近新建": "Creados recientemente", "删除多余空行": "Eliminar líneas vacías adicionales",
     "启用评论": "Activar comentarios", "自动整理组件配置": "Componentes de procesamiento", "浏览器剪藏": "Captura del navegador",
     "手机端剪藏": "Captura móvil", "剪藏内容解析": "Procesamiento de capturas", "模型选择": "Proveedor del modelo", "模型名称": "Modelo",
@@ -318,7 +324,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   "pt-BR": {
     "大模型配置": "Modelo de IA", "属性管理": "Gerenciamento de propriedades", "知识工作台": "Espaço de conhecimento", "增强功能": "Recursos avançados",
     "收集箱路径": "Pasta de entrada", "自动整理新内容": "Processar novos conteúdos automaticamente", "阅读习惯设置": "Preferências de leitura",
-    "主题列表": "Lista de tópicos", "附件冗余检测": "Verificar anexos órfãos", "最近文件依据": "Arquivos recentes por",
+    "主题列表": "Lista de tópicos", "附件冗余检测": "Verificar anexos órfãos", "附件检测排除目录": "Pastas de anexos excluídas", "额外附件格式": "Formatos de anexo adicionais", "最近文件依据": "Arquivos recentes por",
     "最近操作": "Abertos recentemente", "最近编辑": "Editados recentemente", "最近新建": "Criados recentemente", "删除多余空行": "Remover linhas em branco extras",
     "启用评论": "Ativar comentários", "自动整理组件配置": "Componentes de processamento", "浏览器剪藏": "Captura do navegador",
     "手机端剪藏": "Captura no celular", "剪藏内容解析": "Processamento de capturas", "模型选择": "Provedor do modelo", "模型名称": "Modelo",
@@ -330,7 +336,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ru: {
     "大模型配置": "Модель ИИ", "属性管理": "Управление свойствами", "知识工作台": "Рабочая область знаний", "增强功能": "Дополнительные функции",
     "收集箱路径": "Папка входящих", "自动整理新内容": "Автоматически обрабатывать новые материалы", "阅读习惯设置": "Настройки чтения",
-    "主题列表": "Список тем", "附件冗余检测": "Проверка потерянных вложений", "最近文件依据": "Недавние файлы по",
+    "主题列表": "Список тем", "附件冗余检测": "Проверка потерянных вложений", "附件检测排除目录": "Исключённые папки вложений", "额外附件格式": "Дополнительные форматы вложений", "最近文件依据": "Недавние файлы по",
     "最近操作": "Недавно открытые", "最近编辑": "Недавно изменённые", "最近新建": "Недавно созданные", "删除多余空行": "Удалять лишние пустые строки",
     "启用评论": "Включить комментарии", "自动整理组件配置": "Компоненты обработки", "浏览器剪藏": "Сохранение из браузера",
     "手机端剪藏": "Сохранение с телефона", "剪藏内容解析": "Обработка сохранённых материалов", "模型选择": "Поставщик модели", "模型名称": "Модель",

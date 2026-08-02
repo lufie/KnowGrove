@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   extractVaultReferenceTargets,
+  isAttachmentCleanupExcludedByFolders,
   isAttachmentCleanupExcludedPath,
   isAttachmentReferenceSource,
   isManagedAttachmentPath,
+  normalizeAttachmentExtensions,
   selectPreviouslyReferencedOrphanPaths,
 } from "../src/attachment-cleanup-core";
 import { createDefaultSettings } from "../src/types";
@@ -13,6 +15,8 @@ test("attachment cleanup is enabled by default but never implies automatic delet
   const settings = createDefaultSettings();
   assert.equal(settings.enableAttachmentCleanup, true);
   assert.equal(settings.lastAttachmentCleanupScanAt, 0);
+  assert.deepEqual(settings.attachmentCleanupExcludedFolders, []);
+  assert.deepEqual(settings.attachmentCleanupExtraExtensions, []);
 });
 
 test("attachment cleanup only manages a conservative attachment allowlist", () => {
@@ -30,12 +34,34 @@ test("attachment cleanup only manages a conservative attachment allowlist", () =
   assert.equal(isAttachmentCleanupExcludedPath("Home/资料/assets/icon.png"), false);
 });
 
+test("attachment cleanup accepts safe custom types without treating note sources as attachments", () => {
+  assert.deepEqual(
+    normalizeAttachmentExtensions([" ZIP, psd ", ".excalidraw.md", ".md", "bad/path"]),
+    [".psd", ".zip"],
+  );
+  assert.equal(isManagedAttachmentPath("archive/source.ZIP", ["zip"]), true);
+  assert.equal(isManagedAttachmentPath("design/mockup.psd", [".psd"]), true);
+  assert.equal(isManagedAttachmentPath("drawings/idea.excalidraw.md", normalizeAttachmentExtensions([".excalidraw.md"])), false);
+  assert.equal(isManagedAttachmentPath("notes/ordinary.md", [".md"]), false);
+  assert.equal(isManagedAttachmentPath("boards/roadmap.canvas", ["canvas"]), false);
+});
+
+test("attachment cleanup supports dedicated vault-relative folder exclusions", () => {
+  const folders = ["Archive/Keep", "/Shared/Assets/"];
+  assert.equal(isAttachmentCleanupExcludedByFolders("Archive/Keep/source.pdf", folders), true);
+  assert.equal(isAttachmentCleanupExcludedByFolders("Shared/Assets/logo.png", folders), true);
+  assert.equal(isAttachmentCleanupExcludedByFolders("Archive/Keepers/source.pdf", folders), false);
+  assert.equal(isAttachmentCleanupExcludedByFolders("Home/assets/logo.png", folders), false);
+});
+
 test("extracts Obsidian, Markdown and HTML attachment targets without remote links", () => {
   const content = [
     "![[assets/photo.png|封面]]",
     "[[docs/report.pdf#page=2]]",
     "![录音](<audio/interview 01.m4a>)",
     '<audio src="media/talk.mp3"></audio>',
+    '<video poster="assets/poster.jpg"><source srcset="media/talk-small.mp4 1x, media/talk-large.mp4 2x"></video>',
+    "[资料]: docs/reference.pdf",
     "![远程](https://example.com/remote.png)",
     "[邮件](mailto:test@example.com)",
   ].join("\n");
@@ -44,6 +70,10 @@ test("extracts Obsidian, Markdown and HTML attachment targets without remote lin
     "docs/report.pdf",
     "audio/interview 01.m4a",
     "media/talk.mp3",
+    "assets/poster.jpg",
+    "media/talk-small.mp4",
+    "media/talk-large.mp4",
+    "docs/reference.pdf",
   ]);
 });
 

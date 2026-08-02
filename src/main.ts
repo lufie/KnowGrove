@@ -18,7 +18,7 @@ import {
   setIcon,
 } from "obsidian";
 import { AIPropertyBatchModal } from "./ai-property-modal";
-import { AttachmentCleanupManager } from "./attachment-cleanup";
+import { AttachmentCleanupManager, normalizeAttachmentExtensions } from "./attachment-cleanup";
 import {
   buildAIBatchPropertyPrompt,
   aiManagedDimensions,
@@ -700,6 +700,9 @@ export default class KnowGrovePlugin extends Plugin {
       void this.handleDelete(file);
       this.refreshReadingViews();
     }));
+    this.registerEvent(this.app.metadataCache.on("deleted", (file, previousCache) => {
+      this.attachmentCleanupManager?.captureSourceBeforeDelete(file, previousCache);
+    }));
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
       this.refreshReadingViews();
       this.scheduleReferenceRepair(file);
@@ -787,6 +790,10 @@ export default class KnowGrovePlugin extends Plugin {
 
   async scanUnreferencedAttachments(): Promise<void> {
     await this.attachmentCleanupManager?.scan(true);
+  }
+
+  refreshAttachmentCleanupConfiguration(): void {
+    this.attachmentCleanupManager?.configurationChanged();
   }
 
   private initializeSelectionCommentButton(): void {
@@ -1223,6 +1230,16 @@ export default class KnowGrovePlugin extends Plugin {
         autoMarkNewNotes: autoProcessNewNotes,
         defaultTargetFolder: "",
         defaultTargetHeading: "评论",
+        attachmentCleanupExcludedFolders: Array.isArray(savedSettings?.attachmentCleanupExcludedFolders)
+          ? Array.from(new Set(savedSettings.attachmentCleanupExcludedFolders
+            .filter((folder): folder is string => typeof folder === "string")
+            .map((folder) => normalizePath(folder.trim()).replace(/^\/+|\/+$/g, ""))
+            .filter(Boolean)))
+          : [...defaults.attachmentCleanupExcludedFolders],
+        attachmentCleanupExtraExtensions: Array.isArray(savedSettings?.attachmentCleanupExtraExtensions)
+          ? normalizeAttachmentExtensions(savedSettings.attachmentCleanupExtraExtensions
+            .filter((extension): extension is string => typeof extension === "string"))
+          : [...defaults.attachmentCleanupExtraExtensions],
         aiProperties: {
           ...defaults.aiProperties,
           ...(savedAIProperties ?? {}),

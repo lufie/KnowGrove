@@ -5,10 +5,28 @@ const ATTACHMENT_EXTENSIONS = new Set([
   "mp4", "mov", "mkv", "webm", "m4v", "avi",
   "pdf", "epub", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
 ]);
+const REFERENCE_SOURCE_EXTENSIONS = new Set([".md", ".canvas", ".base"]);
 
-export function isManagedAttachmentPath(path: string): boolean {
+export function normalizeAttachmentExtensions(values: Iterable<string>): string[] {
+  const normalized = new Set<string>();
+  for (const rawValue of values) {
+    for (const rawExtension of rawValue.split(/[\s,，;；]+/)) {
+      const trimmed = rawExtension.trim().toLowerCase();
+      if (!trimmed) continue;
+      const extension = trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+      if (Array.from(REFERENCE_SOURCE_EXTENSIONS).some((sourceExtension) => extension.endsWith(sourceExtension))) continue;
+      if (!/^\.[a-z0-9][a-z0-9._+-]*$/i.test(extension)) continue;
+      normalized.add(extension);
+    }
+  }
+  return Array.from(normalized).sort((left, right) => left.localeCompare(right, "en"));
+}
+
+export function isManagedAttachmentPath(path: string, extraExtensions: Iterable<string> = []): boolean {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  return ATTACHMENT_EXTENSIONS.has(extension);
+  if (ATTACHMENT_EXTENSIONS.has(extension)) return true;
+  const normalizedPath = path.toLowerCase();
+  return normalizeAttachmentExtensions(extraExtensions).some((candidate) => normalizedPath.endsWith(candidate));
 }
 
 export function isAttachmentReferenceSource(path: string): boolean {
@@ -22,6 +40,14 @@ export function isAttachmentCleanupExcludedPath(path: string): boolean {
   if (segments.some((segment) => segment === "node_modules" || segment === ".git" || segment === ".obsidian" || segment === ".trash")) return true;
   if (normalized === "Home/🕹️skills" || normalized.startsWith("Home/🕹️skills/")) return true;
   return segments.some((segment) => segment.startsWith("."));
+}
+
+export function isAttachmentCleanupExcludedByFolders(path: string, folders: Iterable<string>): boolean {
+  const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  return Array.from(folders).some((folder) => {
+    const normalizedFolder = folder.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    return Boolean(normalizedFolder) && (normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`));
+  });
 }
 
 function normalizeReferenceTarget(rawTarget: string): string | null {
@@ -64,7 +90,11 @@ export function extractVaultReferenceTargets(content: string, extension = "md"):
     add((match[1] ?? "").split("|", 1)[0] ?? "");
   }
   for (const match of content.matchAll(/!?\[[^\]]*\]\((<[^>]+>|[^)]+)\)/g)) add(match[1] ?? "");
-  for (const match of content.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) add(match[1] ?? "");
+  for (const match of content.matchAll(/(?:src|href|poster)\s*=\s*["']([^"']+)["']/gi)) add(match[1] ?? "");
+  for (const match of content.matchAll(/srcset\s*=\s*["']([^"']+)["']/gi)) {
+    for (const candidate of (match[1] ?? "").split(",")) add(candidate.trim().split(/\s+/, 1)[0] ?? "");
+  }
+  for (const match of content.matchAll(/^\s*\[[^\]]+\]:\s*(<[^>]+>|\S+)/gm)) add(match[1] ?? "");
   return Array.from(targets);
 }
 

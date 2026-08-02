@@ -23,6 +23,7 @@ import {
 } from "./runtime-core";
 import type { RuntimeInstallProgress } from "./runtime-manager";
 import { currentKnowGroveLocale, localizeKnowGroveElement } from "./i18n";
+import { normalizeAttachmentExtensions } from "./attachment-cleanup";
 
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
@@ -389,6 +390,36 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .addButton((button) => button
         .setButtonText("立即检查")
         .onClick(() => void this.plugin.scanUnreferencedAttachments()));
+
+    new Setting(containerEl)
+      .setName("附件检测排除目录")
+      .setDesc("通常无需修改。每行填写一个 Vault 相对路径；属性管理中的排除目录也会继续生效。")
+      .addTextArea((text) => {
+        text.inputEl.rows = 3;
+        text
+          .setPlaceholder("例如：Archive/长期保留")
+          .setValue(this.plugin.settings.attachmentCleanupExcludedFolders.join("\n"))
+          .onChange(async (value) => {
+            this.plugin.settings.attachmentCleanupExcludedFolders = Array.from(new Set(value
+              .split(/\r?\n/)
+              .map((folder) => normalizePath(folder.trim()).replace(/^\/+|\/+$/g, ""))
+              .filter(Boolean)));
+            await this.plugin.savePluginData();
+            this.plugin.refreshAttachmentCleanupConfiguration();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("额外附件格式")
+      .setDesc("通常无需修改。仅添加默认未覆盖的附件扩展名；Markdown、Canvas 和 Base 不会被当作附件。")
+      .addText((text) => text
+        .setPlaceholder("例如：zip, psd")
+        .setValue(this.plugin.settings.attachmentCleanupExtraExtensions.join(", "))
+        .onChange(async (value) => {
+          this.plugin.settings.attachmentCleanupExtraExtensions = normalizeAttachmentExtensions([value]);
+          await this.plugin.savePluginData();
+          this.plugin.refreshAttachmentCleanupConfiguration();
+        }));
 
     new Setting(containerEl)
       .setName("最近文件依据")

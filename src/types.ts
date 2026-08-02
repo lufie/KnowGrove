@@ -170,6 +170,8 @@ export interface KnowGroveSettings {
   enableWordLikeEditing: boolean;
   cleanupBlankLinesWithPropertyCheck: boolean;
   enableAttachmentCleanup: boolean;
+  attachmentCleanupExcludedFolders: string[];
+  attachmentCleanupExtraExtensions: string[];
   enableTopicIndex: boolean;
   lastAttachmentCleanupScanAt: number;
   recentFileMode: RecentFileMode;
@@ -414,6 +416,8 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   enableWordLikeEditing: true,
   cleanupBlankLinesWithPropertyCheck: false,
   enableAttachmentCleanup: true,
+  attachmentCleanupExcludedFolders: [],
+  attachmentCleanupExtraExtensions: [],
   enableTopicIndex: true,
   lastAttachmentCleanupScanAt: 0,
   recentFileMode: "opened",
