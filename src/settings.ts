@@ -22,6 +22,7 @@ import {
   type KnowGroveRuntimeAudit,
 } from "./runtime-core";
 import type { RuntimeInstallProgress } from "./runtime-manager";
+import { currentKnowGroveLocale, localizeKnowGroveElement } from "./i18n";
 
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
@@ -49,7 +50,7 @@ class VaultFolderPickerModal extends FuzzySuggestModal<TFolder> {
   getItems(): TFolder[] {
     return this.app.vault.getAllLoadedFiles()
       .filter((item): item is TFolder => item instanceof TFolder && Boolean(item.path))
-      .sort((left, right) => left.path.localeCompare(right.path, "zh-CN"));
+      .sort((left, right) => left.path.localeCompare(right.path, currentKnowGroveLocale()));
   }
 
   getItemText(folder: TFolder): string {
@@ -128,6 +129,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       "配置可选的笔记整理与效率增强能力。",
     );
     this.renderEnhancementSettings(enhancementModule);
+    localizeKnowGroveElement(containerEl);
   }
 
   private renderSettingsModule(
@@ -269,30 +271,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
 
-    new Setting(content)
-      .setName("启用收藏")
-      .setDesc("默认开启，并使用原生 Checkbox 属性“收藏”。")
-      .addToggle((toggle) => toggle
-        .setValue(settings.focusPropertyEnabled)
-        .onChange(async (value) => {
-          settings.focusPropertyEnabled = value;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
-
-    if (settings.focusPropertyEnabled) {
-      new Setting(content)
-        .setName("收藏属性名")
-        .addText((text) => text
-          .setValue(settings.focusPropertyName)
-          .onChange(async (value) => {
-            if (!value.trim()) return;
-            settings.focusPropertyName = value.trim();
-            await this.plugin.savePluginData();
-            this.plugin.refreshReadingViews();
-          }));
-    }
-
   }
 
   private renderReadingStatusSettings(containerEl: HTMLElement): void {
@@ -391,6 +369,55 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   private renderEnhancementSettings(containerEl: HTMLElement): void {
     new Setting(containerEl)
+      .setName("主题列表")
+      .setDesc("默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.enableTopicIndex)
+        .onChange(async (value) => {
+          await this.plugin.setTopicIndexEnabled(value);
+        }));
+
+    new Setting(containerEl)
+      .setName("附件冗余检测")
+      .setDesc("只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.enableAttachmentCleanup)
+        .onChange(async (value) => {
+          this.plugin.settings.enableAttachmentCleanup = value;
+          await this.plugin.savePluginData();
+        }))
+      .addButton((button) => button
+        .setButtonText("立即检查")
+        .onClick(() => void this.plugin.scanUnreferencedAttachments()));
+
+    new Setting(containerEl)
+      .setName("最近文件依据")
+      .setDesc("控制文件列表顶部“最近”展示哪些文档。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("opened", "最近操作")
+        .addOption("modified", "最近编辑")
+        .addOption("created", "最近新建")
+        .setValue(this.plugin.settings.recentFileMode)
+        .onChange(async (value) => {
+          this.plugin.settings.recentFileMode = value as "opened" | "modified" | "created";
+          await this.plugin.savePluginData();
+          this.plugin.refreshRecentFiles();
+        }));
+
+    new Setting(containerEl)
+      .setName("最近文件数量")
+      .setDesc("默认显示 8 篇，可设置为 3–20 篇。")
+      .addSlider((slider) => slider
+        .setLimits(3, 20, 1)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.recentFileLimit)
+        .onChange(async (value) => {
+          this.plugin.settings.recentFileLimit = value;
+          await this.plugin.savePluginData();
+          this.plugin.refreshRecentFiles();
+        }));
+
+    new Setting(containerEl)
       .setName("删除多余空行")
       .setDesc("段落间保留一个空行，删除多余空行。")
       .addToggle((toggle) => toggle
@@ -412,6 +439,17 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName("类 Word 实时编辑")
+      .setDesc("默认开启。实时预览中保持排版；支持列表层级编辑，以及从块外一次删除完整图片或代码块。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.enableWordLikeEditing)
+        .onChange(async (value) => {
+          this.plugin.settings.enableWordLikeEditing = value;
+          await this.plugin.savePluginData();
+          this.app.workspace.updateOptions();
+        }));
+
+    new Setting(containerEl)
       .setName("启用评论")
       .setDesc("评论后，评论内容将在目标文档末尾以“评论”为标题，在该章节进行记录。")
       .addToggle((toggle) => toggle
@@ -421,40 +459,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
           this.plugin.refreshCommentFeatureUi();
         }));
-  }
-
-  private renderBookmarkSettings(containerEl: HTMLElement): void {
-    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
-    details.createEl("summary", { text: "收藏功能配置" });
-    const content = details.createDiv("knowgrove-settings-details-content");
-
-    new Setting(content)
-      .setName("启用收藏")
-      .setDesc("为外部资料写入原生 Checkbox 属性。阅读列表中的星标可直接收藏或取消收藏，已收藏内容优先显示。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.focusPropertyEnabled)
-        .onChange(async (value) => {
-          this.plugin.settings.focusPropertyEnabled = value;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-          this.display();
-        }));
-
-    if (this.plugin.settings.focusPropertyEnabled) {
-      new Setting(content)
-        .setName("收藏属性名")
-        .setDesc("默认“收藏”。首次点亮星标时写入 true，Obsidian 会将它识别为可直接点选的 Checkbox。")
-        .addText((text) => text
-          .setPlaceholder("收藏")
-          .setValue(this.plugin.settings.focusPropertyName)
-          .onChange(async (value) => {
-            const next = value.trim();
-            if (!next) return;
-            this.plugin.settings.focusPropertyName = next;
-            await this.plugin.savePluginData();
-            this.plugin.refreshReadingViews();
-          }));
-    }
   }
 
   private renderRuntimeEnvironment(containerEl: HTMLElement): void {

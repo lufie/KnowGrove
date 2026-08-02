@@ -4,6 +4,7 @@ import type { ReadingFilter } from "./types";
 import {
   KNOWGROVE_READING_VIEW_TYPE,
 } from "./brand-migration";
+import { READING_AI_PARSE_MENU_ITEM } from "./reading-menu";
 
 export const READING_VIEW_TYPE = KNOWGROVE_READING_VIEW_TYPE;
 
@@ -173,21 +174,6 @@ export class ReadingListView extends ItemView {
     body.createDiv({ cls: "knowgrove-note-meta", text: relativePath });
 
     const actions = card.createDiv("knowgrove-note-actions");
-    if (this.plugin.settings.focusPropertyEnabled) {
-      const focused = this.plugin.isFocusFile(file);
-      const focusButton = actions.createEl("button", {
-        cls: `clickable-icon knowgrove-focus-action${focused ? " is-focused" : ""}`,
-        attr: {
-          "aria-label": focused ? `取消收藏：${file.basename}` : `收藏：${file.basename}`,
-          "aria-pressed": String(focused),
-        },
-      });
-      setIcon(focusButton, "star");
-      focusButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void this.plugin.toggleFocus(file);
-      });
-    }
     const statusButton = actions.createEl("button", {
       cls: `clickable-icon knowgrove-status-action is-${classification}`,
       attr: {
@@ -229,6 +215,11 @@ export class ReadingListView extends ItemView {
 
   private showFileMenu(event: MouseEvent, file: TFile): void {
     const menu = new Menu();
+    menu.addItem((item) => item
+      .setTitle(READING_AI_PARSE_MENU_ITEM.label)
+      .setIcon(READING_AI_PARSE_MENU_ITEM.icon)
+      .onClick(() => void this.plugin.parseLinkNoteManually(file)));
+    menu.addSeparator();
     menu.addItem((item) => item.setTitle("定位到原始目录").setIcon("folder-open").onClick(() => {
       this.revealInFileSystem(file);
     }));

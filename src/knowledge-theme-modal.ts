@@ -305,18 +305,21 @@ export class KnowledgeThemeManagerModal extends Modal {
   private readonly aiSuggestedPaths = new Set<string>();
   private query = "";
   private domains: string;
+  private parentName: string;
   private questions: string;
 
   constructor(
     private readonly plugin: KnowGrovePlugin,
     private readonly theme: KnowledgeThemeSummary,
+    private readonly availableThemes: KnowledgeThemeSummary[],
     private readonly candidates: KnowledgeThemeDocument[],
     private readonly onPlan: (questions: string[]) => Promise<ThemePlanningProposal>,
-    private readonly onSave: (domains: string[], questions: string[], paths: string[]) => Promise<void>,
+    private readonly onSave: (domains: string[], parentName: string, questions: string[], paths: string[]) => Promise<void>,
   ) {
     super(plugin.app);
     this.selectedPaths = new Set(theme.documents.map((document) => document.path));
     this.domains = theme.domains.join(", ");
+    this.parentName = theme.parentName ?? "";
     this.questions = theme.researchQuestions.join("\n");
   }
 
@@ -332,6 +335,18 @@ export class KnowledgeThemeManagerModal extends Modal {
       .setValue(this.domains)
       .setPlaceholder("例如：投资, 宏观经济")
       .onChange((value) => { this.domains = value; }));
+
+    new Setting(this.contentEl)
+      .setName("上级主题")
+      .setDesc("可选。只有明确设置上级主题时，主题列表才会缩进展示；选择“无”可恢复到顶层。")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", "无（顶层主题）");
+        for (const candidate of this.availableThemes) {
+          if (knowledgeNamesMatch(candidate.name, this.theme.name)) continue;
+          dropdown.addOption(candidate.name, candidate.name);
+        }
+        dropdown.setValue(this.parentName).onChange((value) => { this.parentName = value; });
+      });
 
     this.contentEl.createEl("label", { cls: "knowgrove-field-label", text: "研究课题" });
     const questions = new TextAreaComponent(this.contentEl)
@@ -427,6 +442,7 @@ export class KnowledgeThemeManagerModal extends Modal {
       }
       await this.onSave(
         domains,
+        this.parentName,
         this.questions.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         [...this.selectedPaths],
       );

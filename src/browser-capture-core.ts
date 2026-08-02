@@ -12,6 +12,8 @@ export function selectedCaptureProvider(
 export interface LinkNoteCandidate {
   url: string;
   title: string;
+  pageType?: BrowserCapturePageType;
+  mediaPath?: string;
 }
 
 export interface InterruptedCaptureCandidate extends LinkNoteCandidate {
@@ -40,6 +42,14 @@ export interface ExtractedArticle {
   author: string;
   publishedAt: string;
   source: string;
+}
+
+export interface BrowserCaptureResourceHints {
+  finalUrl?: string;
+  contentType?: string;
+  contentDisposition?: string;
+  html?: string;
+  pageTypeHint?: string;
 }
 
 export type WhisperImplementation = "openai-whisper" | "whisper-cpp";
@@ -117,6 +127,59 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
       : "article";
   } catch {
     return "article";
+  }
+}
+
+export function classifyBrowserCaptureResource(
+  url: string,
+  hints: BrowserCaptureResourceHints = {},
+): BrowserCapturePageType {
+  const explicitHint = String(hints.pageTypeHint ?? "").toLowerCase();
+  if (explicitHint === "audio" || explicitHint === "video") return explicitHint;
+  const contentType = String(hints.contentType ?? "").split(";")[0]!.trim().toLowerCase();
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType.startsWith("video/")) return "video";
+  const disposition = String(hints.contentDisposition ?? "");
+  if (AUDIO_EXTENSIONS.test(disposition)) return "audio";
+  if (VIDEO_EXTENSIONS.test(disposition)) return "video";
+  const resolvedType = classifyBrowserCaptureUrl(hints.finalUrl || url);
+  if (resolvedType !== "article") return resolvedType;
+  const originalType = classifyBrowserCaptureUrl(url);
+  if (originalType !== "article") return originalType;
+  const html = String(hints.html ?? "");
+  const metaSignals = Array.from(html.matchAll(/<meta\b[^>]*>/gi)).map((match) => {
+    const tag = match[0];
+    const name = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? "";
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? "";
+    return { name, content };
+  });
+  if (
+    metaSignals.some(({ name, content }) =>
+      ((name === "og:type" || name === "twitter:card") && /video|player/.test(content))
+      || /^(?:og:video|twitter:player)(?::|$)/.test(name),
+    )
+    || /<(?:video|source)\b[^>]*(?:type=["']video\/|src=["'][^"']+\.(?:mp4|mov|mkv|m4v))/i.test(html)
+  ) return "video";
+  if (
+    metaSignals.some(({ name, content }) =>
+      (name === "og:type" && /audio|music/.test(content))
+      || /^og:audio(?::|$)/.test(name),
+    )
+    || /<(?:audio|source)\b[^>]*(?:type=["']audio\/|src=["'][^"']+\.(?:mp3|m4a|wav|aac|flac|ogg|opus))/i.test(html)
+  ) return "audio";
+  return "article";
+}
+
+export function sameCaptureResourceUrl(left: string, right: string): boolean {
+  try {
+    const normalize = (value: string): string => {
+      const parsed = new URL(value);
+      parsed.hash = "";
+      return parsed.toString().replace(/\/$/, "");
+    };
+    return normalize(left) === normalize(right);
+  } catch {
+    return false;
   }
 }
 
@@ -236,13 +299,16 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   const urls = Array.from(body.matchAll(/https?:\/\/[^\s<>()\]]+/gi))
     .map((match) => match[0]!.replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
   const uniqueUrls = Array.from(new Set(urls));
+  if (uniqueUrls.length === 0) {
+    return detectLocalAudioNoteCandidate(markdown, body, fallbackTitle);
+  }
   if (uniqueUrls.length !== 1) return null;
   const url = uniqueUrls[0]!;
   const withoutLinks = body
     .replace(/!?\[[^\]]*]\(https?:\/\/[^)]+\)/gi, " ")
     .replace(/https?:\/\/[^\s<>()\]]+/gi, " ")
     .replace(/^#{1,6}\s+.*$/gm, " ")
-    .replace(/^>\s*(?:来源|链接|收藏|待处理|稍后阅读|KnowGrove).*$|^\s*[-*]\s*(?:来源|链接)\s*[:：].*$/gim, " ")
+    .replace(/^>\s*(?:来源|链接|待处理|稍后阅读|KnowGrove).*$|^\s*[-*]\s*(?:来源|链接)\s*[:：].*$/gim, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/\s+/g, "");
   if (withoutLinks.length > 120 || body.length > 1_500) return null;
@@ -250,6 +316,42 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   return {
     url,
     title: normalizedLinkNoteTitle(heading || fallbackTitle, url),
+  };
+}
+
+function detectLocalAudioNoteCandidate(
+  markdown: string,
+  body: string,
+  fallbackTitle: string,
+): LinkNoteCandidate | null {
+  const embeddedMedia = Array.from(body.matchAll(/!\[\[([^\]]+)]]/g))
+    .map((match) => match[1]!.split("|")[0]!.trim())
+    .filter((path) => /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(path));
+  const frontmatterMedia = frontmatterScalar(markdown, ["audio", "音频", "语音文件"])
+    .replace(/^!?\[\[|\]\]$/g, "")
+    .split("|")[0]!
+    .trim();
+  if (frontmatterMedia && /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(frontmatterMedia)) {
+    embeddedMedia.push(frontmatterMedia);
+  }
+  const mediaPaths = Array.from(new Set(embeddedMedia));
+  if (mediaPaths.length !== 1) return null;
+
+  const withoutTemplate = body
+    .replace(/!\[\[[^\]]+]]/g, " ")
+    .replace(/^#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*[-*]\s+(?:无|没有|暂无)\s*$/gim, " ")
+    .replace(/^(?:中断记录|整理记录|语音记录)\s*$/gim, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/\s+/g, "");
+  if (withoutTemplate.length > 120 || body.length > 1_500) return null;
+
+  const heading = body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim() ?? "";
+  return {
+    url: "",
+    title: normalizedLinkNoteTitle(heading || fallbackTitle, ""),
+    pageType: "audio",
+    mediaPath: mediaPaths[0]!,
   };
 }
 
@@ -324,6 +426,14 @@ export function detectWhisperImplementation(executable: string): WhisperImplemen
   return name.includes("whisper-cli") || name.includes("whisper-cpp")
     ? "whisper-cpp"
     : "openai-whisper";
+}
+
+export function whisperNeedsPcmConversion(
+  implementation: WhisperImplementation,
+  audioPath: string,
+): boolean {
+  return implementation === "whisper-cpp"
+    && !/\.(?:flac|mp3|ogg|wav)$/i.test(audioPath);
 }
 
 export function buildWhisperInvocation(input: {
@@ -600,11 +710,72 @@ function elementMarkdown(element: Element, baseUrl = ""): string {
     || `${cleanText(inlineMarkdown(element, baseUrl))}\n\n`;
 }
 
+function collectStructuredPageText(value: unknown, output: string[], key = "", depth = 0): void {
+  if (depth > 18 || output.length >= 600) return;
+  if (typeof value === "string") {
+    if (!/^(?:title|content|text|message|answer|question|prompt|markdown|body|description|summary)$/i.test(key)) return;
+    const normalized = cleanText(value);
+    if (
+      normalized.length >= 2
+      && normalized.length <= 120_000
+      && !/^https?:\/\//i.test(normalized)
+      && !/^[A-Za-z0-9+/=]{200,}$/.test(normalized)
+    ) output.push(normalized);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStructuredPageText(item, output, key, depth + 1));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    collectStructuredPageText(childValue, output, childKey, depth + 1);
+  }
+}
+
+export function extractStructuredCaptureTextFromScripts(scripts: string[]): string {
+  const fragments: string[] = [];
+  for (const source of scripts) {
+    const raw = source.trim();
+    if (!raw) continue;
+    try {
+      collectStructuredPageText(JSON.parse(raw), fragments);
+    } catch {
+      try {
+        collectStructuredPageText(extractJsonObject(raw), fragments);
+      } catch {
+        // Ignore analytics and executable scripts that do not contain JSON.
+      }
+    }
+  }
+  const unique = fragments.filter((fragment, index) =>
+    fragments.findIndex((candidate) => candidate === fragment) === index,
+  );
+  return cleanText(unique.join("\n\n"));
+}
+
+function extractStructuredPageText(document: Document): string {
+  const scripts = Array.from(document.querySelectorAll("script"))
+    .filter((script) => {
+      const type = script.getAttribute("type")?.toLowerCase() ?? "";
+      const id = script.id.toLowerCase();
+      const source = script.textContent ?? "";
+      return type === "application/ld+json"
+        || type === "application/json"
+        || id === "__next_data__"
+        || id === "__nuxt_data__"
+        || /(?:_ROUTER_DATA|_SSR_DATA|__NEXT_DATA__|__NUXT__)\s*=/.test(source);
+    })
+    .map((script) => script.textContent ?? "");
+  return extractStructuredCaptureTextFromScripts(scripts);
+}
+
 export function extractArticleFromHtml(html: string, fallbackTitle = "", baseUrl = ""): ExtractedArticle {
   if (typeof DOMParser === "undefined") {
     throw new Error("当前环境不支持网页正文解析");
   }
   const document = new DOMParser().parseFromString(html, "text/html");
+  const structuredSource = extractStructuredPageText(document);
   for (const selector of [
     "script", "style", "noscript", "svg", "nav", "footer", "form", "button",
     "[aria-hidden='true']", ".advertisement", ".ads", ".sidebar", ".comments",
@@ -626,7 +797,8 @@ export function extractArticleFromHtml(html: string, fallbackTitle = "", baseUrl
     || document.querySelector("main")
     || document.querySelector("[role='main']")
     || document.body;
-  const source = cleanText(Array.from(root.children).map((child) => elementMarkdown(child, baseUrl)).join(""));
+  let source = cleanText(Array.from(root.children).map((child) => elementMarkdown(child, baseUrl)).join(""));
+  if (source.length < 80 && structuredSource.length >= 80) source = structuredSource;
   if (source.length < 80) throw new Error("没有提取到足够的网页正文，页面可能需要登录或使用动态加载");
   return { title, author, publishedAt, source };
 }
@@ -900,7 +1072,7 @@ export function buildRawCaptureNote(input: {
   pageType: BrowserCapturePageType;
   title: string;
   fileName?: string;
-  url: string;
+  url?: string;
   source: string;
   author?: string;
   publishedAt?: string;
@@ -919,7 +1091,7 @@ export function buildRawCaptureNote(input: {
     "---",
     ...(input.fileName ? [`文件名: ${yamlString(input.fileName)}`] : []),
     `标题: ${yamlString(input.title)}`,
-    `来源: ${yamlString(input.url)}`,
+    ...(input.url ? [`来源: ${yamlString(input.url)}`] : []),
     `内容类型: ${yamlString(contentType)}`,
     `采集时间: ${yamlString(input.capturedAt)}`,
     ...(input.author ? [`作者: ${yamlString(input.author)}`] : []),
@@ -994,7 +1166,16 @@ export function buildEnhancedCaptureNote(
       ? "对话记录"
       : pageType === "audio" ? "音频正文" : "视频正文"
     : "整理正文";
-  const mediaSection = rawNote.match(/^##\s+原始音频\s*$[\s\S]*?(?=^##\s+|\s*$)/m)?.[0]?.trim() ?? "";
+  const mediaHeading = rawNote.match(/^##\s+原始音频\s*$/m);
+  let mediaSection = "";
+  if (mediaHeading?.index !== undefined) {
+    const fromHeading = rawNote.slice(mediaHeading.index);
+    const afterHeading = fromHeading.slice(mediaHeading[0].length);
+    const nextHeadingOffset = afterHeading.search(/^##\s+/m);
+    mediaSection = fromHeading
+      .slice(0, nextHeadingOffset >= 0 ? mediaHeading[0].length + nextHeadingOffset : undefined)
+      .trim();
+  }
   return [
     completedFrontmatter,
     "",

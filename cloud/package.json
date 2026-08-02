@@ -1,0 +1,22 @@
+{
+  "name": "@knowgrove/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KnowGrove account, Credit ledger and simulated billing service for EdgeOne Makers.",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "check": "node --check lib/*.js cloud-functions/api/*.js cloud-functions/api/**/*.js",
+    "migrate": "node scripts/migrate.js",
+    "smoke:live": "node scripts/smoke-live.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "jose": "^6.1.0",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.5"
+  }
+}

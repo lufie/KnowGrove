@@ -1,6 +1,7 @@
 import type { KnowGroveRuntimeSettings } from "./runtime-core";
 
 export type ReadingFilter = "unread" | "finished";
+export type RecentFileMode = "opened" | "modified" | "created";
 export type PropertyValueType = "text" | "single" | "multi" | "date" | "checkbox";
 export type PropertyFillStrategy = "none" | "file-name" | "empty-list" | "fixed";
 export type PropertyRuleOrigin = "system" | "user" | "inferred";
@@ -164,11 +165,15 @@ export interface KnowGroveSettings {
   finishDwellSeconds: number;
   defaultTargetFolder: string;
   defaultTargetHeading: string;
-  focusPropertyEnabled: boolean;
-  focusPropertyName: string;
   enableBlockDragReferences: boolean;
   enableComments: boolean;
+  enableWordLikeEditing: boolean;
   cleanupBlankLinesWithPropertyCheck: boolean;
+  enableAttachmentCleanup: boolean;
+  enableTopicIndex: boolean;
+  lastAttachmentCleanupScanAt: number;
+  recentFileMode: RecentFileMode;
+  recentFileLimit: number;
   runtime: KnowGroveRuntimeSettings;
   browserCapture: BrowserCaptureSettings;
   aiProperties: AIPropertySettings;
@@ -202,6 +207,14 @@ export interface KnowGroveData {
   uiMigrationVersion: number;
   settings: KnowGroveSettings;
   references: Record<string, ReferenceRecord>;
+  attachmentUsage: Record<string, AttachmentUsageRecord>;
+}
+
+export interface AttachmentUsageRecord {
+  firstReferencedAt: number;
+  lastReferencedAt: number;
+  lastSourcePaths: string[];
+  lastContentSourcePaths: string[];
 }
 
 export interface PropertyNoteSnapshot {
@@ -267,6 +280,7 @@ export interface KnowledgeDomainSummary {
 
 export interface KnowledgeThemeSummary {
   name: string;
+  parentName?: string;
   domains: string[];
   total: number;
   stageCounts: Record<PDSAStage, number>;
@@ -395,11 +409,15 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   finishDwellSeconds: 3,
   defaultTargetFolder: "",
   defaultTargetHeading: "评论",
-  focusPropertyEnabled: true,
-  focusPropertyName: "收藏",
   enableBlockDragReferences: true,
   enableComments: true,
+  enableWordLikeEditing: true,
   cleanupBlankLinesWithPropertyCheck: false,
+  enableAttachmentCleanup: true,
+  enableTopicIndex: true,
+  lastAttachmentCleanupScanAt: 0,
+  recentFileMode: "opened",
+  recentFileLimit: 8,
   runtime: {
     mode: "auto",
     manifestUrl: "",

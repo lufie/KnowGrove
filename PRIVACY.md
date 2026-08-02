@@ -1,0 +1,24 @@
+# KnowGrove privacy and data use
+
+KnowGrove is local-first. Notes, properties, comments, references, generated drafts, and attachment history remain in the user's Obsidian vault unless the user explicitly runs an external AI provider or downloads a public runtime component.
+
+## Network use
+
+KnowGrove may access the network when the user enables or invokes these features:
+
+- downloading signed runtime components from the documented CNB or GitHub release sources;
+- extracting public web pages, subtitles, video, or audio selected by the user;
+- sending selected note content to a user-configured CLI or API for AI processing;
+- receiving a capture from the paired KnowGrove browser extension over `127.0.0.1`.
+
+The plugin does not include client-side analytics or telemetry. It does not upload browser cookies, Obsidian secrets, payment information, or unrelated vault content. API keys are stored with Obsidian SecretStorage when supported and are not written to `data.json`.
+
+Some local CLIs and external APIs have their own privacy terms. Users should review the provider they choose before sending sensitive notes.
+
+## Local files
+
+Runtime components are stored in the operating system's application data directory rather than in the vault. Browser capture job state is stored inside the plugin's configuration directory. Uninstalling the plugin does not delete user notes or generated Markdown.
+
+## Contact
+
+Open a privacy or security issue in the KnowGrove GitHub repository. Do not include API keys, private notes, access tokens, or personal recordings in a public issue.

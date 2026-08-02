@@ -19,10 +19,12 @@ import {
   buildRawCaptureNote,
   articleCaptureTitle,
   captureDatePrefix,
+  classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
+  whisperNeedsPcmConversion,
   cleanArticleMarkdown,
   extractArticleFromHtml,
   extractJsonObject,
@@ -33,6 +35,7 @@ import {
   protectArticleImages,
   restoreArticleImages,
   safeCaptureFileName,
+  sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
   splitBrowserCaptureText,
@@ -48,12 +51,14 @@ export type BrowserCaptureJobStatus = "queued" | "running" | "completed" | "part
 export interface BrowserCaptureJob {
   id: string;
   url: string;
+  resolvedUrl?: string;
   title: string;
   pageType: BrowserCapturePageType;
   skillId: string;
   providerId: AIProviderId;
   source: string;
   targetPath?: string;
+  mediaPath?: string;
   status: BrowserCaptureJobStatus;
   phase: string;
   phaseLabel: string;
@@ -96,6 +101,7 @@ interface BrowserCaptureHost {
   runProvider(provider: AIProviderId, prompt: string): Promise<string>;
   getSkillInstruction(pageType: BrowserCapturePageType): Promise<string>;
   suppressNewNoteInitialization(path: string): void;
+  enrichCapturedFile(file: TFile): Promise<void>;
 }
 
 interface ExtractedSource {
@@ -107,7 +113,6 @@ interface ExtractedSource {
 }
 
 const HOST = "127.0.0.1";
-const JOBS_PATH = ".obsidian/plugins/knowgrove/browser-capture-jobs.json";
 const MAX_REQUEST_BYTES = 512_000;
 const MAX_SOURCE_CHARACTERS = 240_000;
 const PAIRING_LIFETIME_MS = 2 * 60 * 1_000;
@@ -204,6 +209,71 @@ async function downloadCaptureImage(url: string, referer: string, redirects = 0)
       response.on("error", reject);
     });
     request.setTimeout(30_000, () => request.destroy(new Error("图片下载超时")));
+    request.on("error", reject);
+  });
+}
+
+async function probeCaptureResource(url: string, redirects = 0): Promise<{
+  finalUrl: string;
+  contentType: string;
+  contentDisposition: string;
+  html: string;
+}> {
+  if (redirects > 8) throw new Error("链接重定向次数过多");
+  const parsed = new URL(url);
+  const client = parsed.protocol === "https:"
+    ? require("node:https") as typeof import("node:https")
+    : require("node:http") as typeof import("node:http");
+  return await new Promise((resolve, reject) => {
+    const request = client.get(parsed, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 KnowGrove/2.5",
+        Accept: "text/html,application/xhtml+xml,video/*,audio/*;q=0.9,*/*;q=0.2",
+        "Accept-Encoding": "identity",
+      },
+    }, (response) => {
+      const status = response.statusCode ?? 0;
+      const location = response.headers.location;
+      if (status >= 300 && status < 400 && location) {
+        response.resume();
+        void probeCaptureResource(new URL(location, parsed).toString(), redirects + 1)
+          .then(resolve, reject);
+        return;
+      }
+      if (status < 200 || status >= 400) {
+        response.resume();
+        reject(new Error(`链接探测失败（HTTP ${status}）`));
+        return;
+      }
+      const contentType = String(response.headers["content-type"] ?? "");
+      const contentDisposition = String(response.headers["content-disposition"] ?? "");
+      const isHtml = /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(contentType);
+      const declaredLength = Number(response.headers["content-length"] || 0);
+      if (!isHtml || declaredLength > 4_000_000) {
+        response.resume();
+        resolve({ finalUrl: parsed.toString(), contentType, contentDisposition, html: "" });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        if (size >= 4_000_000) return;
+        const remaining = 4_000_000 - size;
+        const next = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk;
+        chunks.push(next);
+        size += next.byteLength;
+      });
+      response.on("end", () => {
+        resolve({
+          finalUrl: parsed.toString(),
+          contentType,
+          contentDisposition,
+          html: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+      response.on("error", reject);
+    });
+    request.setTimeout(30_000, () => request.destroy(new Error("链接探测超时")));
     request.on("error", reject);
   });
 }
@@ -313,7 +383,12 @@ async function resolveCaptureTool(
     ];
   for (const candidate of candidates) {
     try {
-      const result = await runLocalCommand(candidate, ["--version"], "", 8);
+      const result = await runLocalCommand(
+        candidate,
+        executableName === "ffmpeg" ? ["-version"] : ["--version"],
+        "",
+        8,
+      );
       if (result.exitCode === 0) return candidate;
     } catch {
       // Try the next explicit path without invoking a shell.
@@ -494,7 +569,9 @@ export class BrowserCaptureServer {
     );
     if (existing) return existing;
     const url = candidate?.url ?? interrupted!.url;
-    const pageType = interrupted?.pageType ?? classifyBrowserCaptureUrl(url);
+    const pageType = candidate?.pageType
+      ?? interrupted?.pageType
+      ?? classifyBrowserCaptureUrl(url);
     const providerId = selectedCaptureProvider(this.host.getSettings().aiProperties.provider, pageType);
     const job = await this.createJob({
       url,
@@ -503,6 +580,7 @@ export class BrowserCaptureServer {
       providerId,
       source: `link-note-${source}${interrupted ? "-resume" : ""}`,
       targetPath: file.path,
+      mediaPath: candidate?.mediaPath,
       resumeFromRaw: Boolean(interrupted),
     });
     this.queue.push(job.id);
@@ -626,7 +704,9 @@ export class BrowserCaptureServer {
     if (request.method === "POST" && requestUrl.pathname === "/v1/capture") {
       const body = await readJsonBody(request);
       const url = isWebUrl(body.url);
-      const pageType = classifyBrowserCaptureUrl(url);
+      const pageType = classifyBrowserCaptureResource(url, {
+        pageTypeHint: String(body.pageTypeHint ?? ""),
+      });
       const providerId = selectedCaptureProvider(allSettings.aiProperties.provider, pageType);
       const providers = await this.host.getProviders();
       const provider = providers.find((item) => item.id === providerId);
@@ -636,12 +716,33 @@ export class BrowserCaptureServer {
         }, origin);
         return;
       }
+      let targetFile: TFile | undefined;
+      const requestedTargetPath = String(body.targetPath ?? "").trim();
+      if (requestedTargetPath) {
+        const targetPath = normalizePath(requestedTargetPath).replace(/^\/+/, "");
+        const candidateFile = this.host.app.vault.getAbstractFileByPath(targetPath);
+        if (!(candidateFile instanceof TFile) || candidateFile.extension !== "md") {
+          sendJson(response, 404, { error: "指定的目标 Markdown 笔记不存在" }, origin);
+          return;
+        }
+        const existingContent = await this.host.app.vault.cachedRead(candidateFile);
+        const candidate = detectLinkNoteCandidate(existingContent, candidateFile.basename);
+        const interrupted = candidate ? null : detectInterruptedCapture(existingContent);
+        const existingUrl = candidate?.url ?? interrupted?.url;
+        if (!existingUrl || !sameCaptureResourceUrl(existingUrl, url)) {
+          sendJson(response, 409, { error: "目标笔记中的来源链接与当前页面不一致，已停止覆盖" }, origin);
+          return;
+        }
+        this.host.suppressNewNoteInitialization(candidateFile.path);
+        targetFile = candidateFile;
+      }
       const job = await this.createJob({
         url,
         title: String(body.title ?? "").slice(0, 500),
         pageType,
         providerId,
         source: String(body.source ?? "extension").slice(0, 80),
+        targetPath: targetFile?.path,
       });
       const browserContent = String(body.content ?? "").trim().slice(0, MAX_SOURCE_CHARACTERS);
       const browserTranscript = String(body.transcript ?? "").trim().slice(0, MAX_SOURCE_CHARACTERS);
@@ -678,8 +779,9 @@ export class BrowserCaptureServer {
 
   private async loadJobs(): Promise<void> {
     try {
-      if (!(await this.host.app.vault.adapter.exists(JOBS_PATH))) return;
-      const parsed = JSON.parse(await this.host.app.vault.adapter.read(JOBS_PATH)) as { jobs?: BrowserCaptureJob[] };
+      const jobsPath = this.jobsPath();
+      if (!(await this.host.app.vault.adapter.exists(jobsPath))) return;
+      const parsed = JSON.parse(await this.host.app.vault.adapter.read(jobsPath)) as { jobs?: BrowserCaptureJob[] };
       for (const job of parsed.jobs ?? []) {
         if (!FINISHED_STATUSES.has(job.status)) {
           job.status = "failed";
@@ -700,12 +802,16 @@ export class BrowserCaptureServer {
     const jobs = [...this.jobs.values()]
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, 100);
-    await this.host.app.vault.adapter.write(JOBS_PATH, `${JSON.stringify({ jobs }, null, 2)}\n`);
+    await this.host.app.vault.adapter.write(this.jobsPath(), `${JSON.stringify({ jobs }, null, 2)}\n`);
+  }
+
+  private jobsPath(): string {
+    return normalizePath(`${this.host.app.vault.configDir}/plugins/knowgrove/browser-capture-jobs.json`);
   }
 
   private async createJob(payload: Pick<
     BrowserCaptureJob,
-    "url" | "title" | "pageType" | "providerId" | "source" | "targetPath" | "resumeFromRaw"
+    "url" | "title" | "pageType" | "providerId" | "source" | "targetPath" | "mediaPath" | "resumeFromRaw"
   >): Promise<BrowserCaptureJob> {
     const skill = browserCaptureSkill(payload.pageType);
     const job: BrowserCaptureJob = {
@@ -765,6 +871,9 @@ export class BrowserCaptureServer {
         progress: 5,
         message: "正在先把链接和标题写入 Vault",
       });
+      if (!job.resumeFromRaw && !job.mediaPath && !this.capturedSources.has(id)) {
+        await this.probeCaptureTarget(job);
+      }
       noteFile = job.targetPath
         ? this.host.app.vault.getAbstractFileByPath(job.targetPath) instanceof TFile
           ? this.host.app.vault.getAbstractFileByPath(job.targetPath) as TFile
@@ -781,7 +890,11 @@ export class BrowserCaptureServer {
           }
         } else {
           const candidate = detectLinkNoteCandidate(current, noteFile.basename);
-          if (!candidate || candidate.url !== job.url) {
+          if (
+            !candidate
+            || candidate.url !== job.url
+            || (job.mediaPath && candidate.mediaPath !== job.mediaPath)
+          ) {
             throw new Error("笔记在排队期间已经补写正文或更换链接，已停止自动覆盖");
           }
         }
@@ -817,7 +930,9 @@ export class BrowserCaptureServer {
         extracted = job.pageType === "video"
           ? this.capturedSources.get(id) ?? await this.extractVideo(job)
           : job.pageType === "audio"
-            ? await this.extractAudio(job, noteFile.path)
+            ? job.mediaPath
+              ? await this.extractLocalAudio(job, noteFile.path)
+              : await this.extractAudio(job, noteFile.path)
             : this.capturedSources.get(id) ?? await this.extractArticle(job);
         this.capturedSources.delete(id);
         if (job.pageType === "article") {
@@ -832,7 +947,7 @@ export class BrowserCaptureServer {
           extracted.source = await this.localizeArticleImages(
             extracted.source,
             extracted.title,
-            job.url,
+            job.resolvedUrl || job.url,
             noteFile.path,
           );
         }
@@ -853,7 +968,12 @@ export class BrowserCaptureServer {
           await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter) => {
             frontmatter["文件名"] = noteFile!.basename;
             frontmatter["标题"] = extracted!.title;
-            if (!Object.prototype.hasOwnProperty.call(frontmatter, "来源")) frontmatter["来源"] = job.url;
+            if (
+              job.url
+              && !Object.prototype.hasOwnProperty.call(frontmatter, "来源")
+            ) {
+              frontmatter["来源"] = job.url;
+            }
             if (!Object.prototype.hasOwnProperty.call(frontmatter, "内容类型")) frontmatter["内容类型"] = captureContentType(job.pageType);
             if (!Object.prototype.hasOwnProperty.call(frontmatter, "采集时间")) frontmatter["采集时间"] = new Date().toISOString();
             const statusProperty = this.host.getSettings().statusProperty;
@@ -910,6 +1030,11 @@ export class BrowserCaptureServer {
           frontmatter["KnowGrove采集状态"] = "已完成";
         });
       }
+      await this.updateJob(id, {
+        progress: 97,
+        message: "正在识别内容所属的领域与主题",
+      });
+      await this.host.enrichCapturedFile(noteFile);
       noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType);
       await this.updateJob(id, {
         status: "completed",
@@ -1041,6 +1166,43 @@ export class BrowserCaptureServer {
     return renamed instanceof TFile ? renamed : file;
   }
 
+  private async probeCaptureTarget(job: BrowserCaptureJob): Promise<void> {
+    try {
+      const {
+        finalUrl,
+        contentType,
+        contentDisposition,
+        html,
+      } = await probeCaptureResource(job.url);
+      const pageType = classifyBrowserCaptureResource(job.url, {
+        finalUrl,
+        contentType,
+        contentDisposition,
+        html,
+      });
+      job.resolvedUrl = finalUrl;
+      if (pageType !== job.pageType) {
+        job.pageType = pageType;
+        job.skillId = browserCaptureSkill(pageType).id;
+      }
+      if (pageType === "article" && html.length >= 80) {
+        try {
+          const extracted = extractArticleFromHtml(html, job.title, finalUrl);
+          this.capturedSources.set(job.id, extracted);
+        } catch {
+          // Dynamic and protected pages continue through Defuddle and browser-visible fallbacks.
+        }
+      }
+      await this.updateJob(job.id, {
+        resolvedUrl: job.resolvedUrl,
+        pageType: job.pageType,
+        skillId: job.skillId,
+      });
+    } catch {
+      // Redirect and metadata probing is best-effort; established extractors remain available.
+    }
+  }
+
   private articleDatePrefix(file: TFile, publishedAt?: string): string {
     const frontmatter = this.host.app.metadataCache.getFileCache(file)?.frontmatter;
     const candidates = [
@@ -1167,11 +1329,12 @@ export class BrowserCaptureServer {
   }
 
   private async extractArticle(job: BrowserCaptureJob): Promise<ExtractedSource> {
+    const captureUrl = job.resolvedUrl || job.url;
     let fetched: ExtractedSource | undefined;
     let primaryError: unknown;
     try {
       const response = await requestUrl({
-        url: job.url,
+        url: captureUrl,
         method: "GET",
         headers: {
           "User-Agent": "Mozilla/5.0 KnowGrove/2.3",
@@ -1182,7 +1345,7 @@ export class BrowserCaptureServer {
       if (response.status < 200 || response.status >= 400) {
         throw new Error(`网页读取失败（HTTP ${response.status}）`);
       }
-      fetched = extractArticleFromHtml(response.text, job.title, job.url);
+      fetched = extractArticleFromHtml(response.text, job.title, captureUrl);
     } catch (error) {
       primaryError = error;
     }
@@ -1192,7 +1355,7 @@ export class BrowserCaptureServer {
         "defuddle",
         "Defuddle",
       );
-      const result = await runLocalCommand(executable, ["parse", job.url, "--md"], "", 5 * 60);
+      const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60);
       if (result.exitCode !== 0 || result.stdout.trim().length < 80) {
         if (fetched) return fetched;
         const browserCopy = this.capturedSources.get(job.id);
@@ -1201,12 +1364,12 @@ export class BrowserCaptureServer {
       }
       let title = fetched?.title || "";
       if (!title || title === job.title) {
-        const titleResult = await runLocalCommand(executable, ["parse", job.url, "-p", "title"], "", 90);
+        const titleResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "title"], "", 90);
         if (titleResult.exitCode === 0 && titleResult.stdout.trim()) title = titleResult.stdout.trim();
       }
       let author = fetched?.author;
       if (!author) {
-        const authorResult = await runLocalCommand(executable, ["parse", job.url, "-p", "author"], "", 90);
+        const authorResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "author"], "", 90);
         if (authorResult.exitCode === 0 && authorResult.stdout.trim()) author = authorResult.stdout.trim();
       }
       return {
@@ -1224,6 +1387,7 @@ export class BrowserCaptureServer {
   }
 
   private async extractVideo(job: BrowserCaptureJob): Promise<ExtractedSource> {
+    const captureUrl = job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const { mkdtemp, readdir, readFile, rm } = require("node:fs/promises") as typeof import("node:fs/promises");
@@ -1233,7 +1397,7 @@ export class BrowserCaptureServer {
     try {
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(job.url), "--skip-download", "--print", "%(title)s", job.url],
+        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
       );
@@ -1242,7 +1406,7 @@ export class BrowserCaptureServer {
         : job.title;
       await runLocalCommand(
         downloader,
-        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), job.url),
+        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
         "",
         15 * 60,
       );
@@ -1263,14 +1427,14 @@ export class BrowserCaptureServer {
       const audioResult = await runLocalCommand(
         downloader,
         [
-          ...ytDlpCaptureArgs(job.url),
+          ...ytDlpCaptureArgs(captureUrl),
           ...ffmpegLocationArgs(settings),
           "-x",
           "--audio-format",
           "mp3",
           "-o",
           join(directory, "audio.%(ext)s"),
-          job.url,
+          captureUrl,
         ],
         "",
         60 * 60,
@@ -1278,7 +1442,7 @@ export class BrowserCaptureServer {
       if (audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
           `${audioResult.stderr}\n${audioResult.stdout}`,
-          job.url,
+          captureUrl,
         ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
@@ -1329,7 +1493,112 @@ export class BrowserCaptureServer {
     }
   }
 
+  private async extractLocalAudio(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+  ): Promise<ExtractedSource> {
+    const linkPath = job.mediaPath?.trim() ?? "";
+    if (!linkPath) throw new Error("本地语音笔记没有可用的音频引用");
+    const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
+    const exact = this.host.app.vault.getAbstractFileByPath(normalizePath(linkPath));
+    const mediaFile = linked instanceof TFile
+      ? linked
+      : exact instanceof TFile
+        ? exact
+        : undefined;
+    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(mediaFile.path)) {
+      throw new Error(`找不到本地语音文件：${linkPath}`);
+    }
+
+    const settings = this.host.getSettings().browserCapture;
+    const { access, mkdtemp, readFile, readdir, rm, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const { extname, join } = require("node:path") as typeof import("node:path");
+    const directory = await mkdtemp(join(tmpdir(), "knowgrove-local-audio-"));
+    try {
+      const extension = extname(mediaFile.name) || ".m4a";
+      const audioPath = join(directory, `source${extension}`);
+      const audio = await this.host.app.vault.readBinary(mediaFile);
+      await writeFile(audioPath, Buffer.from(audio));
+      await this.updateJob(job.id, {
+        progress: 30,
+        message: "已读取本地语音，正在检测本机 Whisper",
+      });
+      const whisper = await resolveWhisperExecutable(settings.whisperPath);
+      const implementation = detectWhisperImplementation(whisper);
+      const model = settings.whisperModel.trim() || "small";
+      const cppModelPath = implementation === "whisper-cpp"
+        ? await resolveWhisperCppModel(model)
+        : undefined;
+      let whisperAudioPath = audioPath;
+      if (whisperNeedsPcmConversion(implementation, audioPath)) {
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        whisperAudioPath = join(directory, "whisper-input.wav");
+        await this.updateJob(job.id, {
+          progress: 34,
+          message: "正在把本地语音转换为 Whisper 可读取的音频",
+        });
+        const conversion = await runLocalCommand(ffmpeg, [
+          "-y",
+          "-i",
+          audioPath,
+          "-ar",
+          "16000",
+          "-ac",
+          "1",
+          "-c:a",
+          "pcm_s16le",
+          whisperAudioPath,
+        ], "", 20 * 60);
+        if (conversion.exitCode !== 0) {
+          throw new Error(conversion.stderr.trim() || "本地语音格式转换失败");
+        }
+      }
+      const invocation = buildWhisperInvocation({
+        implementation,
+        audioPath: whisperAudioPath,
+        outputDirectory: directory,
+        model,
+        cppModelPath,
+      });
+      await this.updateJob(job.id, {
+        progress: 38,
+        message: implementation === "whisper-cpp"
+          ? `正在使用 whisper.cpp ${model} 转录本地语音`
+          : `正在使用 Whisper ${model} 转录本地语音`,
+      });
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      if (whisperResult.exitCode !== 0) {
+        throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
+      }
+      let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
+      if (!transcriptPath) {
+        const transcriptFile = (await readdir(directory))
+          .find((name) => name.endsWith(".txt"));
+        if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
+        transcriptPath = join(directory, transcriptFile);
+      }
+      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
+      if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+      return {
+        title: job.title || mediaFile.basename || "语音记录",
+        source: transcript,
+        mediaPath: mediaFile.path,
+      };
+    } finally {
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
   private async extractAudio(job: BrowserCaptureJob, sourceNotePath: string): Promise<ExtractedSource> {
+    const captureUrl = job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const { mkdtemp, readdir, readFile, rm } = require("node:fs/promises") as typeof import("node:fs/promises");
@@ -1339,24 +1608,45 @@ export class BrowserCaptureServer {
     try {
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(job.url), "--skip-download", "--print", "%(title)s", job.url],
+        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
       );
       const title = titleResult.exitCode === 0
         ? titleResult.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || job.title
         : job.title;
+      await runLocalCommand(
+        downloader,
+        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
+        "",
+        15 * 60,
+      );
+      const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
+      if (subtitleFile) {
+        const transcript = parseSubtitleText(
+          await readFile(join(directory, subtitleFile), "utf8"),
+          subtitleFile,
+        );
+        if (transcript) return {
+          title: title || "未命名音频",
+          source: transcript,
+        };
+      }
+      await this.updateJob(job.id, {
+        progress: 28,
+        message: "没有找到可用字幕，正在下载音频并转录",
+      });
       const audioResult = await runLocalCommand(
         downloader,
         [
-          ...ytDlpCaptureArgs(job.url),
+          ...ytDlpCaptureArgs(captureUrl),
           ...ffmpegLocationArgs(settings),
           "-x",
           "--audio-format",
           "m4a",
           "-o",
           join(directory, "audio.%(ext)s"),
-          job.url,
+          captureUrl,
         ],
         "",
         60 * 60,
@@ -1364,7 +1654,7 @@ export class BrowserCaptureServer {
       if (audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
           `${audioResult.stderr}\n${audioResult.stdout}`,
-          job.url,
+          captureUrl,
         ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));

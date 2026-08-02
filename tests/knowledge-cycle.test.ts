@@ -24,6 +24,8 @@ import {
   rankThemeSourceCandidates,
   rankResearchTopicSourceCandidates,
   renameKnowledgeThemePropertyValues,
+  renameRawKnowledgeTopicPropertyValues,
+  removeKnowledgeTopicPropertyValues,
   researchTopicWorkspacePaths,
   topicWorkspacePaths,
 } from "../src/knowledge-cycle";
@@ -45,6 +47,28 @@ test("theme rename updates plain and wikilink property values without touching o
     "_KnowGrove/主题空间/全球宏观.md",
   );
   assert.deepEqual(renamed, ["全球宏观", "货币政策"]);
+});
+
+test("raw topic rename preserves plain and wikilink representation while deduplicating", () => {
+  assert.deepEqual(
+    renameRawKnowledgeTopicPropertyValues(["金融常识", "[[金融常识]]", "理财规划"], "金融常识", "金融基础"),
+    ["金融基础", "理财规划"],
+  );
+  assert.deepEqual(
+    renameRawKnowledgeTopicPropertyValues(["[[金融常识]]", "理财规划"], "金融常识", "金融基础"),
+    ["[[金融基础]]", "理财规划"],
+  );
+});
+
+test("topic deletion removes plain and managed wikilink values without touching other topics", () => {
+  assert.deepEqual(
+    removeKnowledgeTopicPropertyValues(
+      ["金融常识", "[[金融常识]]", "[[_KnowGrove/主题空间/金融常识]]", "理财规划"],
+      "金融常识",
+      "_KnowGrove/主题空间/金融常识.md",
+    ),
+    ["理财规划"],
+  );
 });
 
 test("theme domain migration preserves unrelated and shared domains", () => {
@@ -81,7 +105,7 @@ test("knowledge topics normalize wikilinks and aggregate domain and PDSA roles",
     {
       path: workspace.notePath,
       basename: "Obsidian",
-      frontmatter: { knowgrove_topic_workspace: true, 当前阶段: "S" },
+      frontmatter: { knowgrove_topic_workspace: true, 当前阶段: "S", 上级主题: "[[Topics/AI产品|AI产品]]" },
     },
   ];
   const result = buildKnowledgeThemes(snapshots, settings);
@@ -92,6 +116,7 @@ test("knowledge topics normalize wikilinks and aggregate domain and PDSA roles",
   assert.deepEqual(obsidian.domains, ["AI产品", "内容创作"]);
   assert.deepEqual(obsidian.stageCounts, { P: 1, D: 1, S: 1, A: 1 });
   assert.equal(obsidian.currentStage, "S");
+  assert.equal(obsidian.parentName, "AI产品");
   assert.deepEqual(obsidian.documents.map((document) => document.path), ["Home/Output.md", "Home/Knowledge.md", "Home/Input.md"]);
   assert.equal(normalizeKnowledgeTopic("[[Topics/Obsidian|Obsidian]]"), "Obsidian");
 });

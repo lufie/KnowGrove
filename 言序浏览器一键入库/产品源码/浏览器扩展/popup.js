@@ -146,23 +146,32 @@ async function startCapture() {
   elements.progressTitle.textContent = "正在创建任务";
   elements.progressMessage.textContent = currentPageType === "video"
     ? "KnowGrove 将读取字幕，必要时使用 Whisper。"
+    : currentPageType === "audio"
+      ? "KnowGrove 将优先读取字幕，必要时下载并转录。"
     : "KnowGrove 将提取正文并先备份到 Vault。";
   try {
-    const pageContent = currentPageType === "article"
-      ? await capturePageContent(currentTab.id)
-      : await captureBilibiliTranscript(currentTab.id);
+    const renderedPage = await capturePageContent(currentTab.id);
+    const detectedType = renderedPage?.detectedType || currentPageType;
+    if (detectedType !== currentPageType) {
+      currentPageType = detectedType;
+      elements.pageType.textContent = pageTypeLabel(currentPageType);
+    }
+    const mediaTranscript = currentPageType === "video"
+      ? await captureBilibiliTranscript(currentTab.id)
+      : null;
     const accepted = await bridgeRequest(currentSettings, "/v1/capture", {
       method: "POST",
       body: JSON.stringify({
         url: currentTab.url,
         title: currentTab.title || "",
         source: "popup",
-        content: pageContent?.content || "",
-        contentTitle: pageContent?.title || "",
-        author: pageContent?.author || "",
-        publishedAt: pageContent?.publishedAt || "",
-        sourceKind: pageContent?.sourceKind || "",
-        transcript: pageContent?.transcript || "",
+        pageTypeHint: currentPageType,
+        content: currentPageType === "article" ? renderedPage?.content || "" : "",
+        contentTitle: mediaTranscript?.title || renderedPage?.title || "",
+        author: renderedPage?.author || "",
+        publishedAt: renderedPage?.publishedAt || "",
+        sourceKind: renderedPage?.sourceKind || "",
+        transcript: mediaTranscript?.transcript || "",
       }),
     });
     const snapshot = {

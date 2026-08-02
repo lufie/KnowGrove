@@ -6,14 +6,17 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
   cleanArticleMarkdown,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
+  whisperNeedsPcmConversion,
   datedArticleTitle,
   extractJsonObject,
+  extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
@@ -23,6 +26,7 @@ import {
   protectArticleImages,
   restoreArticleImages,
   safeCaptureFileName,
+  sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
   splitBrowserCaptureText,
@@ -37,6 +41,54 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+});
+
+test("generic capture resolves short links and detects media from response metadata", () => {
+  assert.equal(classifyBrowserCaptureResource("https://short.example/a1", {
+    finalUrl: "https://www.bilibili.com/video/BV1",
+    contentType: "text/html; charset=utf-8",
+  }), "video");
+  assert.equal(classifyBrowserCaptureResource("https://files.example/download", {
+    contentType: "audio/mpeg",
+  }), "audio");
+  assert.equal(classifyBrowserCaptureResource("https://unknown.example/watch/42", {
+    contentType: "text/html",
+    html: '<meta content="video.other" property="og:type"><meta property="og:video" content="https://cdn.example/a">',
+  }), "video");
+  assert.equal(classifyBrowserCaptureResource("https://unknown.example/listen/42", {
+    contentType: "text/html",
+    html: '<audio controls src="https://cdn.example/episode.m4a"></audio>',
+  }), "audio");
+  assert.equal(classifyBrowserCaptureResource("https://www.doubao.com/thread/example", {
+    contentType: "text/html",
+    html: '<main data-testid="conversation">AI 对话分享内容</main>',
+  }), "article");
+});
+
+test("browser-rendered capture can target only a note with the same source URL", () => {
+  assert.equal(
+    sameCaptureResourceUrl(
+      "https://www.doubao.com/thread/example#answer",
+      "https://www.doubao.com/thread/example",
+    ),
+    true,
+  );
+  assert.equal(
+    sameCaptureResourceUrl(
+      "https://www.doubao.com/thread/example",
+      "https://www.doubao.com/thread/another",
+    ),
+    false,
+  );
+});
+
+test("dynamic AI share pages recover question and answer text from embedded router data", () => {
+  const source = extractStructuredCaptureTextFromScripts([
+    'window._ROUTER_DATA = {"loaderData":{"shareInfo":{"messages":[{"question":"怎么建立知识树？"},{"answer":"先建立领域，再持续归纳主题和课题。"}]}}};window.boot();',
+  ]);
+  assert.match(source, /怎么建立知识树/);
+  assert.match(source, /先建立领域/);
+  assert.doesNotMatch(source, /loaderData|shareInfo/);
 });
 
 test("Bilibili extraction uses browser headers and bounded retries", () => {
@@ -112,6 +164,36 @@ test("link-note detection accepts one link with a title and rejects substantive 
     "---",
     "https://example.com/article",
   ].join("\n")), null);
+});
+
+test("link-note detection accepts a sparse local voice note and rejects completed or substantive audio notes", () => {
+  const voiceSession = [
+    "---",
+    "文件名: 2026-07-31 105448 语音记录",
+    "type: voice-session",
+    "audio: \"[[2026-07-31 105448 语音记录.m4a]]\"",
+    "tags: [voice-note]",
+    "---",
+    "# 语音记录 2026-07-31 10:54",
+    "",
+    "![[2026-07-31 105448 语音记录.m4a]]",
+    "",
+    "## 中断记录",
+    "",
+    "- 无",
+    "",
+    "## 整理记录",
+  ].join("\n");
+  assert.deepEqual(detectLinkNoteCandidate(voiceSession, "2026-07-31 105448 语音记录"), {
+    url: "",
+    title: "语音记录 2026-07-31 10:54",
+    pageType: "audio",
+    mediaPath: "2026-07-31 105448 语音记录.m4a",
+  });
+  assert.equal(detectLinkNoteCandidate(`${voiceSession}\n\n${"这是用户已经整理好的正文。".repeat(20)}`), null);
+  assert.equal(detectLinkNoteCandidate(
+    voiceSession.replace("---\n# 语音记录", "KnowGrove采集状态: 已完成\n---\n# 语音记录"),
+  ), null);
 });
 
 test("startup link-note scan selects newest Markdown files only inside the configured folder", () => {
@@ -217,6 +299,9 @@ test("interrupted raw capture can resume AI organization without downloading the
 test("video transcription supports both Whisper CLIs", () => {
   assert.equal(detectWhisperImplementation("/opt/homebrew/bin/whisper"), "openai-whisper");
   assert.equal(detectWhisperImplementation("/opt/homebrew/bin/whisper-cli"), "whisper-cpp");
+  assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.m4a"), true);
+  assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.wav"), false);
+  assert.equal(whisperNeedsPcmConversion("openai-whisper", "/tmp/voice.m4a"), false);
   assert.deepEqual(buildWhisperInvocation({
     implementation: "openai-whisper",
     audioPath: "/tmp/audio.mp3",
@@ -430,9 +515,25 @@ test("audio capture keeps the original media as an Obsidian embed and retains th
     bodyMarkdown: "### 对话\n\n**甲**：内容",
   });
   assert.match(completed, /## 原始音频/);
+  assert.match(completed, /!\[\[Home\/📬输入\/附件\/音视频\/访谈录音\.m4a]]/);
   assert.match(completed, /## 对话记录/);
   assert.match(completed, /## 完整逐字稿\n\n这是逐字稿。/);
   assert.doesNotMatch(completed, /file:\/\//);
+});
+
+test("local audio capture omits a fake source URL and keeps an Obsidian media reference", () => {
+  const raw = buildRawCaptureNote({
+    pageType: "audio",
+    title: "语音记录",
+    source: "这是本地语音逐字稿。",
+    mediaPath: "Home/📬输入/assets/语音记录.m4a",
+    capturedAt: "2026-07-31T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  assert.doesNotMatch(raw, /^来源:/m);
+  assert.match(raw, /!\[\[Home\/📬输入\/assets\/语音记录\.m4a]]/);
+  assert.doesNotMatch(raw, /file:\/\//);
 });
 
 test("browser capture failure note leaves a final retryable state", () => {

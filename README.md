@@ -1,91 +1,100 @@
-# 言序 · KnowGrove
+# KnowGrove
 
-言序（KnowGrove）是一个本地优先的 Obsidian 知识工作台，负责资料入库、阅读、属性治理、研究组织、引用和内容创作。
+> Grow scattered notes into connected topics, evidence, research, and reusable knowledge inside Obsidian.
 
-当前版本：`2.5.4`（品牌统一候选）
+[简体中文](docs/locales/README.zh-CN.md) · [繁體中文](docs/locales/README.zh-TW.md) · **English** · [日本語](docs/locales/README.ja.md) · [한국어](docs/locales/README.ko.md) · [Deutsch](docs/locales/README.de.md) · [Français](docs/locales/README.fr.md) · [Español](docs/locales/README.es.md) · [Português (Brasil)](docs/locales/README.pt-BR.md) · [Русский](docs/locales/README.ru.md)
 
-## 主要能力
+KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-- 浏览器一键入库：Chrome 或 Safari 扩展把当前文章、视频直接交给 KnowGrove。
-- 一键运行环境：自动检查当前电脑，优先复用已有工具；缺失组件时安装经过签名校验的 KnowGrove 托管运行包。
-- 链接笔记自动解析：监控指定文件夹，并在 Obsidian 启动时补查最近文档，把只有链接和标题的轻量笔记自动分流为网页、视频或语音。
-- 阅读列表：跟踪阅读状态，可在文末自动标记已读。
-- 属性工作流：检查、预览并修复 Markdown 属性。
-- AI 引擎：支持 Codex、Claude、Antigravity、Qoder、Kimi、MiniMax、GLM、CodeBuddy，以及 Anthropic/OpenAI 兼容接口。
-- 知识研究：用领域、主题、课题和工作空间组织资料与证据。
-- 评论与引用：为选区创建稳定块引用和双向关系。
-- 创作工作室：从已确认资料生成提纲、初稿、渠道版本和证据审查。
+Current version: `2.6.0`
 
-## 浏览器一键入库
+## What KnowGrove does
 
-浏览器扩展只负责提交当前页面并展示进度，所有本地处理都在 KnowGrove 内完成：
+- **Read it later:** collect notes in one inbox, switch between unread and read, and optionally mark a note as read when you reach the end.
+- **Browser and mobile capture:** send articles, videos, links, and lightweight voice notes to your vault.
+- **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable.
+- **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
+- **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
+- **Comments and block references:** comment on selected text and reuse a complete source block through native Obsidian block embeds.
+- **Evidence-based creation:** turn selected source material into outlines, reports, long-form drafts, and channel-specific versions.
+- **Safe attachment cleanup:** track attachments that were previously referenced and ask before moving an orphaned file to the Obsidian trash.
+
+## Language support
+
+KnowGrove follows the language selected in Obsidian. It supports Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Brazilian Portuguese, and Russian.
+
+User content is never translated. Note titles, paths, comments, domains, topics, property values, frontmatter, Base files, and Markdown content stay exactly as stored in the vault. Text that has not yet completed native-language review falls back to English instead of Chinese.
+
+## Installation
+
+### Community plugins
+
+After KnowGrove is accepted into the Obsidian community directory:
+
+1. Open **Settings → Community plugins** in Obsidian.
+2. Select **Browse**, search for **KnowGrove**, and choose **Install**.
+3. Enable KnowGrove and confirm the inbox folder in its settings.
+
+### Manual installation
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the latest GitHub Release.
+2. Create `<vault>/.obsidian/plugins/knowgrove/`.
+3. Copy the three files into that folder.
+4. Reload Obsidian and enable **KnowGrove** under Community plugins.
+
+Never copy another user's `data.json` into your vault.
+
+## First-run setup
+
+1. Confirm the **Inbox folder** used by the reading list and capture workflows.
+2. Choose a local CLI or compatible API if you want AI-assisted organization.
+3. Use **Content processing components → Set up automatically** for local article, video, and audio processing.
+4. Open **Reading list**, **Topics**, or **Workspace** from the Obsidian ribbon.
+
+KnowGrove prefers compatible tools already installed on the computer. Missing signed runtime components can be installed for macOS Apple Silicon, macOS Intel, and Windows x64. Desktop-only processing features are guarded so the plugin can still load on mobile.
+
+## Browser capture
+
+The browser extension submits the current page to the local KnowGrove receiver:
 
 ```text
 Chrome / Safari
-  → KnowGrove 本机接收服务
-  → 文章提取或视频 / 语音字幕与 Whisper
-  → 用户选择的 AI 引擎
-  → Obsidian Vault
+  → KnowGrove local receiver
+  → article extraction or subtitle / local transcription
+  → the AI provider selected by the user
+  → Obsidian vault
 ```
 
-不再需要独立本地助手、终端启动命令、LaunchAgent、手动端口配置或 Token 复制。首次使用只需在 Obsidian 中确认一次浏览器配对。
+The local receiver listens only on `127.0.0.1:47831` and requires confirmation in Obsidian before pairing. Browser extension source and setup notes are in [言序浏览器一键入库](言序浏览器一键入库/README.md).
 
-浏览器产品文件位于 [言序浏览器一键入库](言序浏览器一键入库/README.md)。
+## Privacy and safety
 
-## 链接笔记自动解析
+- The vault remains the source of truth.
+- Existing note values and unknown properties are preserved by default.
+- Batch property changes require preview and confirmation.
+- The plugin has no client telemetry or usage analytics.
+- API keys use Obsidian SecretStorage when available.
+- Local CLIs run without a shell and in isolated temporary directories.
+- KnowGrove does not bypass paywalls, login restrictions, DRM, or platform permissions.
+- Attachment cleanup moves confirmed candidates to the Obsidian trash; it does not permanently delete them.
 
-在设置的监控文件夹中新建一篇 Markdown，内容只有一个 `http/https` 链接、标题和少量说明时，KnowGrove 会自动执行：
+See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete boundaries.
 
-- 网页文章：使用 Defuddle 与内置解析器提取正文，清理平台噪音，把正文图片下载到 Vault；可在设置中选择是否以 `YYYY-MM-DD-文章名` 统一文件名、标题属性和正文一级标题。
-- 视频：优先读取字幕，没有字幕时用 `yt-dlp` 下载公开音频并交给本机 Whisper。
-- 语音：保存原始音频到 Vault，使用本机 Whisper 转录，再由 AI 生成摘要、要点和整理正文。
-
-每次打开 Obsidian 时，KnowGrove 会按修改时间补查最近的文档；也可以点击左侧栏的“整理”图标，手动触发同一批量检查。命令面板仍提供“整理新链接文档”和“解析当前链接笔记”，Markdown 文件菜单也保留“KnowGrove：解析链接内容”。自动检测文件夹、三类笔记的完成后保存目录和原始媒体目录都可在插件设置中配置。完整正文、多链接笔记、已处理笔记不会被自动改写；处理期间如果用户修改正文，AI 结果也不会覆盖新内容。属性系统同时更新 frontmatter 时会保留属性并继续整理，不会误判为正文冲突。
-
-## 一键运行环境
-
-设置页会检查当前系统、磁盘空间、下载源、视频组件、语音转录和 AI 引擎。用户点击“一键完成配置”后：
-
-1. 优先复用兼容的 `yt-dlp`、FFmpeg 和 Whisper。
-2. 缺失时从签名运行包清单选择 `darwin-arm64`、`darwin-x64` 或 `win32-x64` 组件。
-3. 每个文件独立校验 SHA-256，清单使用 Ed25519 验签。
-4. 在临时目录安装成功后原子切换；失败不会破坏上一版本。
-5. 托管 Skill Pack 只能更新提示词和结构化规则，不能下发脚本或任意命令。
-
-运行环境保存在系统用户数据目录，不进入 Vault，也不会由 iCloud 同步：
-
-- macOS：`~/Library/Application Support/KnowGrove/runtime`
-- Windows：`%LOCALAPPDATA%\KnowGrove\runtime`
-
-跨平台构建与发布说明见 [runtime/README.md](runtime/README.md)。
-
-公开运行包发布仓库：[lufie/KnowGrove-runtime](https://github.com/lufie/KnowGrove-runtime)。
-插件只接受通过 Ed25519 签名、且组件大小与 SHA-256 均匹配的运行包清单。
-
-## 开发
+## Development
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+pnpm check
 pnpm test
-pnpm run build
+pnpm build
 ```
 
-生产构建会生成根目录 `main.js`。浏览器扩展另行检查：
+The production build creates `main.js` in the repository root. Release tags must match `manifest.json` exactly and must not use a `v` prefix.
 
-```bash
-cd "言序浏览器一键入库"
-npm run check
-```
+## Release status
 
-## 安全边界
+The source code is public. GitHub Releases are the first distribution channel while the Obsidian community-directory submission is reviewed. Current submission status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](docs/COMMUNITY_PLUGIN_RELEASE.md).
 
-- 本机接收服务只监听 `127.0.0.1:47831`。
-- 浏览器必须经过 Obsidian 弹窗确认才能配对。
-- CLI 使用 `shell: false` 和独立临时目录运行。
-- API Key 使用 Obsidian SecretStorage，不写入插件数据文件。
-- 默认不读取浏览器 Cookie，不绕过登录墙、付费限制或 DRM。
-- Obsidian 关闭后不会接收新任务。
+## License
 
-## 许可证
-
-MIT
+[MIT](LICENSE)

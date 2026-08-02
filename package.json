@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowgrove",
-  "version": "2.5.4",
+  "version": "2.6.0",
   "description": "KnowGrove turns an Obsidian vault into a self-growing knowledge research workspace.",
   "main": "main.js",
   "type": "module",
@@ -23,6 +23,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.1",
     "@types/node": "^22.15.17",

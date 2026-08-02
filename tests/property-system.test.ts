@@ -21,7 +21,11 @@ function system() {
 }
 
 test("property check leaves blank-line cleanup off by default", () => {
-  assert.equal(createDefaultSettings().cleanupBlankLinesWithPropertyCheck, false);
+  const settings = createDefaultSettings();
+  assert.equal(settings.cleanupBlankLinesWithPropertyCheck, false);
+  assert.equal(settings.recentFileMode, "opened");
+  assert.equal(settings.recentFileLimit, 8);
+  assert.equal(settings.enableTopicIndex, true);
 });
 
 test("new-content automation uses one shared default across capture and property processing", () => {
@@ -29,6 +33,8 @@ test("new-content automation uses one shared default across capture and property
   assert.equal(settings.browserCapture.autoProcessLinkNotes, settings.autoMarkNewNotes);
   assert.equal(settings.aiProperties.autoEnrichNewNotes, settings.autoMarkNewNotes);
   assert.equal(settings.propertySystem.initializeTrackedNotes, settings.autoMarkNewNotes);
+  assert.equal("focusPropertyEnabled" in settings, false);
+  assert.equal("focusPropertyName" in settings, false);
 });
 
 test("governance scope excludes configured, system, and dependency files", () => {
@@ -254,8 +260,6 @@ test("reading aliases are normalized while unknown reading states remain visible
       frontmatter: { 文件名: "Unknown reading", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 阅读状态: "待归类" },
     },
   ], settings, {
-    enabled: false,
-    propertyName: "收藏",
     reading: { propertyName: "阅读状态", readingValue: "在看", finishedValue: "已读" },
   });
   const unread = audit.changes.find((change) => change.path === "Home/Unread.md");
@@ -391,51 +395,29 @@ test("new tracked note with only reading status fills missing core properties", 
   assert.deepEqual(frontmatter.主题, []);
 });
 
-test("new external input receives an unchecked focus property without overwriting existing values", () => {
+test("new external input does not create a plugin-owned bookmark property and preserves existing unknown fields", () => {
   const settings = system();
   const frontmatter: Record<string, unknown> = {};
   initializeTrackedNoteFrontmatter(
-    frontmatter, "External", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
+    frontmatter, "External", settings, "阅读状态", "在看", "2026-07-23",
   );
-  assert.equal(frontmatter.收藏, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "收藏"), false);
 
-  const focused: Record<string, unknown> = { 收藏: true };
+  const existing: Record<string, unknown> = { 收藏: true, 重点关注: true };
   initializeTrackedNoteFrontmatter(
-    focused, "Focused", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
+    existing, "Existing", settings, "阅读状态", "在看", "2026-07-23",
   );
-  assert.equal(focused.收藏, true);
-
-  const legacy: Record<string, unknown> = { 重点关注: true };
-  initializeTrackedNoteFrontmatter(
-    legacy, "Legacy", settings, "阅读状态", "在看", "2026-07-23", new Set(), "收藏",
-  );
-  assert.equal(legacy.重点关注, true);
-  assert.equal(Object.prototype.hasOwnProperty.call(legacy, "收藏"), false);
-});
-
-test("property audit adds the focus checkbox only to external input material", () => {
-  const settings = system();
-  const audit = auditPropertySnapshots([
-    {
-      path: "Home/External.md",
-      basename: "External",
-      frontmatter: { 文件名: "External", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"] },
-    },
-    {
-      path: "Home/Authored.md",
-      basename: "Authored",
-      frontmatter: { 文件名: "Authored", 类型: "知识笔记", 状态: "待沉淀", 领域: ["AI产品"], 主题: ["知识管理"] },
-    },
-    {
-      path: "Home/Focused.md",
-      basename: "Focused",
-      frontmatter: { 文件名: "Focused", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 重点关注: true },
-    },
-  ], settings, { enabled: true, propertyName: "收藏", aliases: ["重点关注"] });
-  const focusChanges = audit.changes.flatMap((change) => change.operations.map((operation) => ({ path: change.path, operation })))
-    .filter(({ operation }) => operation.property === "收藏");
-  assert.deepEqual(focusChanges.map(({ path }) => path), ["Home/External.md"]);
-  assert.equal(focusChanges[0]?.operation.after, false);
+  assert.equal(existing.收藏, true);
+  assert.equal(existing.重点关注, true);
+  const audit = auditPropertySnapshots([{
+    path: "Home/Existing.md",
+    basename: "Existing",
+    frontmatter: existing,
+  }], settings);
+  assert.equal(audit.issues.some((item) => item.property === "收藏" || item.property === "重点关注"), false);
+  assert.equal(audit.changes.some((change) => change.operations.some(
+    (operation) => operation.property === "收藏" || operation.property === "重点关注",
+  )), false);
 });
 
 test("existing custom, empty, and unknown values are never overwritten", () => {
@@ -631,7 +613,7 @@ test("generated governance views use the audited document lists", () => {
   ], settings);
   const base = buildPropertyBase(settings, audit);
   const compliantView = base.slice(base.indexOf('name: "✅ 已符合规范"'), base.indexOf('name: "⚠️ 待规范"'));
-  const nonCompliantView = base.slice(base.indexOf('name: "⚠️ 待规范"'), base.indexOf('name: "📥 输入与收藏"'));
+  const nonCompliantView = base.slice(base.indexOf('name: "⚠️ 待规范"'), base.indexOf('name: "📥 输入队列"'));
   assert.match(compliantView, /file\.path == "Home\/Compliant\.md"/);
   assert.doesNotMatch(compliantView, /Needs review/);
   assert.match(nonCompliantView, /file\.path == "Home\/Needs review\.md"/);
@@ -653,7 +635,7 @@ test("generated Base combines property audit and lifecycle workflow views", () =
   for (const name of [
     "✅ 已符合规范",
     "⚠️ 待规范",
-    "📥 输入与收藏",
+    "📥 输入队列",
     "🌱 知识生长",
     "🚧 项目推进",
     "✅ 行动推进",
@@ -666,7 +648,7 @@ test("generated Base combines property audit and lifecycle workflow views", () =
   assert.match(base, /knowgrove_managed:/);
   assert.equal(base.match(/    sort:/g)?.length, 7);
   assert.equal(base.match(/      - property: file\.mtime\n        direction: DESC/g)?.length, 7);
-  const inputView = base.slice(base.indexOf('name: "📥 输入与收藏"'), base.indexOf('name: "🌱 知识生长"'));
+  const inputView = base.slice(base.indexOf('name: "📥 输入队列"'), base.indexOf('name: "🌱 知识生长"'));
   assert.match(inputView, /类型 == "输入资料"/);
   for (const status of ["待整理", "待归类", "待沉淀", "处理失败"]) assert.match(inputView, new RegExp(`状态 == "${status}"`));
   assert.doesNotMatch(inputView, /阅读状态 ==/);

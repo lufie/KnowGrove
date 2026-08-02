@@ -10,10 +10,43 @@
   --knowgrove-brand-soft: rgba(242, 75, 63, 0.1);
 }
 
+/* 原生文件列表顶部的虚拟“最近”目录，不创建 Vault 文件夹。 */
+.workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-files {
+  margin-bottom: var(--size-2-2, 4px);
+  background: transparent;
+}
+
+/* 用户不需要在左侧栏继续创建空白页；主编辑区的新标签页按钮保持不变。 */
+.mod-left-split .workspace-tab-header-new-tab {
+  display: none;
+}
+
+.workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-title {
+  margin-inline-start: 0 !important;
+  padding-inline-start: var(--size-4-8, 32px) !important;
+}
+
+.workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file > .tree-item-self {
+  margin-inline-start: calc(var(--size-4-6, 24px) * -1) !important;
+  padding-inline-start: calc(var(--size-4-8, 32px) + var(--size-4-6, 24px)) !important;
+}
+
+.workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file .nav-file-title-content {
+  overflow: hidden;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file .mdr-vertical-tab-close {
+  display: none !important;
+}
+
 .knowgrove-view {
   --rc-radius: var(--radius-m, 8px);
   --rc-radius-small: var(--radius-s, 6px);
   --rc-gap: var(--size-4-3, 12px);
+  container-type: inline-size;
   padding: var(--size-4-3, 12px);
   color: var(--text-normal);
   background: transparent;
@@ -21,14 +54,14 @@
 
 .knowgrove-header {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-bottom: var(--size-4-3, 12px);
 }
 
 .knowgrove-icon-button {
-  grid-column: 3;
+  grid-column: 2;
   justify-self: end;
   flex: 0 0 auto;
   width: 30px;
@@ -36,10 +69,12 @@
 }
 
 .knowgrove-categories {
-  grid-column: 2;
-  justify-self: center;
-  display: inline-flex;
-  flex: 0 1 auto;
+  grid-column: 1;
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--background-modifier-border);
@@ -49,7 +84,9 @@
 .knowgrove-view button.knowgrove-category {
   display: flex;
   min-width: 0;
+  width: 100%;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   min-height: 26px;
   padding: 3px 7px;
@@ -108,6 +145,20 @@
   font-size: 10px;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@container (max-width: 230px) {
+  .knowgrove-view button.knowgrove-category {
+    gap: 3px;
+    padding-inline: 3px;
+  }
+
+  .knowgrove-category-text {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0;
+  }
 }
 
 .knowgrove-controls {
@@ -231,7 +282,6 @@
   transform: translateY(-50%);
 }
 
-.knowgrove-note .knowgrove-focus-action,
 .knowgrove-note .knowgrove-more {
   width: 0 !important;
   padding: 0 !important;
@@ -245,11 +295,8 @@
   background: var(--background-modifier-hover);
 }
 
-.knowgrove-note:hover .knowgrove-focus-action,
-.knowgrove-note:focus-within .knowgrove-focus-action,
 .knowgrove-note:hover .knowgrove-more,
-.knowgrove-note:focus-within .knowgrove-more,
-.knowgrove-note .knowgrove-focus-action.is-focused {
+.knowgrove-note:focus-within .knowgrove-more {
   width: 26px !important;
   opacity: 1;
   pointer-events: auto;
@@ -267,34 +314,6 @@
   box-shadow: none;
   color: var(--text-muted);
   background: transparent;
-}
-
-.knowgrove-view button.knowgrove-focus-action {
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--rc-radius-small);
-  box-shadow: none;
-  color: var(--text-muted);
-  background: transparent;
-}
-
-.knowgrove-focus-action svg {
-  width: 15px;
-  height: 15px;
-}
-
-.knowgrove-view button.knowgrove-focus-action.is-focused {
-  color: var(--color-yellow);
-}
-
-.knowgrove-view button.knowgrove-focus-action:hover {
-  color: var(--color-yellow);
-  background: rgba(var(--knowgrove-brand-rgb), 0.1);
 }
 
 .knowgrove-status-action svg {
@@ -3698,6 +3717,84 @@ button.knowgrove-research-source-more:hover {
 
 /* Property audit modal */
 
+.knowgrove-attachment-cleanup-shell {
+  width: min(760px, calc(100vw - 48px));
+  max-width: min(760px, calc(100vw - 48px));
+}
+
+.knowgrove-attachment-cleanup-modal > h2 {
+  margin-bottom: 4px;
+}
+
+.knowgrove-attachment-cleanup-toolbar,
+.knowgrove-attachment-cleanup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-3, 12px);
+}
+
+.knowgrove-attachment-cleanup-toolbar {
+  margin: var(--size-4-4, 16px) 0 var(--size-4-2, 8px);
+  color: var(--text-muted);
+}
+
+.knowgrove-attachment-cleanup-toolbar button {
+  color: var(--text-accent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.knowgrove-attachment-cleanup-list {
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  border-top: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.knowgrove-attachment-cleanup-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  min-height: 56px;
+  padding: var(--size-4-2, 8px) 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.knowgrove-attachment-cleanup-row:last-child {
+  border-bottom: 0;
+}
+
+.knowgrove-attachment-cleanup-icon,
+.knowgrove-attachment-cleanup-icon svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-accent);
+}
+
+.knowgrove-attachment-cleanup-copy {
+  min-width: 0;
+}
+
+.knowgrove-attachment-cleanup-name,
+.knowgrove-attachment-cleanup-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-attachment-cleanup-path,
+.knowgrove-attachment-cleanup-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.knowgrove-attachment-cleanup-actions {
+  justify-content: flex-end;
+  margin-top: var(--size-4-4, 16px);
+}
+
 .knowgrove-property-modal {
   max-width: 820px;
 }
@@ -4296,6 +4393,230 @@ button.knowgrove-property-issue-row:hover {
   }
 
   .knowgrove-property-spinner svg {
+    animation: none;
+  }
+}
+
+/* Global topic index: keep the hierarchy native and visually quiet. */
+.knowgrove-topic-index-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--size-4-3);
+  color: var(--text-normal);
+}
+
+.knowgrove-topic-index-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-4);
+}
+
+.knowgrove-topic-index-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.knowgrove-topic-index-search {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding-inline: var(--size-4-2);
+  border-radius: var(--input-radius);
+  background: var(--background-modifier-form-field);
+}
+
+.knowgrove-topic-index-search > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.knowgrove-topic-index-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.knowgrove-topic-index-search input:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.knowgrove-topic-index-row small {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.knowgrove-topic-index-list,
+.knowgrove-topic-index-documents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.knowgrove-topic-index-list {
+  padding: 0 0 var(--size-4-3);
+}
+
+.knowgrove-topic-index-row,
+.knowgrove-topic-index-document {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--size-4-2);
+  min-height: 40px;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-normal);
+  text-align: left;
+  font-weight: 400;
+}
+
+.knowgrove-topic-index-row {
+  padding-inline-start: calc(var(--size-4-3) + var(--knowgrove-topic-indent, 0px));
+}
+
+.knowgrove-topic-index-row.is-child-topic .knowgrove-topic-index-row-copy::before {
+  content: "↳";
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.knowgrove-topic-index-row:hover,
+.knowgrove-topic-index-row:focus-visible,
+.knowgrove-topic-index-document:hover,
+.knowgrove-topic-index-document:focus-visible,
+.knowgrove-topic-index-document.is-active-document {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+  box-shadow: none !important;
+}
+
+.knowgrove-topic-index-row-copy {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.knowgrove-topic-index-row-copy > span:first-child,
+.knowgrove-topic-index-document-title,
+.knowgrove-topic-index-document-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-topic-index-fixed {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--interactive-accent);
+}
+
+.knowgrove-topic-index-fixed svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.knowgrove-topic-index-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.knowgrove-topic-index-detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.knowgrove-topic-index-detail-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.knowgrove-topic-index-detail-title,
+.knowgrove-topic-index-detail-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-topic-index-detail-title {
+  font-size: var(--font-ui-medium);
+  font-weight: 400;
+}
+
+.knowgrove-topic-index-detail-meta,
+.knowgrove-topic-index-document-path {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.knowgrove-topic-index-document {
+  display: block;
+  min-height: 58px;
+  padding: var(--size-4-3);
+}
+
+.knowgrove-topic-index-document-title {
+  line-height: 1.45;
+}
+
+.knowgrove-topic-index-document-path {
+  margin-top: var(--size-4-1);
+  line-height: 1.35;
+}
+
+.knowgrove-topic-index-more {
+  align-self: center;
+  min-height: 34px;
+  margin: var(--size-4-2) 0;
+  padding: var(--size-4-1) var(--size-4-4);
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.knowgrove-topic-index-more:hover,
+.knowgrove-topic-index-more:focus-visible {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+  box-shadow: none !important;
+}
+
+.knowgrove-topic-index-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-2);
+  min-height: 72px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.knowgrove-topic-index-view .is-loading svg {
+  animation: knowgrove-property-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowgrove-topic-index-view .is-loading svg {
     animation: none;
   }
 }
