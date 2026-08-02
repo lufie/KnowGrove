@@ -77,7 +77,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     this.runtimeProgressUnsubscribe = undefined;
     containerEl.empty();
     containerEl.addClass("knowgrove-settings");
-    containerEl.createEl("h2", { text: "言序 · KnowGrove" });
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。",
@@ -1299,7 +1298,10 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
     const header = guide.createDiv("knowgrove-property-guide-header");
     const heading = header.createDiv();
-    heading.createEl("h3", { text: "AI 自动搭建你的分类树" });
+    new Setting(heading)
+      .setName("AI 自动搭建你的分类树")
+      .setHeading()
+      .settingEl.addClass("knowgrove-property-guide-title");
     heading.createEl("p", { text: "系统扫描现有知识，只给出一套建议；你决定是否采用，不需要逐字段配置。" });
     const badge = header.createSpan({
       cls: "knowgrove-property-guide-status",
@@ -1344,7 +1346,10 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       cardHeading.createSpan({ text: layer.index });
       const label = cardHeading.createDiv();
       label.createEl("small", { text: layer.eyebrow });
-      label.createEl("h4", { text: layer.title });
+      new Setting(label)
+        .setName(layer.title)
+        .setHeading()
+        .settingEl.addClass("knowgrove-property-guide-layer-title");
       card.createEl("p", { text: layer.text });
       const tags = card.createDiv("knowgrove-property-guide-tags");
       layer.tags.forEach((tag) => tags.createSpan({ text: tag }));
@@ -1381,7 +1386,10 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     if (taxonomy.proposal) {
       const proposal = guide.createDiv("knowgrove-taxonomy-proposal");
       const proposalHeading = proposal.createDiv();
-      proposalHeading.createEl("h4", { text: "AI 建议待确认" });
+      new Setting(proposalHeading)
+        .setName("AI 建议待确认")
+        .setHeading()
+        .settingEl.addClass("knowgrove-taxonomy-proposal-title");
       proposalHeading.createEl("p", { text: taxonomy.proposal.summary });
       this.renderTaxonomyTree(proposal, taxonomy.proposal.domains);
       const proposalActions = proposal.createDiv("knowgrove-taxonomy-actions");

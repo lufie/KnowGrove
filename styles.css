@@ -3269,7 +3269,7 @@ button.knowgrove-research-source-more:hover {
   border-radius: var(--radius-m);
 }
 
-.knowgrove-taxonomy-proposal h4,
+.knowgrove-taxonomy-proposal-title,
 .knowgrove-taxonomy-proposal p {
   margin: 0;
   font-weight: 400;
@@ -3322,14 +3322,14 @@ button.knowgrove-research-source-more:hover {
   margin-bottom: var(--size-4-4, 16px);
 }
 
-.knowgrove-property-guide-header h3,
-.knowgrove-property-guide-layer h4,
+.knowgrove-property-guide-title .setting-item-name,
+.knowgrove-property-guide-layer-title .setting-item-name,
 .knowgrove-property-guide-flow-node h4,
 .knowgrove-property-guide-guardrail h4 {
   font-weight: 400;
 }
 
-.knowgrove-property-guide-header h3 {
+.knowgrove-property-guide-title .setting-item-name {
   margin: 0;
   font-size: var(--font-ui-large);
   line-height: 1.3;
@@ -3401,7 +3401,7 @@ button.knowgrove-research-source-more:hover {
   line-height: 1.2;
 }
 
-.knowgrove-property-guide-layer h4 {
+.knowgrove-property-guide-layer-title .setting-item-name {
   margin: 1px 0 0;
   font-size: var(--font-ui-small);
 }
@@ -4324,8 +4324,21 @@ button.knowgrove-property-issue-row:hover {
   color: var(--text-accent);
 }
 
-.knowgrove-property-guide h3 {
+.knowgrove-property-guide-title {
   margin-top: 0;
+}
+
+.knowgrove-property-guide-title,
+.knowgrove-property-guide-layer-title,
+.knowgrove-taxonomy-proposal-title {
+  padding: 0;
+  border: 0;
+}
+
+.knowgrove-property-guide-title .setting-item-info,
+.knowgrove-property-guide-layer-title .setting-item-info,
+.knowgrove-taxonomy-proposal-title .setting-item-info {
+  margin: 0;
 }
 
 @media (max-width: 700px) {

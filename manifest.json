@@ -1,9 +1,9 @@
 {
   "id": "knowgrove",
   "name": "KnowGrove",
-  "version": "2.7.2",
-  "minAppVersion": "1.5.0",
+  "version": "2.7.3",
+  "minAppVersion": "1.11.4",
   "description": "Grow scattered notes into connected topics, evidence, research, and reusable knowledge.",
   "author": "Liyijie",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }

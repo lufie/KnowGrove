@@ -1,6 +1,7 @@
 import {
   Editor,
   type EditorPosition,
+  MarkdownRenderChild,
   MarkdownRenderer,
   MarkdownView,
   Menu,
@@ -368,6 +369,7 @@ export default class KnowGrovePlugin extends Plugin {
   private activeBlockDrag?: BlockDragPayload;
   private blockEmbedObserver?: MutationObserver;
   private blockEmbedHydrationTimer?: number;
+  private readonly blockEmbedRenderChildren = new Map<HTMLElement, MarkdownRenderChild>();
   private readonly lastEditorChangeAt = new Map<string, number>();
   private readonly pendingReferenceRepairPaths = new Set<string>();
   private readonly repairingSourcePaths = new Set<string>();
@@ -806,6 +808,7 @@ export default class KnowGrovePlugin extends Plugin {
     }
     this.automaticLinkNoteTimers.clear();
     this.blockEmbedObserver?.disconnect();
+    this.unloadBlockEmbedRenderChildren();
     this.recentFilesObserver?.disconnect();
     this.recentFilesObserver = undefined;
     this.recentFilesObserverTarget = undefined;
@@ -935,7 +938,10 @@ export default class KnowGrovePlugin extends Plugin {
 
   private initializeBlockEmbedFallback(): void {
     const root = this.app.workspace.containerEl;
-    this.blockEmbedObserver = new MutationObserver(() => this.scheduleBlockEmbedHydration());
+    this.blockEmbedObserver = new MutationObserver(() => {
+      this.cleanupDetachedBlockEmbedRenderChildren();
+      this.scheduleBlockEmbedHydration();
+    });
     this.blockEmbedObserver.observe(root, { childList: true, subtree: true });
     this.register(() => this.blockEmbedObserver?.disconnect());
     this.app.workspace.onLayoutReady(() => this.scheduleBlockEmbedHydration());
@@ -950,6 +956,7 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   private async hydrateVisibleBlockEmbeds(): Promise<void> {
+    this.cleanupDetachedBlockEmbedRenderChildren();
     const embeds = Array.from(this.app.workspace.containerEl.querySelectorAll<HTMLElement>(
       '.markdown-embed.inline-embed[src*="#^rr-"], .markdown-embed.inline-embed[src*="#^kg-"]',
     ));
@@ -965,6 +972,7 @@ export default class KnowGrovePlugin extends Plugin {
       .find((element): element is HTMLElement => element instanceof HTMLElement
         && element.hasClass("knowgrove-block-embed-fallback"));
     if (nativeContent) {
+      if (existingFallback) this.unloadBlockEmbedRenderChild(existingFallback);
       existingFallback?.remove();
       embed.removeClass("knowgrove-has-block-fallback");
       return;
@@ -985,8 +993,12 @@ export default class KnowGrovePlugin extends Plugin {
       );
       if (!markdown) return;
       const fallback = existingFallback ?? createDiv({ cls: "knowgrove-block-embed-fallback" });
+      this.unloadBlockEmbedRenderChild(fallback);
       fallback.empty();
-      await MarkdownRenderer.render(this.app, markdown, fallback, sourceFile.path, this);
+      const renderChild = new MarkdownRenderChild(fallback);
+      renderChild.load();
+      this.blockEmbedRenderChildren.set(fallback, renderChild);
+      await MarkdownRenderer.render(this.app, markdown, fallback, sourceFile.path, renderChild);
       if (!existingFallback) {
         const link = Array.from(embed.children)
           .find((element) => element instanceof HTMLElement && element.hasClass("markdown-embed-link"));
@@ -995,6 +1007,25 @@ export default class KnowGrovePlugin extends Plugin {
       embed.addClass("knowgrove-has-block-fallback");
     } finally {
       delete embed.dataset.knowGroveHydrating;
+    }
+  }
+
+  private unloadBlockEmbedRenderChild(container: HTMLElement): void {
+    const child = this.blockEmbedRenderChildren.get(container);
+    if (!child) return;
+    child.unload();
+    this.blockEmbedRenderChildren.delete(container);
+  }
+
+  private cleanupDetachedBlockEmbedRenderChildren(): void {
+    for (const [container] of this.blockEmbedRenderChildren) {
+      if (!container.isConnected) this.unloadBlockEmbedRenderChild(container);
+    }
+  }
+
+  private unloadBlockEmbedRenderChildren(): void {
+    for (const container of Array.from(this.blockEmbedRenderChildren.keys())) {
+      this.unloadBlockEmbedRenderChild(container);
     }
   }
 

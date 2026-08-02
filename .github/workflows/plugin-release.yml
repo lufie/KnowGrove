@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -21,6 +23,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
@@ -32,12 +35,20 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match manifest version $manifest_version"
             exit 1
           fi
+      - name: Stage release assets
+        run: |
+          mkdir -p release-assets
+          cp main.js manifest.json styles.css release-assets/
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: release-assets/*
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
-          main.js manifest.json styles.css
+          release-assets/main.js release-assets/manifest.json release-assets/styles.css
           --verify-tag
           --generate-notes
           --title "KnowGrove $GITHUB_REF_NAME"

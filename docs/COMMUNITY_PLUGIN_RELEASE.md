@@ -4,17 +4,25 @@
 
 ## 1. 当前结论
 
-KnowGrove 源代码仓库已经公开，`2.6.1` 正式 GitHub Release 与社区目录公开条目均已创建；官方自动审核仍在运行，尚不能描述为已通过社区审核。
+KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失败结果；`2.7.3` 是针对该报告的修复版本，发布并重新触发审核前不能描述为已通过社区审核。
 
 已完成：
 
 1. 源代码已合并到公开仓库默认分支 `main`。
-2. 正式标签和 Release 均为 `2.6.1`，与 `manifest.json` 一致。
+2. `2.6.1` 正式标签和 Release 已存在；新的 Manifest、包版本和版本映射已统一提升为 `2.7.3`。
 3. Release 已包含 `main.js`、`manifest.json` 和 `styles.css`，不包含用户数据或密钥。
-4. GitHub 自动发布工作流、217 项插件测试和生产构建均已通过。
-5. 社区条目 `https://community.obsidian.md/plugins/knowgrove` 已公开，审核记录正确识别版本 `2.6.1` 与提交 `c9453e0`。
+4. GitHub 自动发布工作流会执行 Obsidian 官方规则预检、类型检查、测试与生产构建，并为三个发布文件生成构建来源证明。
+5. 社区审核记录识别到 `2.6.1` / `c9453e0`，其构建校验、网络扫描和依赖扫描通过，但因下面 3 项代码规则错误而失败。
 
-待完成：等待官方自动审核与后续人工审核；如审核提出问题，按反馈修复并发布新的补丁版本。
+`2.6.1` 的阻断错误与 `2.7.3` 的处理：
+
+1. 使用了 Manifest 最低版本之后才提供的 Obsidian API：根据官方规则计算出的真实最高下限，将 `minAppVersion` 提升为 `1.11.4`。
+2. 将主插件实例传给 `MarkdownRenderer.render()`：改为为每个回退渲染容器创建独立 `MarkdownRenderChild`，并在替换、脱离 DOM 或插件卸载时释放。
+3. 设置页手工创建 `h2/h3/h4`：改用 `new Setting(...).setHeading()`。
+
+同时将 Manifest 标记为桌面专属，以匹配本产品对本地 CLI、接收服务和 Runtime 的真实依赖。缺少构建来源证明属于建议项而非失败原因，但 `2.7.3` 的发布工作流也会补齐。
+
+待完成：完成 `2.7.3` 的完整验收、创建 GitHub Release，并在社区审核页重新触发自动审核。
 
 插件 ID `knowgrove` 当前未在 Obsidian 社区插件清单中发现冲突，但正式提交当天仍需再次核对。
 
@@ -44,6 +52,7 @@ KnowGrove 源代码仓库已经公开，`2.6.1` 正式 GitHub Release 与社区�
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm lint
 pnpm check
 pnpm test
 pnpm build
@@ -58,7 +67,7 @@ git diff --check
 - 删除文件使用 Obsidian 回收站接口，不直接永久删除。
 - 用户路径通过 `normalizePath()` 处理。
 - 不硬编码 `.obsidian`，使用 `Vault.configDir`。
-- 桌面专属能力必须由 `Platform.isDesktopApp` 隔离；移动端加载不能因 Node.js API 报错。
+- Manifest 必须如实声明桌面专属；当前版本依赖本地 CLI、接收服务和 Runtime，因此 `isDesktopOnly` 为 `true`。
 - 发布构建压缩 `main.js`，源码仓库不提交构建产物。
 - 不包含客户端遥测；若以后增加账号、付费或遥测，必须先更新 README 与隐私说明。
 
@@ -70,8 +79,8 @@ git diff --check
 
 ```bash
 # 确认 manifest.json、package.json、versions.json 都是同一版本
-git tag 2.6.1
-git push origin 2.6.1
+git tag 2.7.3
+git push origin 2.7.3
 ```
 
 工作流会验证标签与 Manifest 版本一致，并上传：
@@ -84,7 +93,7 @@ Release 成功后，在干净 Vault 中从该 Release 手动安装一次，并�
 
 1. 插件启用、停用和重新加载正常。
 2. 英文和至少一种非拉丁语言界面无错误。
-3. 移动端能加载核心阅读与知识功能，桌面专属入口给出清晰说明。
+3. Manifest 正确阻止在不受支持的移动端安装，macOS 与 Windows 桌面端的核心功能正常。
 4. Runtime 未安装、下载失败、CLI 缺失和 API 未配置时不会阻塞 Obsidian。
 5. 插件卸载后用户笔记、属性、评论、引用和附件不丢失。
 
