@@ -4,12 +4,16 @@
 
 ## 1. 当前结论
 
-KnowGrove 源代码仓库已公开，可以提交 Obsidian 社区插件目录。正式提交还需要完成以下事项：
+KnowGrove 源代码仓库已经公开，`2.6.0` 正式 GitHub Release 已发布，安装资产齐全，可以提交 Obsidian 社区插件目录。
 
-1. 把准备发布的代码合并到默认分支 `main`，确保工作区干净、版本文件一致。
-2. 发布一个正式 GitHub Release，标签必须与 `manifest.json` 中的版本完全一致，例如 `2.6.0`，不能使用 `v2.6.0`。
-3. Release 必须包含 `main.js`、`manifest.json` 和 `styles.css`；不得包含 `data.json`、用户评论、引用、API Key、浏览器授权或 Vault 内容。
-4. 使用 Obsidian 账号登录 `https://community.obsidian.md`，绑定 GitHub 账号，在 **Plugins → New plugin** 提交仓库 URL。
+已完成：
+
+1. 源代码已合并到公开仓库默认分支 `main`。
+2. 正式标签和 Release 均为 `2.6.0`，与 `manifest.json` 一致。
+3. Release 已包含 `main.js`、`manifest.json` 和 `styles.css`，不包含用户数据或密钥。
+4. GitHub 自动发布工作流、217 项插件测试和生产构建均已通过。
+
+待完成：使用 Obsidian 账号登录 `https://community.obsidian.md`，绑定 GitHub 账号，在 **Plugins → New plugin** 提交仓库 URL，并处理自动审核反馈。
 
 插件 ID `knowgrove` 当前未在 Obsidian 社区插件清单中发现冲突，但正式提交当天仍需再次核对。
 
