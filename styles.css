@@ -4302,6 +4302,28 @@ button.knowgrove-property-issue-row:hover {
   margin-top: 0;
 }
 
+.knowgrove-clickable-toggle-setting {
+  cursor: pointer;
+}
+
+.knowgrove-clickable-toggle-setting .setting-item-info:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 5px;
+  border-radius: var(--radius-s);
+}
+
+.knowgrove-setting-toggle-status {
+  min-width: 3.5em;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.knowgrove-clickable-toggle-setting.is-enabled .knowgrove-setting-toggle-status {
+  color: var(--text-accent);
+}
+
 .knowgrove-property-guide h3 {
   margin-top: 0;
 }

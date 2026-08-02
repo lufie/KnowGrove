@@ -220,6 +220,57 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   }
 
+  private addClickableToggleSetting(
+    containerEl: HTMLElement,
+    name: string,
+    description: string,
+    value: boolean,
+    onChange: (value: boolean) => Promise<void> | void,
+  ): Setting {
+    const setting = new Setting(containerEl)
+      .setName(name)
+      .setDesc(description);
+    setting.settingEl.addClass("knowgrove-clickable-toggle-setting");
+    const status = setting.controlEl.createSpan("knowgrove-setting-toggle-status");
+    let inputEl: HTMLInputElement | null = null;
+
+    const updateState = (enabled: boolean): void => {
+      status.setText(enabled ? "已开启" : "已关闭");
+      setting.settingEl.toggleClass("is-enabled", enabled);
+      setting.infoEl.setAttr("aria-checked", enabled ? "true" : "false");
+      localizeKnowGroveElement(status);
+    };
+
+    setting.addToggle((toggle) => {
+      toggle
+        .setValue(value)
+        .onChange(async (enabled) => {
+          updateState(enabled);
+          await onChange(enabled);
+        });
+      inputEl = toggle.toggleEl.querySelector("input");
+    });
+
+    const activate = (): void => {
+      const input = inputEl;
+      if (input && !input.disabled) input.click();
+    };
+    setting.settingEl.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".setting-item-control, button, input, select, textarea, a")) return;
+      activate();
+    });
+    setting.infoEl.tabIndex = 0;
+    setting.infoEl.setAttr("role", "switch");
+    setting.infoEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activate();
+    });
+    updateState(value);
+    return setting;
+  }
+
   private renderReadItLaterAdvancedSettings(containerEl: HTMLElement): void {
     const settings = this.plugin.settings;
     const capture = settings.browserCapture;
@@ -369,24 +420,26 @@ export class KnowGroveSettingTab extends PluginSettingTab {
   }
 
   private renderEnhancementSettings(containerEl: HTMLElement): void {
-    new Setting(containerEl)
-      .setName("主题列表")
-      .setDesc("默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.enableTopicIndex)
-        .onChange(async (value) => {
-          await this.plugin.setTopicIndexEnabled(value);
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "主题列表",
+      "默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。",
+      this.plugin.settings.enableTopicIndex,
+      async (value) => {
+        await this.plugin.setTopicIndexEnabled(value);
+      },
+    );
 
-    new Setting(containerEl)
-      .setName("附件冗余检测")
-      .setDesc("只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.enableAttachmentCleanup)
-        .onChange(async (value) => {
-          this.plugin.settings.enableAttachmentCleanup = value;
-          await this.plugin.savePluginData();
-        }))
+    this.addClickableToggleSetting(
+      containerEl,
+      "附件冗余检测",
+      "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。",
+      this.plugin.settings.enableAttachmentCleanup,
+      async (value) => {
+        this.plugin.settings.enableAttachmentCleanup = value;
+        await this.plugin.savePluginData();
+      },
+    )
       .addButton((button) => button
         .setButtonText("立即检查")
         .onClick(() => void this.plugin.scanUnreferencedAttachments()))
@@ -394,25 +447,27 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .setButtonText("全面检查")
         .onClick(() => void this.plugin.checkAttachmentLinkConsistency()));
 
-    new Setting(containerEl)
-      .setName("附件随笔记移动")
-      .setDesc("关闭时不改变附件位置。开启后，移动笔记时只移动由该笔记独占、且位于原笔记目录内的附件；目标位置沿用 Obsidian 全局附件设置。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.moveAttachmentsWithNote)
-        .onChange(async (value) => {
-          this.plugin.settings.moveAttachmentsWithNote = value;
-          await this.plugin.savePluginData();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "附件随笔记移动",
+      "关闭时不改变附件位置。开启后，移动笔记时只移动由该笔记独占、且位于原笔记目录内的附件；目标位置沿用 Obsidian 全局附件设置。",
+      this.plugin.settings.moveAttachmentsWithNote,
+      async (value) => {
+        this.plugin.settings.moveAttachmentsWithNote = value;
+        await this.plugin.savePluginData();
+      },
+    );
 
-    new Setting(containerEl)
-      .setName("自动整理附件")
-      .setDesc("关闭时仍可从命令面板或笔记菜单手动预览整理。开启后，编辑笔记时自动把独占附件整理到 Obsidian 全局附件位置。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.autoOrganizeAttachments)
-        .onChange(async (value) => {
-          this.plugin.settings.autoOrganizeAttachments = value;
-          await this.plugin.savePluginData();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "自动整理附件",
+      "关闭时仍可从命令面板或笔记菜单手动预览整理。开启后，编辑笔记时自动把独占附件整理到 Obsidian 全局附件位置。",
+      this.plugin.settings.autoOrganizeAttachments,
+      async (value) => {
+        this.plugin.settings.autoOrganizeAttachments = value;
+        await this.plugin.savePluginData();
+      },
+    );
 
     new Setting(containerEl)
       .setName("共享附件处理")
@@ -483,48 +538,52 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.refreshRecentFiles();
         }));
 
-    new Setting(containerEl)
-      .setName("删除多余空行")
-      .setDesc("段落间保留一个空行，删除多余空行。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.cleanupBlankLinesWithPropertyCheck)
-        .onChange(async (value) => {
-          this.plugin.settings.cleanupBlankLinesWithPropertyCheck = value;
-          await this.plugin.savePluginData();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "删除多余空行",
+      "段落间保留一个空行，删除多余空行。",
+      this.plugin.settings.cleanupBlankLinesWithPropertyCheck,
+      async (value) => {
+        this.plugin.settings.cleanupBlankLinesWithPropertyCheck = value;
+        await this.plugin.savePluginData();
+      },
+    );
 
-    new Setting(containerEl)
-      .setName("选中文字支持整块拖动")
-      .setDesc("默认开启。选中源笔记中的文字并拖到另一篇 Markdown 后，自动引用选区所在的完整块；源内容修改后，目标笔记会同步展示。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.enableBlockDragReferences)
-        .onChange(async (value) => {
-          this.plugin.settings.enableBlockDragReferences = value;
-          this.plugin.clearActiveBlockDrag();
-          await this.plugin.savePluginData();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "选中文字支持整块拖动",
+      "默认开启。选中源笔记中的文字并拖到另一篇 Markdown 后，自动引用选区所在的完整块；源内容修改后，目标笔记会同步展示。",
+      this.plugin.settings.enableBlockDragReferences,
+      async (value) => {
+        this.plugin.settings.enableBlockDragReferences = value;
+        this.plugin.clearActiveBlockDrag();
+        await this.plugin.savePluginData();
+      },
+    );
 
-    new Setting(containerEl)
-      .setName("类 Word 实时编辑")
-      .setDesc("默认开启。实时预览中保持排版；支持列表层级编辑，以及从块外一次删除完整图片或代码块。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.enableWordLikeEditing)
-        .onChange(async (value) => {
-          this.plugin.settings.enableWordLikeEditing = value;
-          await this.plugin.savePluginData();
-          this.app.workspace.updateOptions();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "类 Word 实时编辑",
+      "默认开启。实时预览中保持排版；支持列表层级编辑，以及从块外一次删除完整图片或代码块。",
+      this.plugin.settings.enableWordLikeEditing,
+      async (value) => {
+        this.plugin.settings.enableWordLikeEditing = value;
+        await this.plugin.savePluginData();
+        this.app.workspace.updateOptions();
+      },
+    );
 
-    new Setting(containerEl)
-      .setName("启用评论")
-      .setDesc("评论后，评论内容将在目标文档末尾以“评论”为标题，在该章节进行记录。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.enableComments)
-        .onChange(async (value) => {
-          this.plugin.settings.enableComments = value;
-          await this.plugin.savePluginData();
-          this.plugin.refreshCommentFeatureUi();
-        }));
+    this.addClickableToggleSetting(
+      containerEl,
+      "启用评论",
+      "评论后，评论内容将在目标文档末尾以“评论”为标题，在该章节进行记录。",
+      this.plugin.settings.enableComments,
+      async (value) => {
+        this.plugin.settings.enableComments = value;
+        await this.plugin.savePluginData();
+        this.plugin.refreshCommentFeatureUi();
+      },
+    );
   }
 
   private renderRuntimeEnvironment(containerEl: HTMLElement): void {

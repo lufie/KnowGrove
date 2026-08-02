@@ -151,6 +151,8 @@ const ENGLISH: Record<string, string> = {
   "正在检查": "Checking",
   "重新检查": "Check again",
   "知道了": "Got it",
+  "已开启": "On",
+  "已关闭": "Off",
   "评论": "Comment",
   "取消": "Cancel",
   "保存评论": "Save comment",
@@ -273,7 +275,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "模型名称": "模型", "作品文件夹": "作品資料夾", "选择文件夹": "選擇資料夾", "阅读列表": "閱讀列表",
     "未读": "未讀", "已读": "已讀", "主题": "主題", "工作台": "工作區", "研究": "研究", "项目": "專案",
     "生活": "生活", "知识树": "知識樹", "处理": "處理", "正在检查": "檢查中", "重新检查": "重新檢查",
-    "知道了": "知道了", "评论": "評論", "取消": "取消", "保存评论": "儲存評論", "保存修改": "儲存變更",
+    "知道了": "知道了", "已开启": "已開啟", "已关闭": "已關閉", "评论": "評論", "取消": "取消", "保存评论": "儲存評論", "保存修改": "儲存變更",
     "打开原文": "開啟原文", "暂不处理": "暫不處理", "移入回收站": "移至回收筒", "全选": "全選",
   },
   ja: {
@@ -286,7 +288,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "模型名称": "モデル", "作品文件夹": "出力フォルダー", "选择文件夹": "フォルダーを選択", "阅读列表": "リーディングリスト",
     "未读": "未読", "已读": "既読", "主题": "トピック", "工作台": "ワークスペース", "研究": "リサーチ", "项目": "プロジェクト",
     "生活": "ライフ", "知识树": "ナレッジツリー", "处理": "修正", "正在检查": "確認中", "重新检查": "再確認",
-    "知道了": "OK", "评论": "コメント", "取消": "キャンセル", "保存评论": "コメントを保存", "保存修改": "変更を保存",
+    "知道了": "OK", "已开启": "オン", "已关闭": "オフ", "评论": "コメント", "取消": "キャンセル", "保存评论": "コメントを保存", "保存修改": "変更を保存",
     "打开原文": "元のノートを開く", "暂不处理": "後で", "移入回收站": "ゴミ箱へ移動", "全选": "すべて選択",
   },
   ko: {
@@ -298,7 +300,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "모바일 캡처", "剪藏内容解析": "캡처 처리", "模型选择": "모델 공급자", "模型名称": "모델",
     "作品文件夹": "출력 폴더", "选择文件夹": "폴더 선택", "阅读列表": "읽기 목록", "未读": "읽지 않음", "已读": "읽음",
     "主题": "주제", "工作台": "작업 공간", "研究": "연구", "项目": "프로젝트", "生活": "생활", "知识树": "지식 트리",
-    "处理": "해결", "正在检查": "검사 중", "重新检查": "다시 검사", "知道了": "확인", "评论": "댓글", "取消": "취소",
+    "处理": "해결", "正在检查": "검사 중", "重新检查": "다시 검사", "知道了": "확인", "已开启": "켜짐", "已关闭": "꺼짐", "评论": "댓글", "取消": "취소",
     "保存评论": "댓글 저장", "保存修改": "변경 사항 저장", "打开原文": "원본 노트 열기", "暂不处理": "나중에", "移入回收站": "휴지통으로 이동", "全选": "모두 선택",
   },
   de: {
@@ -310,7 +312,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "Mobile Erfassung", "剪藏内容解析": "Erfasste Inhalte verarbeiten", "模型选择": "Modellanbieter", "模型名称": "Modell",
     "作品文件夹": "Ausgabeordner", "选择文件夹": "Ordner auswählen", "阅读列表": "Leseliste", "未读": "Ungelesen", "已读": "Gelesen",
     "主题": "Themen", "工作台": "Arbeitsbereich", "研究": "Recherche", "项目": "Projekte", "生活": "Leben", "知识树": "Wissensbaum",
-    "处理": "Beheben", "正在检查": "Wird geprüft", "重新检查": "Erneut prüfen", "知道了": "Verstanden", "评论": "Kommentar", "取消": "Abbrechen",
+    "处理": "Beheben", "正在检查": "Wird geprüft", "重新检查": "Erneut prüfen", "知道了": "Verstanden", "已开启": "Ein", "已关闭": "Aus", "评论": "Kommentar", "取消": "Abbrechen",
     "保存评论": "Kommentar speichern", "保存修改": "Änderungen speichern", "打开原文": "Quellnotiz öffnen", "暂不处理": "Nicht jetzt", "移入回收站": "In Papierkorb verschieben", "全选": "Alle auswählen",
   },
   fr: {
@@ -322,7 +324,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "Capture mobile", "剪藏内容解析": "Traitement des captures", "模型选择": "Fournisseur du modèle", "模型名称": "Modèle",
     "作品文件夹": "Dossier de sortie", "选择文件夹": "Choisir un dossier", "阅读列表": "Liste de lecture", "未读": "Non lu", "已读": "Lu",
     "主题": "Sujets", "工作台": "Espace de travail", "研究": "Recherche", "项目": "Projets", "生活": "Vie", "知识树": "Arbre de connaissances",
-    "处理": "Corriger", "正在检查": "Vérification", "重新检查": "Vérifier à nouveau", "知道了": "Compris", "评论": "Commentaire", "取消": "Annuler",
+    "处理": "Corriger", "正在检查": "Vérification", "重新检查": "Vérifier à nouveau", "知道了": "Compris", "已开启": "Activé", "已关闭": "Désactivé", "评论": "Commentaire", "取消": "Annuler",
     "保存评论": "Enregistrer le commentaire", "保存修改": "Enregistrer", "打开原文": "Ouvrir la note source", "暂不处理": "Plus tard", "移入回收站": "Mettre à la corbeille", "全选": "Tout sélectionner",
   },
   es: {
@@ -334,7 +336,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "Captura móvil", "剪藏内容解析": "Procesamiento de capturas", "模型选择": "Proveedor del modelo", "模型名称": "Modelo",
     "作品文件夹": "Carpeta de salida", "选择文件夹": "Elegir carpeta", "阅读列表": "Lista de lectura", "未读": "Sin leer", "已读": "Leído",
     "主题": "Temas", "工作台": "Espacio de trabajo", "研究": "Investigación", "项目": "Proyectos", "生活": "Vida", "知识树": "Árbol de conocimiento",
-    "处理": "Corregir", "正在检查": "Comprobando", "重新检查": "Comprobar de nuevo", "知道了": "Entendido", "评论": "Comentario", "取消": "Cancelar",
+    "处理": "Corregir", "正在检查": "Comprobando", "重新检查": "Comprobar de nuevo", "知道了": "Entendido", "已开启": "Activado", "已关闭": "Desactivado", "评论": "Comentario", "取消": "Cancelar",
     "保存评论": "Guardar comentario", "保存修改": "Guardar cambios", "打开原文": "Abrir nota original", "暂不处理": "Ahora no", "移入回收站": "Mover a la papelera", "全选": "Seleccionar todo",
   },
   "pt-BR": {
@@ -346,7 +348,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "Captura no celular", "剪藏内容解析": "Processamento de capturas", "模型选择": "Provedor do modelo", "模型名称": "Modelo",
     "作品文件夹": "Pasta de saída", "选择文件夹": "Escolher pasta", "阅读列表": "Lista de leitura", "未读": "Não lido", "已读": "Lido",
     "主题": "Tópicos", "工作台": "Espaço de trabalho", "研究": "Pesquisa", "项目": "Projetos", "生活": "Vida", "知识树": "Árvore de conhecimento",
-    "处理": "Corrigir", "正在检查": "Verificando", "重新检查": "Verificar novamente", "知道了": "Entendi", "评论": "Comentário", "取消": "Cancelar",
+    "处理": "Corrigir", "正在检查": "Verificando", "重新检查": "Verificar novamente", "知道了": "Entendi", "已开启": "Ativado", "已关闭": "Desativado", "评论": "Comentário", "取消": "Cancelar",
     "保存评论": "Salvar comentário", "保存修改": "Salvar alterações", "打开原文": "Abrir nota original", "暂不处理": "Agora não", "移入回收站": "Mover para a lixeira", "全选": "Selecionar tudo",
   },
   ru: {
@@ -358,7 +360,7 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "手机端剪藏": "Сохранение с телефона", "剪藏内容解析": "Обработка сохранённых материалов", "模型选择": "Поставщик модели", "模型名称": "Модель",
     "作品文件夹": "Папка результатов", "选择文件夹": "Выбрать папку", "阅读列表": "Список чтения", "未读": "Не прочитано", "已读": "Прочитано",
     "主题": "Темы", "工作台": "Рабочая область", "研究": "Исследования", "项目": "Проекты", "生活": "Жизнь", "知识树": "Дерево знаний",
-    "处理": "Исправить", "正在检查": "Проверка", "重新检查": "Проверить снова", "知道了": "Понятно", "评论": "Комментарий", "取消": "Отмена",
+    "处理": "Исправить", "正在检查": "Проверка", "重新检查": "Проверить снова", "知道了": "Понятно", "已开启": "Включено", "已关闭": "Выключено", "评论": "Комментарий", "取消": "Отмена",
     "保存评论": "Сохранить комментарий", "保存修改": "Сохранить изменения", "打开原文": "Открыть исходную заметку", "暂不处理": "Не сейчас", "移入回收站": "Переместить в корзину", "全选": "Выбрать всё",
   },
 };
