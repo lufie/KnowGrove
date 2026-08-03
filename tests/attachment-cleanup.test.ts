@@ -10,6 +10,7 @@ import {
   isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
   parentVaultPath,
+  selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
   uniqueAttachmentTargetPath,
 } from "../src/attachment-cleanup-core";
@@ -59,6 +60,28 @@ test("attachment cleanup only manages a conservative attachment allowlist", () =
   assert.equal(isAttachmentCleanupExcludedPath("Home/🕹️skills/demo/assets/icon.png"), true);
   assert.equal(isAttachmentCleanupExcludedPath("project/node_modules/package/logo.svg"), true);
   assert.equal(isAttachmentCleanupExcludedPath("Home/资料/assets/icon.png"), false);
+});
+
+test("full attachment scans filter large excluded trees before opening source files", () => {
+  const dependencySources = Array.from(
+    { length: 20_000 },
+    (_, index) => `Tools/node_modules/package-${index}/README.md`,
+  );
+  const paths = [
+    ...dependencySources,
+    "Home/🕹️skills/parser/SKILL.md",
+    "Archive/Raw/imported.md",
+    ".obsidian/plugins/example/README.md",
+    "Home/Notes/research.md",
+    "Home/Boards/research.canvas",
+    "Home/Views/research.base",
+    "Home/assets/image.png",
+  ];
+
+  assert.deepEqual(
+    selectAttachmentReferenceSourcePaths(paths, ["Archive/Raw"]),
+    ["Home/Notes/research.md", "Home/Boards/research.canvas", "Home/Views/research.base"],
+  );
 });
 
 test("attachment cleanup accepts safe custom types without treating note sources as attachments", () => {

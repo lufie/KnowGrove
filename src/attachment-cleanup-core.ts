@@ -95,6 +95,17 @@ export function isAttachmentCleanupExcludedByFolders(path: string, folders: Iter
   });
 }
 
+export function selectAttachmentReferenceSourcePaths(
+  paths: Iterable<string>,
+  excludedFolders: Iterable<string>,
+): string[] {
+  return Array.from(paths).filter((path) => (
+    isAttachmentReferenceSource(path)
+    && !isAttachmentCleanupExcludedPath(path)
+    && !isAttachmentCleanupExcludedByFolders(path, excludedFolders)
+  ));
+}
+
 function normalizeReferenceTarget(rawTarget: string): string | null {
   let target = rawTarget.trim();
   if (!target) return null;

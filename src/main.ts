@@ -19,7 +19,7 @@ import {
   setIcon,
 } from "obsidian";
 import { AIPropertyBatchModal } from "./ai-property-modal";
-import { AttachmentCleanupManager, normalizeAttachmentExtensions } from "./attachment-cleanup";
+import { AttachmentCleanupManager, normalizeAttachmentExtensions, type AttachmentScanProgress } from "./attachment-cleanup";
 import {
   buildAIBatchPropertyPrompt,
   aiManagedDimensions,
@@ -682,6 +682,16 @@ export default class KnowGrovePlugin extends Plugin {
       callback: () => void this.checkAttachmentLinkConsistency(),
     });
     this.addCommand({
+      id: "stop-attachment-full-scan",
+      name: "停止附件全库检查",
+      checkCallback: (checking) => {
+        const manager = this.attachmentCleanupManager;
+        if (!manager?.isFullScanActive()) return false;
+        if (!checking && manager.cancelFullScan()) new Notice("正在停止附件检查…");
+        return true;
+      },
+    });
+    this.addCommand({
       id: "organize-current-note-attachments",
       name: "整理当前笔记附件",
       callback: () => {
@@ -823,7 +833,17 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async scanUnreferencedAttachments(): Promise<void> {
-    await this.attachmentCleanupManager?.scan(true);
+    const manager = this.attachmentCleanupManager;
+    if (!manager) return;
+    const notice = new Notice("正在准备附件检查…", 0);
+    try {
+      await manager.scan(true, (progress) => notice.setMessage(this.attachmentScanProgressMessage(progress)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(message === "附件检查已停止" ? message : `附件检查失败：${message}`, 7000);
+    } finally {
+      notice.hide();
+    }
   }
 
   async checkAttachmentLinkConsistency(): Promise<void> {
@@ -832,13 +852,22 @@ export default class KnowGrovePlugin extends Plugin {
       new Notice("附件检查组件尚未就绪，请重新加载插件后再试");
       return;
     }
-    new Notice("正在检查附件与链接…");
+    const notice = new Notice("正在准备附件与链接检查…", 0);
     try {
-      await manager.checkConsistency();
+      await manager.checkConsistency((progress) => notice.setMessage(this.attachmentScanProgressMessage(progress)));
     } catch (error) {
       console.error("KnowGrove attachment consistency check failed", error);
-      new Notice(`附件检查失败：${error instanceof Error ? error.message : String(error)}`, 7000);
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(message === "附件检查已停止" ? message : `附件检查失败：${message}`, 7000);
+    } finally {
+      notice.hide();
     }
+  }
+
+  private attachmentScanProgressMessage(progress: AttachmentScanProgress): string {
+    const label = progress.phase === "index" ? "正在建立附件索引" : "正在检查断链";
+    const percent = progress.total ? Math.round((progress.processed / progress.total) * 100) : 100;
+    return `${label}：${progress.processed}/${progress.total}（${percent}%）\n可在命令面板执行“停止附件全库检查”`;
   }
 
   async organizeNoteAttachments(file: TFile): Promise<void> {
@@ -846,7 +875,17 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async organizeAllAttachments(): Promise<void> {
-    await this.attachmentCleanupManager?.organizeAllAttachments();
+    const manager = this.attachmentCleanupManager;
+    if (!manager) return;
+    const notice = new Notice("正在准备全库附件整理…", 0);
+    try {
+      await manager.organizeAllAttachments((progress) => notice.setMessage(this.attachmentScanProgressMessage(progress)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(message === "附件检查已停止" ? message : `附件整理失败：${message}`, 7000);
+    } finally {
+      notice.hide();
+    }
   }
 
   refreshAttachmentCleanupConfiguration(): void {
@@ -1384,6 +1423,16 @@ export default class KnowGrovePlugin extends Plugin {
         return [[normalizePath(path), {
           firstReferencedAt: typeof record.firstReferencedAt === "number" ? record.firstReferencedAt : Date.now(),
           lastReferencedAt: typeof record.lastReferencedAt === "number" ? record.lastReferencedAt : Date.now(),
+          currentSourcePaths: Array.isArray(record.currentSourcePaths)
+            ? record.currentSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+            : Array.isArray(record.lastSourcePaths)
+              ? record.lastSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+              : [],
+          currentContentSourcePaths: Array.isArray(record.currentContentSourcePaths)
+            ? record.currentContentSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+            : Array.isArray(record.lastContentSourcePaths)
+              ? record.lastContentSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
+              : [],
           lastSourcePaths: Array.isArray(record.lastSourcePaths)
             ? record.lastSourcePaths.filter((source): source is string => typeof source === "string").map(normalizePath)
             : [],
