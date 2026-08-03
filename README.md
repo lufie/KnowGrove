@@ -2,7 +2,7 @@
 
 > Grow scattered notes into connected topics, evidence, research, and reusable knowledge inside Obsidian.
 
-[简体中文](docs/locales/README.zh-CN.md) · [繁體中文](docs/locales/README.zh-TW.md) · **English** · [日本語](docs/locales/README.ja.md) · [한국어](docs/locales/README.ko.md) · [Deutsch](docs/locales/README.de.md) · [Français](docs/locales/README.fr.md) · [Español](docs/locales/README.es.md) · [Português (Brasil)](docs/locales/README.pt-BR.md) · [Русский](docs/locales/README.ru.md)
+[简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · **English** · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
