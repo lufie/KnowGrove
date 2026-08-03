@@ -29,7 +29,7 @@ User content is never translated. Note titles, paths, comments, domains, topics,
 
 ### Community plugins
 
-After KnowGrove is accepted into the Obsidian community directory:
+KnowGrove is available in the Obsidian community directory:
 
 1. Open **Settings → Community plugins** in Obsidian.
 2. Select **Browse**, search for **KnowGrove**, and choose **Install**.
@@ -93,7 +93,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public. GitHub Releases are the first distribution channel while the Obsidian community-directory submission is reviewed. Current submission status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public, and version `2.7.4` is available through GitHub Releases and the Obsidian community directory. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 
