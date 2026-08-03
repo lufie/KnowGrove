@@ -432,7 +432,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     this.addClickableToggleSetting(
       containerEl,
       "附件冗余检测",
-      "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。",
+      "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。",
       this.plugin.settings.enableAttachmentCleanup,
       async (value) => {
         this.plugin.settings.enableAttachmentCleanup = value;
@@ -440,13 +440,13 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       },
     )
       .addButton((button) => button
-        .setButtonText("检查附件")
+        .setButtonText("全库检查")
         .onClick(async () => {
-          button.setDisabled(true).setButtonText("正在检查");
+          button.setDisabled(true).setButtonText("检查中");
           try {
             await this.plugin.checkAttachmentLinkConsistency();
           } finally {
-            button.setDisabled(false).setButtonText("检查附件");
+            button.setDisabled(false).setButtonText("全库检查");
           }
         }));
 

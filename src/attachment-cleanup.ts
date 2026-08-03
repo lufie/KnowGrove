@@ -1,4 +1,4 @@
-import { Modal, Notice, TFile, TFolder, normalizePath, setIcon, type CachedMetadata } from "obsidian";
+import { MarkdownView, Modal, Notice, TFile, TFolder, normalizePath, setIcon, type CachedMetadata } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import {
   extractVaultReferenceTargets,
@@ -10,6 +10,7 @@ import {
   isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
   parentVaultPath,
+  selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
   uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
@@ -23,13 +24,13 @@ export {
   isPathInsideVaultFolder,
   normalizeAttachmentExtensions,
   parentVaultPath,
+  selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
   uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
 
-const DAILY_SCAN_INTERVAL = 24 * 60 * 60 * 1_000;
-const SCAN_CHECK_INTERVAL = 60 * 60 * 1_000;
-const NEW_ATTACHMENT_GRACE_PERIOD = 10 * 60 * 1_000;
+const FULL_SCAN_YIELD_INTERVAL = 10;
+const FULL_SCAN_YIELD_DELAY_MS = 4;
 
 export type AttachmentCleanupReason = "reference-removed" | "source-deleted" | "manual" | "daily";
 
@@ -47,6 +48,27 @@ export interface AttachmentCandidate {
 interface AttachmentReferenceSnapshot {
   all: Set<string>;
   content: Set<string>;
+}
+
+export interface AttachmentScanProgress {
+  phase: "index" | "consistency";
+  processed: number;
+  total: number;
+}
+
+type AttachmentScanProgressListener = (progress: AttachmentScanProgress) => void;
+
+class AttachmentScanCancelledError extends Error {
+  constructor() {
+    super("附件检查已停止");
+    this.name = "AttachmentScanCancelledError";
+  }
+}
+
+interface AttachmentLookup {
+  byPath: Map<string, TFile[]>;
+  byName: Map<string, TFile[]>;
+  byStem: Map<string, TFile[]>;
 }
 
 interface AttachmentMoveCandidate {
@@ -244,13 +266,12 @@ export class AttachmentCleanupManager {
   private readonly pendingPreviousContentReferences = new Map<string, Set<string>>();
   private readonly deletedSourceSnapshots = new Map<string, AttachmentReferenceSnapshot>();
   private readonly deletedSourceSnapshotTimers = new Map<string, number>();
-  private initialized = false;
   private indexing?: Promise<void>;
   private readonly refreshTimers = new Map<string, number>();
-  private dailyTimer?: number;
-  private configurationRefreshTimer?: number;
   private promptScheduled = false;
   private scanPromise?: Promise<void>;
+  private fullScanRunning = false;
+  private fullScanCancelRequested = false;
   private pendingPromptReason: AttachmentCleanupReason = "reference-removed";
   private readonly pendingPromptPaths = new Set<string>();
   private readonly pendingMetadataSourcePaths = new Map<string, Set<string>>();
@@ -259,13 +280,22 @@ export class AttachmentCleanupManager {
   private readonly organizingSources = new Set<string>();
 
   constructor(private readonly plugin: KnowGrovePlugin) {
-    for (const [attachmentPath, usage] of Object.entries(plugin.data.attachmentUsage)) {
-      for (const sourcePath of usage.lastSourcePaths) {
+    this.loadPersistedIndex();
+  }
+
+  private loadPersistedIndex(): void {
+    this.sourceReferences.clear();
+    this.sourceContentReferences.clear();
+    for (const [attachmentPath, usage] of Object.entries(this.plugin.data.attachmentUsage)) {
+      if (this.isExcludedPath(attachmentPath)) continue;
+      for (const sourcePath of usage.currentSourcePaths ?? usage.lastSourcePaths) {
+        if (this.isExcludedPath(sourcePath) || !isAttachmentReferenceSource(sourcePath)) continue;
         const references = this.sourceReferences.get(sourcePath) ?? new Set<string>();
         references.add(attachmentPath);
         this.sourceReferences.set(sourcePath, references);
       }
-      for (const sourcePath of usage.lastContentSourcePaths) {
+      for (const sourcePath of usage.currentContentSourcePaths ?? usage.lastContentSourcePaths) {
+        if (this.isExcludedPath(sourcePath) || !isAttachmentReferenceSource(sourcePath)) continue;
         const references = this.sourceContentReferences.get(sourcePath) ?? new Set<string>();
         references.add(attachmentPath);
         this.sourceContentReferences.set(sourcePath, references);
@@ -274,13 +304,12 @@ export class AttachmentCleanupManager {
   }
 
   start(): void {
-    void this.rebuildIndex().then(() => this.runDailyScanIfDue());
-    this.dailyTimer = window.setInterval(() => void this.runDailyScanIfDue(), SCAN_CHECK_INTERVAL);
+    // The persisted reference history is enough for incremental edit/delete checks.
+    // Full-vault indexing is deliberately reserved for explicit manual actions.
   }
 
   stop(): void {
-    if (this.dailyTimer !== undefined) window.clearInterval(this.dailyTimer);
-    if (this.configurationRefreshTimer !== undefined) window.clearTimeout(this.configurationRefreshTimer);
+    this.fullScanCancelRequested = true;
     for (const timer of this.refreshTimers.values()) window.clearTimeout(timer);
     for (const timer of this.deletedSourceSnapshotTimers.values()) window.clearTimeout(timer);
     this.refreshTimers.clear();
@@ -289,20 +318,25 @@ export class AttachmentCleanupManager {
   }
 
   configurationChanged(): void {
-    this.initialized = false;
     this.extraExtensionCacheKey = "";
-    if (this.configurationRefreshTimer !== undefined) window.clearTimeout(this.configurationRefreshTimer);
-    this.configurationRefreshTimer = window.setTimeout(() => {
-      this.configurationRefreshTimer = undefined;
-      void this.rebuildIndex();
-    }, 600);
+    this.loadPersistedIndex();
+  }
+
+  isFullScanActive(): boolean {
+    return this.fullScanRunning;
+  }
+
+  cancelFullScan(): boolean {
+    if (!this.fullScanRunning) return false;
+    this.fullScanCancelRequested = true;
+    return true;
   }
 
   captureSourceBeforeDelete(file: TFile, previousCache: CachedMetadata | null): void {
-    if (!isAttachmentReferenceSource(file.path)) return;
-    const attachmentFiles = this.managedAttachments();
+    if (!isAttachmentReferenceSource(file.path) || this.isExcludedPath(file.path)) return;
+    const attachmentLookup = this.createAttachmentLookup([]);
     const snapshot = previousCache
-      ? this.referenceSnapshotFromCache(file, previousCache, attachmentFiles, false)
+      ? this.referenceSnapshotFromCache(file, previousCache, attachmentLookup, false)
       : { all: new Set<string>(), content: new Set<string>() };
     for (const path of this.referencesBeforeRefresh(file.path)) snapshot.all.add(path);
     for (const path of this.referencesBeforeRefresh(file.path, true)) snapshot.content.add(path);
@@ -317,7 +351,7 @@ export class AttachmentCleanupManager {
   }
 
   scheduleSourceRefresh(file: TFile): void {
-    if (!isAttachmentReferenceSource(file.path)) return;
+    if (!isAttachmentReferenceSource(file.path) || this.isExcludedPath(file.path)) return;
     if (!this.pendingPreviousReferences.has(file.path)) {
       this.pendingPreviousReferences.set(file.path, this.referencesBeforeRefresh(file.path));
       this.pendingPreviousContentReferences.set(file.path, this.referencesBeforeRefresh(file.path, true));
@@ -330,11 +364,11 @@ export class AttachmentCleanupManager {
   }
 
   refreshSourceAfterMetadataChange(file: TFile): void {
-    if (!isAttachmentReferenceSource(file.path)) return;
     const timer = this.refreshTimers.get(file.path);
-    if (timer !== undefined) window.clearTimeout(timer);
-    this.refreshTimers.delete(file.path);
-    void this.refreshSource(file);
+    // MetadataCache emits "changed" for many files while Obsidian builds its own
+    // startup cache. Only real vault edits create a timer, and that debounced
+    // content read remains the source of truth instead of a potentially stale cache.
+    if (timer === undefined) return;
   }
 
   async handleDelete(file: TFile): Promise<void> {
@@ -346,7 +380,6 @@ export class AttachmentCleanupManager {
     const previousBeforeIndex = captured?.all ?? (isAttachmentReferenceSource(file.path)
       ? this.referencesBeforeRefresh(file.path)
       : new Set<string>());
-    await this.ensureIndex();
     if (this.isManagedAttachment(file.path)) {
       for (const references of this.sourceReferences.values()) references.delete(file.path);
       for (const references of this.sourceContentReferences.values()) references.delete(file.path);
@@ -364,11 +397,13 @@ export class AttachmentCleanupManager {
     this.sourceContentReferences.delete(file.path);
     this.pendingPreviousReferences.delete(file.path);
     this.pendingPreviousContentReferences.delete(file.path);
+    if (this.recordCurrentUsage(this.sourceReferences, this.sourceContentReferences)) {
+      await this.plugin.savePluginData();
+    }
     this.queuePotentialOrphans(previous, "source-deleted");
   }
 
   async handleRename(file: TFile, oldPath: string): Promise<void> {
-    await this.ensureIndex();
     const previousContentReferences = isAttachmentReferenceSource(oldPath)
       ? this.referencesBeforeRefresh(oldPath, true)
       : new Set<string>();
@@ -383,13 +418,20 @@ export class AttachmentCleanupManager {
     this.sourceReferences.delete(oldPath);
     this.sourceContentReferences.delete(oldPath);
     if (this.isManagedAttachment(oldPath) || this.isManagedAttachment(file.path)) {
+      for (const references of this.sourceReferences.values()) {
+        if (!references.delete(oldPath)) continue;
+        if (this.isManagedAttachment(file.path) && !this.isExcludedPath(file.path)) references.add(file.path);
+      }
+      for (const references of this.sourceContentReferences.values()) {
+        if (!references.delete(oldPath)) continue;
+        if (this.isManagedAttachment(file.path) && !this.isExcludedPath(file.path)) references.add(file.path);
+      }
       const previousUsage = this.plugin.data.attachmentUsage[oldPath];
       if (previousUsage) {
         this.plugin.data.attachmentUsage[file.path] = previousUsage;
         delete this.plugin.data.attachmentUsage[oldPath];
         await this.plugin.savePluginData();
       }
-      await this.rebuildIndex();
       return;
     }
     if (isAttachmentReferenceSource(file.path)) this.scheduleSourceRefresh(file);
@@ -397,7 +439,7 @@ export class AttachmentCleanupManager {
 
   async organizeCurrentNote(file: TFile): Promise<void> {
     if (file.extension !== "md") return;
-    await this.rebuildIndex();
+    await this.refreshSource(file, false);
     const candidates = this.buildMovePlansForSource(file, this.referencesBeforeRefresh(file.path, true));
     if (!candidates.length) {
       new Notice("当前笔记的附件已经符合 Obsidian 全局附件位置，或共享附件已按设置跳过");
@@ -406,8 +448,8 @@ export class AttachmentCleanupManager {
     new AttachmentMoveModal(this.plugin, candidates, true, (selected) => this.executeMovePlans(selected, true)).open();
   }
 
-  async organizeAllAttachments(): Promise<void> {
-    await this.rebuildIndex();
+  async organizeAllAttachments(onProgress?: AttachmentScanProgressListener): Promise<void> {
+    await this.runFullScan((progress) => this.rebuildIndex(progress), onProgress);
     const candidates: AttachmentMoveCandidate[] = [];
     const reservedTargets = new Set(this.plugin.app.vault.getFiles().map((file) => file.path));
     for (const [sourcePath, references] of this.sourceContentReferences) {
@@ -425,12 +467,20 @@ export class AttachmentCleanupManager {
     new AttachmentMoveModal(this.plugin, candidates, false, (selected) => this.executeMovePlans(selected, true)).open();
   }
 
-  async checkConsistency(): Promise<void> {
-    await this.rebuildIndex();
+  async checkConsistency(onProgress?: AttachmentScanProgressListener): Promise<void> {
+    await this.runFullScan(async (progress) => {
+      await this.rebuildIndex(progress);
+      await this.buildConsistencyReport(progress);
+    }, onProgress);
+  }
+
+  private async buildConsistencyReport(onProgress?: AttachmentScanProgressListener): Promise<void> {
     const attachments = this.managedAttachments();
+    const attachmentLookup = this.createAttachmentLookup(attachments);
     const broken: BrokenAttachmentReference[] = [];
-    const sources = this.plugin.app.vault.getFiles().filter((file) => isAttachmentReferenceSource(file.path) && !this.isExcludedPath(file.path));
-    for (const source of sources) {
+    const sources = this.referenceSources();
+    for (const [index, source] of sources.entries()) {
+      this.throwIfFullScanCancelled();
       let content = "";
       try {
         content = await this.plugin.app.vault.cachedRead(source);
@@ -443,11 +493,16 @@ export class AttachmentCleanupManager {
         if (resolved instanceof TFile && this.isManagedAttachment(resolved.path)) continue;
         const targetPath = normalizePath(target.split("#", 1)[0] ?? target).toLocaleLowerCase();
         const targetName = targetPath.split("/").pop() ?? targetPath;
-        const matches = attachments
-          .filter((file) => file.name.toLocaleLowerCase() === targetName || file.path.toLocaleLowerCase() === targetPath)
-          .map((file) => file.path);
+        const matches = Array.from(new Set([
+          ...(attachmentLookup.byPath.get(targetPath) ?? []),
+          ...(attachmentLookup.byName.get(targetName) ?? []),
+        ])).map((file) => file.path);
         broken.push({ sourcePath: source.path, target, matches });
       }
+      if ((index + 1) % FULL_SCAN_YIELD_INTERVAL === 0 || index + 1 === sources.length) {
+        onProgress?.({ phase: "consistency", processed: index + 1, total: sources.length });
+      }
+      await this.yieldDuringFullScan(index + 1);
     }
 
     const shared = Array.from(this.attachmentSources()).filter(([, sourcePaths]) => sourcePaths.length > 1);
@@ -463,17 +518,17 @@ export class AttachmentCleanupManager {
     new Notice(`附件与链接检查完成：断链 ${broken.length}，待整理 ${misplaced.length}，共享 ${shared.length}，历史失联 ${orphaned.length}`);
   }
 
-  async scan(manual = true): Promise<void> {
+  async scan(manual = true, onProgress?: AttachmentScanProgressListener): Promise<void> {
     if (this.scanPromise) return this.scanPromise;
-    this.scanPromise = this.performScan(manual).finally(() => {
+    this.scanPromise = this.runFullScan((progress) => this.performScan(manual, progress), onProgress).finally(() => {
       this.scanPromise = undefined;
     });
     return this.scanPromise;
   }
 
-  private async performScan(manual: boolean): Promise<void> {
-    await this.rebuildIndex();
-    const candidates = this.orphanCandidates(manual ? 0 : NEW_ATTACHMENT_GRACE_PERIOD);
+  private async performScan(manual: boolean, onProgress?: AttachmentScanProgressListener): Promise<void> {
+    await this.rebuildIndex(onProgress);
+    const candidates = this.orphanCandidates(0);
     this.plugin.settings.lastAttachmentCleanupScanAt = Date.now();
     await this.plugin.savePluginData();
     if (!candidates.length) {
@@ -483,52 +538,64 @@ export class AttachmentCleanupManager {
     new AttachmentCleanupModal(this.plugin, candidates, manual ? "manual" : "daily", (paths) => this.trash(paths)).open();
   }
 
-  private async runDailyScanIfDue(): Promise<void> {
-    if (!this.plugin.settings.enableAttachmentCleanup) return;
-    if (Date.now() - this.plugin.settings.lastAttachmentCleanupScanAt < DAILY_SCAN_INTERVAL) return;
-    await this.scan(false);
+  private async runFullScan(
+    task: (onProgress?: AttachmentScanProgressListener) => Promise<void>,
+    onProgress?: AttachmentScanProgressListener,
+  ): Promise<void> {
+    if (this.fullScanRunning) throw new Error("已有附件全库检查正在运行");
+    this.fullScanRunning = true;
+    this.fullScanCancelRequested = false;
+    try {
+      await task(onProgress);
+    } finally {
+      this.fullScanRunning = false;
+      this.fullScanCancelRequested = false;
+    }
   }
 
-  private async ensureIndex(): Promise<void> {
-    if (this.initialized) return;
-    await this.rebuildIndex();
+  private throwIfFullScanCancelled(): void {
+    if (this.fullScanCancelRequested) throw new AttachmentScanCancelledError();
   }
 
-  private async rebuildIndex(): Promise<void> {
+  private async yieldDuringFullScan(processed: number): Promise<void> {
+    if (processed % FULL_SCAN_YIELD_INTERVAL !== 0) return;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, FULL_SCAN_YIELD_DELAY_MS));
+    this.throwIfFullScanCancelled();
+  }
+
+  private referenceSources(files = this.plugin.app.vault.getFiles()): TFile[] {
+    const excludedFolders = [
+      ...this.plugin.settings.propertySystem.excludedFolders,
+      ...this.plugin.settings.attachmentCleanupExcludedFolders,
+    ];
+    const selectedPaths = new Set(selectAttachmentReferenceSourcePaths(
+      files.map((file) => file.path),
+      excludedFolders,
+    ));
+    return files.filter((file) => selectedPaths.has(file.path));
+  }
+
+  private async rebuildIndex(onProgress?: AttachmentScanProgressListener): Promise<void> {
     if (this.indexing) return this.indexing;
     this.indexing = (async () => {
       const next = new Map<string, Set<string>>();
       const nextContent = new Map<string, Set<string>>();
       const files = this.plugin.app.vault.getFiles();
-      const attachmentFiles = this.managedAttachments(files);
-      const markdownSources = files.filter((file) => file.extension === "md");
-      const uncachedMarkdownSources: TFile[] = [];
-      for (const file of markdownSources) {
-        const snapshot = this.cachedMarkdownReferenceSnapshot(file, attachmentFiles);
-        if (snapshot === null) {
-          uncachedMarkdownSources.push(file);
-          continue;
-        }
+      const attachmentLookup = this.createAttachmentLookup(this.managedAttachments(files));
+      const sources = this.referenceSources(files);
+      for (const [index, file] of sources.entries()) {
+        this.throwIfFullScanCancelled();
+        const snapshot = file.extension === "md"
+          ? this.cachedMarkdownReferenceSnapshot(file, attachmentLookup)
+            ?? await this.readReferenceSnapshotFromContent(file, attachmentLookup)
+          : await this.readReferenceSnapshotFromContent(file, attachmentLookup);
         if (snapshot.all.size) next.set(file.path, snapshot.all);
         if (snapshot.content.size) nextContent.set(file.path, snapshot.content);
-      }
-      const sources = [
-        ...uncachedMarkdownSources,
-        ...files.filter((file) => file.extension === "canvas" || file.extension === "base"),
-      ];
-      let cursor = 0;
-      const worker = async (): Promise<void> => {
-        while (cursor < sources.length) {
-          const file = sources[cursor];
-          cursor += 1;
-          if (file) {
-            const snapshot = await this.readReferenceSnapshot(file, attachmentFiles);
-            if (snapshot.all.size) next.set(file.path, snapshot.all);
-            if (snapshot.content.size) nextContent.set(file.path, snapshot.content);
-          }
+        if ((index + 1) % FULL_SCAN_YIELD_INTERVAL === 0 || index + 1 === sources.length) {
+          onProgress?.({ phase: "index", processed: index + 1, total: sources.length });
         }
-      };
-      await Promise.all(Array.from({ length: Math.min(8, sources.length) }, () => worker()));
+        await this.yieldDuringFullScan(index + 1);
+      }
       this.sourceReferences.clear();
       for (const [path, references] of next) this.sourceReferences.set(path, references);
       this.sourceContentReferences.clear();
@@ -537,22 +604,21 @@ export class AttachmentCleanupManager {
       const recordedUsage = this.recordCurrentUsage(next, nextContent);
       const usageChanged = prunedUsage || recordedUsage;
       if (usageChanged) await this.plugin.savePluginData();
-      this.initialized = true;
     })().finally(() => {
       this.indexing = undefined;
     });
     return this.indexing;
   }
 
-  private async refreshSource(file: TFile): Promise<void> {
-    await this.ensureIndex();
+  private async refreshSource(file: TFile, promptForRemoved = true): Promise<void> {
+    if (!isAttachmentReferenceSource(file.path) || this.isExcludedPath(file.path)) return;
     const previous = this.pendingPreviousReferences.get(file.path)
       ?? this.referencesBeforeRefresh(file.path);
     const previousContent = this.pendingPreviousContentReferences.get(file.path)
       ?? this.referencesBeforeRefresh(file.path, true);
     this.pendingPreviousReferences.delete(file.path);
     this.pendingPreviousContentReferences.delete(file.path);
-    const next = await this.readReferenceSnapshot(file);
+    const next = await this.readReferenceSnapshotFromContent(file);
     if (next.all.size) this.sourceReferences.set(file.path, next.all);
     else this.sourceReferences.delete(file.path);
     if (next.content.size) this.sourceContentReferences.set(file.path, next.content);
@@ -566,7 +632,7 @@ export class AttachmentCleanupManager {
       const plans = this.buildMovePlansForSource(file, next.content);
       if (plans.length) await this.executeMovePlans(plans);
     }
-    if (!this.plugin.settings.enableAttachmentCleanup) return;
+    if (!promptForRemoved || !this.plugin.settings.enableAttachmentCleanup) return;
     const removed = new Set(Array.from(previous).filter((path) => !next.all.has(path)));
     this.queuePotentialOrphans(removed, "reference-removed");
     const removedFromContent = new Set(Array.from(previousContent).filter((path) => !next.content.has(path)));
@@ -626,6 +692,7 @@ export class AttachmentCleanupManager {
     let moved = 0;
     let copied = 0;
     let skipped = 0;
+    const touchedSources = new Set<string>();
     for (const candidate of candidates) {
       const attachment = this.plugin.app.vault.getAbstractFileByPath(candidate.attachmentPath);
       const source = this.plugin.app.vault.getAbstractFileByPath(candidate.sourcePath);
@@ -649,12 +716,16 @@ export class AttachmentCleanupManager {
             continue;
           }
           copied += 1;
+          touchedSources.add(source.path);
         }
       } finally {
         this.organizingSources.delete(source.path);
       }
     }
-    await this.rebuildIndex();
+    for (const sourcePath of touchedSources) {
+      const source = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
+      if (source instanceof TFile) await this.refreshSource(source, false);
+    }
     if (showNotice || skipped) new Notice(`附件整理完成：移动 ${moved}，复制 ${copied}，跳过 ${skipped}`);
   }
 
@@ -749,23 +820,27 @@ export class AttachmentCleanupManager {
     } else {
       file = await this.plugin.app.vault.create(path, content);
     }
-    await this.plugin.app.workspace.getLeaf(true).openFile(file);
+    const existingLeaf = this.plugin.app.workspace.getLeavesOfType("markdown")
+      .find((leaf) => leaf.view instanceof MarkdownView && leaf.view.file?.path === path);
+    const leaf = existingLeaf ?? this.plugin.app.workspace.getLeaf(true);
+    await leaf.openFile(file);
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
   }
 
   private async readReferenceSnapshot(
     file: TFile,
-    attachmentFiles = this.managedAttachments(),
+    attachmentLookup = this.createAttachmentLookup([]),
   ): Promise<AttachmentReferenceSnapshot> {
     if (file.extension === "md") {
-      const cached = this.cachedMarkdownReferenceSnapshot(file, attachmentFiles);
+      const cached = this.cachedMarkdownReferenceSnapshot(file, attachmentLookup);
       if (cached) return cached;
     }
-    return this.readReferenceSnapshotFromContent(file, attachmentFiles);
+    return this.readReferenceSnapshotFromContent(file, attachmentLookup);
   }
 
   private async readReferenceSnapshotFromContent(
     file: TFile,
-    attachmentFiles = this.managedAttachments(),
+    attachmentLookup = this.createAttachmentLookup(this.managedAttachments()),
   ): Promise<AttachmentReferenceSnapshot> {
     const all = new Set<string>();
     const contentReferences = new Set<string>();
@@ -776,28 +851,28 @@ export class AttachmentCleanupManager {
       return { all, content: contentReferences };
     }
     for (const target of extractVaultReferenceTargets(content, file.extension)) {
-      this.addResolvedTarget(all, file, target, attachmentFiles);
+      this.addResolvedTarget(all, file, target, attachmentLookup);
     }
     const visibleContent = file.extension === "md" ? this.withoutFrontmatter(content) : content;
     for (const target of extractVaultReferenceTargets(visibleContent, file.extension)) {
-      this.addResolvedTarget(contentReferences, file, target, attachmentFiles);
+      this.addResolvedTarget(contentReferences, file, target, attachmentLookup);
     }
     return { all, content: contentReferences };
   }
 
   private cachedMarkdownReferenceSnapshot(
     file: TFile,
-    attachmentFiles: TFile[],
+    attachmentLookup: AttachmentLookup,
   ): AttachmentReferenceSnapshot | null {
     const cache = this.plugin.app.metadataCache.getFileCache(file);
     if (!cache) return null;
-    return this.referenceSnapshotFromCache(file, cache, attachmentFiles, true);
+    return this.referenceSnapshotFromCache(file, cache, attachmentLookup, true);
   }
 
   private referenceSnapshotFromCache(
     file: TFile,
     cache: CachedMetadata,
-    attachmentFiles: TFile[],
+    attachmentLookup: AttachmentLookup,
     includeResolvedLinks: boolean,
   ): AttachmentReferenceSnapshot {
     const all = new Set<string>();
@@ -811,14 +886,14 @@ export class AttachmentCleanupManager {
         }
       }
     }
-    for (const link of cache.frontmatterLinks ?? []) this.addResolvedTarget(all, file, link.link, attachmentFiles);
+    for (const link of cache.frontmatterLinks ?? []) this.addResolvedTarget(all, file, link.link, attachmentLookup);
     for (const embed of cache.embeds ?? []) {
-      this.addResolvedTarget(all, file, embed.link, attachmentFiles);
-      this.addResolvedTarget(content, file, embed.link, attachmentFiles);
+      this.addResolvedTarget(all, file, embed.link, attachmentLookup);
+      this.addResolvedTarget(content, file, embed.link, attachmentLookup);
     }
     for (const link of cache.links ?? []) {
-      this.addResolvedTarget(all, file, link.link, attachmentFiles);
-      this.addResolvedTarget(content, file, link.link, attachmentFiles);
+      this.addResolvedTarget(all, file, link.link, attachmentLookup);
+      this.addResolvedTarget(content, file, link.link, attachmentLookup);
     }
     return { all, content };
   }
@@ -829,7 +904,7 @@ export class AttachmentCleanupManager {
     return match ? content.slice(match[0].length) : content;
   }
 
-  private addResolvedTarget(result: Set<string>, source: TFile, target: string, attachmentFiles: TFile[]): void {
+  private addResolvedTarget(result: Set<string>, source: TFile, target: string, attachmentLookup: AttachmentLookup): void {
     const resolved = this.plugin.app.metadataCache.getFirstLinkpathDest(target, source.path);
     if (resolved instanceof TFile && this.isManagedAttachment(resolved.path) && !this.isExcludedPath(resolved.path)) {
       result.add(resolved.path);
@@ -838,13 +913,33 @@ export class AttachmentCleanupManager {
     const normalizedTarget = normalizePath(target.split("#", 1)[0] ?? target).toLocaleLowerCase();
     const targetName = normalizedTarget.split("/").pop() ?? normalizedTarget;
     const targetStem = targetName.replace(/\.[^.]+$/, "");
-    for (const candidate of attachmentFiles) {
-      const candidatePath = candidate.path.toLocaleLowerCase();
-      const candidateName = candidate.name.toLocaleLowerCase();
-      if (candidatePath === normalizedTarget || candidateName === targetName || candidate.basename.toLocaleLowerCase() === targetStem) {
-        result.add(candidate.path);
-      }
+    const candidates = new Set([
+      ...(attachmentLookup.byPath.get(normalizedTarget) ?? []),
+      ...(attachmentLookup.byName.get(targetName) ?? []),
+      ...(attachmentLookup.byStem.get(targetStem) ?? []),
+    ]);
+    for (const candidate of candidates) {
+      result.add(candidate.path);
     }
+  }
+
+  private createAttachmentLookup(files: TFile[]): AttachmentLookup {
+    const lookup: AttachmentLookup = {
+      byPath: new Map(),
+      byName: new Map(),
+      byStem: new Map(),
+    };
+    const add = (map: Map<string, TFile[]>, key: string, file: TFile): void => {
+      const existing = map.get(key);
+      if (existing) existing.push(file);
+      else map.set(key, [file]);
+    };
+    for (const file of files) {
+      add(lookup.byPath, file.path.toLocaleLowerCase(), file);
+      add(lookup.byName, file.name.toLocaleLowerCase(), file);
+      add(lookup.byStem, file.basename.toLocaleLowerCase(), file);
+    }
+    return lookup;
   }
 
   private managedAttachments(files = this.plugin.app.vault.getFiles()): TFile[] {
@@ -914,7 +1009,6 @@ export class AttachmentCleanupManager {
   ): Promise<void> {
     const unique = Array.from(new Set(paths));
     if (!unique.length) return;
-    await this.rebuildIndex();
     const referenced = this.referencedPaths();
     const candidates = unique.flatMap((path): AttachmentCandidate[] => {
       const metadataSourcePaths = referenced.has(path)
@@ -972,7 +1066,6 @@ export class AttachmentCleanupManager {
     paths: string[],
     allowedMetadataSources = new Map<string, ReadonlySet<string>>(),
   ): Promise<{ trashed: number; skipped: number }> {
-    await this.rebuildIndex();
     for (const path of paths) {
       const metadataSources = this.metadataOnlySourcePaths(path, allowedMetadataSources.get(path));
       if (metadataSources?.length) await this.removeFrontmatterReferences(metadataSources, path);
@@ -1046,7 +1139,9 @@ export class AttachmentCleanupManager {
   private historicalReferencesForSource(sourcePath: string, contentOnly = false): Set<string> {
     const result = new Set<string>();
     for (const [attachmentPath, usage] of Object.entries(this.plugin.data.attachmentUsage)) {
-      const sourcePaths = contentOnly ? usage.lastContentSourcePaths : usage.lastSourcePaths;
+      const sourcePaths = contentOnly
+        ? usage.currentContentSourcePaths ?? usage.lastContentSourcePaths
+        : usage.currentSourcePaths ?? usage.lastSourcePaths;
       if (sourcePaths.includes(sourcePath)) result.add(attachmentPath);
     }
     return result;
@@ -1066,7 +1161,7 @@ export class AttachmentCleanupManager {
   private referencesBeforeRefresh(sourcePath: string, contentOnly = false): Set<string> {
     const current = (contentOnly ? this.sourceContentReferences : this.sourceReferences).get(sourcePath);
     if (current) return new Set(current);
-    return this.initialized ? new Set<string>() : this.historicalReferencesForSource(sourcePath, contentOnly);
+    return this.historicalReferencesForSource(sourcePath, contentOnly);
   }
 
   private recordCurrentUsage(
@@ -1089,29 +1184,42 @@ export class AttachmentCleanupManager {
         contentSourcesByAttachment.set(attachmentPath, sources);
       }
     }
-    if (!sourcesByAttachment.size) return false;
     const now = Date.now();
     let changed = false;
-    for (const [attachmentPath, sources] of sourcesByAttachment) {
+    const attachmentPaths = new Set([
+      ...Object.keys(this.plugin.data.attachmentUsage),
+      ...sourcesByAttachment.keys(),
+    ]);
+    for (const attachmentPath of attachmentPaths) {
+      const sources = sourcesByAttachment.get(attachmentPath) ?? new Set<string>();
       const previous = this.plugin.data.attachmentUsage[attachmentPath];
-      const lastSourcePaths = Array.from(sources).sort((left, right) => left.localeCompare(right, "zh-CN"));
-      const lastContentSourcePaths = Array.from(contentSourcesByAttachment.get(attachmentPath) ?? [])
+      const currentSourcePaths = Array.from(sources).sort((left, right) => left.localeCompare(right, "zh-CN"));
+      const currentContentSourcePaths = Array.from(contentSourcesByAttachment.get(attachmentPath) ?? [])
         .sort((left, right) => left.localeCompare(right, "zh-CN"));
       if (!previous) {
         this.plugin.data.attachmentUsage[attachmentPath] = {
           firstReferencedAt: now,
           lastReferencedAt: now,
-          lastSourcePaths,
-          lastContentSourcePaths,
+          currentSourcePaths,
+          currentContentSourcePaths,
+          lastSourcePaths: currentSourcePaths,
+          lastContentSourcePaths: currentContentSourcePaths,
         };
         changed = true;
         continue;
       }
-      const sourcesChanged = JSON.stringify(previous.lastSourcePaths) !== JSON.stringify(lastSourcePaths)
-        || JSON.stringify(previous.lastContentSourcePaths) !== JSON.stringify(lastContentSourcePaths);
-      if (sourcesChanged) {
-        previous.lastSourcePaths = lastSourcePaths;
-        previous.lastContentSourcePaths = lastContentSourcePaths;
+      const currentSourcesChanged = JSON.stringify(previous.currentSourcePaths ?? previous.lastSourcePaths) !== JSON.stringify(currentSourcePaths)
+        || JSON.stringify(previous.currentContentSourcePaths ?? previous.lastContentSourcePaths) !== JSON.stringify(currentContentSourcePaths);
+      if (currentSourcesChanged) {
+        previous.currentSourcePaths = currentSourcePaths;
+        previous.currentContentSourcePaths = currentContentSourcePaths;
+        if (currentSourcePaths.length) previous.lastSourcePaths = currentSourcePaths;
+        if (currentContentSourcePaths.length) previous.lastContentSourcePaths = currentContentSourcePaths;
+        if (currentSourcePaths.length) previous.lastReferencedAt = now;
+        changed = true;
+      } else if (previous.currentSourcePaths === undefined || previous.currentContentSourcePaths === undefined) {
+        previous.currentSourcePaths = currentSourcePaths;
+        previous.currentContentSourcePaths = currentContentSourcePaths;
         previous.lastReferencedAt = now;
         changed = true;
       }

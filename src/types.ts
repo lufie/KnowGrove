@@ -219,6 +219,8 @@ export interface KnowGroveData {
 export interface AttachmentUsageRecord {
   firstReferencedAt: number;
   lastReferencedAt: number;
+  currentSourcePaths?: string[];
+  currentContentSourcePaths?: string[];
   lastSourcePaths: string[];
   lastContentSourcePaths: string[];
 }
