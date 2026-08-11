@@ -196,6 +196,25 @@ test("link-note detection accepts a sparse local voice note and rejects complete
   ), null);
 });
 
+test("link-note detection accepts safe desktop webm recording segments", () => {
+  const voiceSession = [
+    "---",
+    "audio: \"[[阅读列表/录音/语音记录.webm]]\"",
+    "---",
+    "# 语音记录",
+    "",
+    "![[阅读列表/录音/语音记录.webm]]",
+    "",
+    "## 整理记录",
+  ].join("\n");
+  assert.deepEqual(detectLinkNoteCandidate(voiceSession, "语音记录"), {
+    url: "",
+    title: "语音记录",
+    pageType: "audio",
+    mediaPath: "阅读列表/录音/语音记录.webm",
+  });
+});
+
 test("startup link-note scan selects newest Markdown files only inside the configured folder", () => {
   assert.deepEqual(latestLinkNoteScanFiles([
     { path: "Home/📬输入/旧链接.md", mtime: 10 },

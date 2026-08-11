@@ -6,12 +6,13 @@
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source version: `2.7.6`
+Current source version: `2.8.2`
 
 ## What KnowGrove does
 
 - **Read it later:** collect notes in one inbox, switch between unread and read, and optionally mark a note as read when you reach the end.
 - **Browser and mobile capture:** send articles, videos, links, and lightweight voice notes to your vault.
+- **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, or record audio into crash-recoverable local segments; every saved result includes a direct note shortcut.
 - **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable.
 - **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
 - **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
@@ -49,7 +50,7 @@ Never copy another user's `data.json` into your vault.
 1. Confirm the **Inbox folder** used by the reading list and capture workflows.
 2. Choose a local CLI or compatible API if you want AI-assisted organization.
 3. Use **Content processing components → Set up automatically** for local article, video, and audio processing.
-4. Open **Reading list**, **Topics**, or **Workspace** from the Obsidian ribbon.
+4. Open **Capture**, **Reading list**, **Topics**, or **Workspace** from the Obsidian ribbon.
 
 KnowGrove prefers compatible tools already installed on the computer. Missing signed runtime components can be installed for macOS Apple Silicon, macOS Intel, and Windows x64. Desktop-only processing features are guarded so the plugin can still load on mobile.
 
@@ -93,7 +94,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public, and version `2.7.5` is available through GitHub Releases and the Obsidian community directory. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public, and version `2.7.6` is available through GitHub Releases and the Obsidian community directory. Version `2.8.2` in this checkout is a local candidate until a matching public release exists. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 

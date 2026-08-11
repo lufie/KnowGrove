@@ -49,6 +49,23 @@ import {
   type BrowserCaptureServerStatus,
 } from "./browser-capture-server";
 import {
+  DESKTOP_RECORDER_VIEW_TYPE,
+  DesktopRecorderModal,
+  DesktopRecordingOverlay,
+  LEGACY_CAPTURE_CENTER_VIEW_TYPE,
+  LINK_CAPTURE_VIEW_TYPE,
+  LinkCaptureModal,
+} from "./capture-center-view";
+import {
+  batchCaptureFileStem,
+  buildBatchLinkNote,
+  buildDesktopRecordingNote,
+  extractBatchCaptureUrls,
+  type DesktopRecordingManifest,
+  type DesktopRecordingSnapshot,
+} from "./capture-center-core";
+import { DesktopRecorderController } from "./desktop-recorder";
+import {
   createBlockDragEditorExtension,
   createCommentEditorExtension,
   refreshCommentEditorDecorations,
@@ -397,6 +414,11 @@ export default class KnowGrovePlugin extends Plugin {
   };
   private aiBatchCancelRequested = false;
   private browserCaptureServer?: BrowserCaptureServer;
+  private desktopRecorder?: DesktopRecorderController;
+  private recordingOverlay?: DesktopRecordingOverlay;
+  private linkCaptureModal?: LinkCaptureModal;
+  private desktopRecorderModal?: DesktopRecorderModal;
+  private captureViewCleanupTimer?: number;
   private runtimeManager?: KnowGroveRuntimeManager;
   private runtimeInstallPromise?: Promise<void>;
   private runtimeBootstrapPromise?: Promise<void>;
@@ -430,6 +452,18 @@ export default class KnowGrovePlugin extends Plugin {
       suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
       enrichCapturedFile: (file) => this.ensureNewNoteStatus(file),
     });
+    this.desktopRecorder = new DesktopRecorderController({
+      app: this.app,
+      getRecordingFolder: () => this.desktopRecordingFolder(),
+      getFfmpegPath: () => this.settings.browserCapture.ffmpegPath,
+      onRecordingFinalized: (manifest, audioPath) => this.finalizeDesktopRecording(manifest, audioPath),
+    });
+    this.recordingOverlay = new DesktopRecordingOverlay(this);
+    if (Platform.isDesktopApp) {
+      await this.desktopRecorder.initialize().catch((error) => {
+        console.error("KnowGrove: failed to restore desktop recording session", error);
+      });
+    }
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
@@ -475,10 +509,18 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerView(TOPIC_INDEX_VIEW_TYPE, (leaf) => new TopicIndexView(leaf, this));
     this.registerView(PROPERTY_WORKBENCH_VIEW_TYPE, (leaf) => new PropertyWorkbenchView(leaf, this));
     this.registerView(CREATION_ASSISTANT_VIEW_TYPE, (leaf) => new CreationAssistantView(leaf, this));
+    this.removeDeprecatedCaptureViews();
+    this.captureViewCleanupTimer = window.setTimeout(
+      () => this.removeDeprecatedCaptureViews(),
+      500,
+    );
+    this.register(() => window.clearTimeout(this.captureViewCleanupTimer));
     this.addRibbonIcon("library-big", "打开阅读列表", () => void this.activateReadingView());
     this.topicIndexRibbonEl = this.addRibbonIcon("list-tree", "打开主题", () => void this.activateTopicIndex());
     this.syncTopicIndexAvailability();
     this.addRibbonIcon("database-zap", "打开工作台", () => void this.activatePropertyWorkbench());
+    this.addRibbonIcon("link-2", "批量存链接", () => void this.activateLinkCapture());
+    this.addRibbonIcon("mic", "打开录音", () => void this.activateDesktopRecorder());
     this.addRibbonIcon("wand-sparkles", "整理新链接文档", () => void this.scanPendingLinkNotes(true));
     this.addSettingTab(new KnowGroveSettingTab(this.app, this));
     this.registerEditorExtension(createCommentEditorExtension(this));
@@ -533,6 +575,16 @@ export default class KnowGrovePlugin extends Plugin {
       id: "open-topic-index",
       name: "打开主题",
       callback: () => void this.activateTopicIndex(),
+    });
+    this.addCommand({
+      id: "open-capture-center",
+      name: "批量存链接",
+      callback: () => void this.activateLinkCapture(),
+    });
+    this.addCommand({
+      id: "start-desktop-recording",
+      name: "打开录音",
+      callback: () => void this.activateDesktopRecorder(),
     });
     this.addCommand({
       id: "check-runtime-environment",
@@ -805,6 +857,10 @@ export default class KnowGrovePlugin extends Plugin {
   onunload(): void {
     this.aiBatchCancelRequested = true;
     void this.browserCaptureServer?.stop();
+    this.desktopRecorder?.shutdown();
+    this.linkCaptureModal?.close();
+    this.desktopRecorderModal?.close();
+    this.recordingOverlay?.hide();
     this.runtimeInstallProgressListeners.clear();
     this.attachmentCleanupManager?.stop();
     this.disposeLocalization?.();
@@ -1304,6 +1360,7 @@ export default class KnowGrovePlugin extends Plugin {
     const autoProcessNewNotes = savedSettings?.autoMarkNewNotes ?? defaults.autoMarkNewNotes;
     const savedAIProperties = savedSettings?.aiProperties;
     const savedBrowserCapture = savedSettings?.browserCapture;
+    const savedDesktopCapture = savedSettings?.desktopCapture;
     const savedRuntime = savedSettings?.runtime;
     const savedCreationStudio = savedSettings?.creationStudio;
     const savedPropertySystem = savedSettings?.propertySystem as Partial<PropertySystemSettings> | undefined;
@@ -1394,6 +1451,10 @@ export default class KnowGrovePlugin extends Plugin {
             savedBrowserProviders?.audioProvider,
             defaults.browserCapture.audioProvider,
           ),
+        },
+        desktopCapture: {
+          ...defaults.desktopCapture,
+          ...(savedDesktopCapture ?? {}),
         },
         creationStudio: {
           ...defaults.creationStudio,
@@ -1722,6 +1783,132 @@ export default class KnowGrovePlugin extends Plugin {
     this.data.schemaVersion = PROPERTY_RULE_SCHEMA_VERSION;
     this.data.settings = this.settings;
     await this.saveData(this.data);
+  }
+
+  private desktopLinkFolder(): string {
+    return normalizePath(
+      this.settings.desktopCapture.linkFolder.trim()
+      || this.settings.browserCapture.inboxFolder.trim()
+      || this.settings.trackedFolder.trim()
+      || "阅读列表",
+    ).replace(/^\/+|\/+$/g, "");
+  }
+
+  private desktopRecordingFolder(): string {
+    const explicit = this.settings.desktopCapture.recordingFolder.trim();
+    if (explicit) return normalizePath(explicit).replace(/^\/+|\/+$/g, "");
+    return normalizePath(`${this.desktopLinkFolder()}/录音`).replace(/^\/+|\/+$/g, "");
+  }
+
+  getDesktopRecordingSnapshot(): DesktopRecordingSnapshot {
+    return this.desktopRecorder?.snapshot() ?? {
+      state: "idle",
+      title: "语音记录",
+      recordedMilliseconds: 0,
+      interruptionCount: 0,
+      message: "准备录音",
+    };
+  }
+
+  subscribeDesktopRecording(listener: (snapshot: DesktopRecordingSnapshot) => void): () => void {
+    if (!this.desktopRecorder) {
+      listener(this.getDesktopRecordingSnapshot());
+      return () => undefined;
+    }
+    return this.desktopRecorder.subscribe(listener);
+  }
+
+  async startDesktopRecording(title = ""): Promise<void> {
+    if (!Platform.isDesktopApp || !this.desktopRecorder) throw new Error("录音只支持 Obsidian 桌面版");
+    await this.ensureVaultFolder(this.desktopRecordingFolder().split("/"));
+    await this.desktopRecorder.start(title);
+  }
+
+  async resumeDesktopRecording(): Promise<void> {
+    if (!this.desktopRecorder) throw new Error("录音服务尚未初始化");
+    await this.desktopRecorder.resume();
+  }
+
+  async stopDesktopRecording(): Promise<void> {
+    if (!this.desktopRecorder) return;
+    const completed = await this.desktopRecorder.stop();
+    if (completed?.notePath) new Notice(`录音已安全保存：${completed.notePath}`, 7000);
+  }
+
+  async resetDesktopRecording(): Promise<void> {
+    await this.desktopRecorder?.discardCompletedState();
+  }
+
+  showRecordingOverlay(): void {
+    this.recordingOverlay?.show();
+  }
+
+  async captureBatchLinks(
+    input: string,
+    onProgress?: (completed: number, total: number, message?: string) => void,
+  ): Promise<{ total: number; created: number; queued: number; failed: number; files: TFile[] }> {
+    if (!Platform.isDesktopApp) throw new Error("批量链接收集只支持 Obsidian 桌面版");
+    const urls = extractBatchCaptureUrls(input);
+    if (!urls.length) return { total: 0, created: 0, queued: 0, failed: 0, files: [] };
+    const folder = this.desktopLinkFolder();
+    await this.ensureVaultFolder(folder.split("/"));
+    let created = 0;
+    let queued = 0;
+    let failed = 0;
+    const files: TFile[] = [];
+    for (let index = 0; index < urls.length; index += 1) {
+      const url = urls[index]!;
+      try {
+        const parsed = new URL(url);
+        const title = parsed.hostname.replace(/^www\./i, "") || "链接";
+        const now = new Date();
+        const path = this.uniqueVaultPath(`${folder}/${batchCaptureFileStem(now, index, parsed.hostname)}.md`);
+        const file = await this.app.vault.create(path, buildBatchLinkNote(url, title, now));
+        this.clearPendingNewNoteInitialization(file.path);
+        await this.ensureNewNoteStatus(file);
+        files.push(file);
+        created += 1;
+        onProgress?.(index + 1, urls.length, title);
+        if (this.browserCaptureServer) {
+          await this.parseLinkNote(file, "auto");
+          queued += 1;
+        }
+      } catch (error) {
+        failed += 1;
+        console.error(`KnowGrove: failed to capture batch link ${url}`, error);
+        onProgress?.(index + 1, urls.length, "保存失败");
+      }
+    }
+    this.refreshReadingViews();
+    return { total: urls.length, created, queued, failed, files };
+  }
+
+  private async finalizeDesktopRecording(
+    manifest: DesktopRecordingManifest,
+    audioPath: string,
+  ): Promise<string | undefined> {
+    const folder = this.desktopRecordingFolder();
+    await this.ensureVaultFolder(folder.split("/"));
+    const notePath = this.uniqueVaultPath(`${folder}/${manifest.title}.md`);
+    const note = await this.app.vault.create(notePath, buildDesktopRecordingNote(manifest, audioPath));
+    this.clearPendingNewNoteInitialization(note.path);
+    await this.ensureNewNoteStatus(note);
+    await this.waitForVaultFile(audioPath);
+    if (this.settings.browserCapture.autoProcessLinkNotes) {
+      await this.parseLinkNote(note, "auto");
+    }
+    this.refreshReadingViews();
+    return note.path;
+  }
+
+  private async waitForVaultFile(path: string, timeoutMilliseconds = 5_000): Promise<TFile | undefined> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMilliseconds) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) return file;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+    }
+    return undefined;
   }
 
   getBrowserCaptureStatus(): BrowserCaptureServerStatus {
@@ -2568,6 +2755,49 @@ export default class KnowGrovePlugin extends Plugin {
       await this.topicIndexActivation;
     } finally {
       this.topicIndexActivation = undefined;
+    }
+  }
+
+  activateLinkCapture(): LinkCaptureModal | null {
+    if (!Platform.isDesktopApp) {
+      new Notice("批量存链接目前只支持 Obsidian 桌面版");
+      return null;
+    }
+    this.desktopRecorderModal?.close();
+    this.linkCaptureModal?.close();
+    let modal: LinkCaptureModal;
+    modal = new LinkCaptureModal(this, () => {
+      if (this.linkCaptureModal === modal) this.linkCaptureModal = undefined;
+    });
+    this.linkCaptureModal = modal;
+    modal.open();
+    return modal;
+  }
+
+  activateDesktopRecorder(): DesktopRecorderModal | null {
+    if (!Platform.isDesktopApp) {
+      new Notice("录音目前只支持 Obsidian 桌面版");
+      return null;
+    }
+    this.linkCaptureModal?.close();
+    this.desktopRecorderModal?.close();
+    this.recordingOverlay?.hide();
+    let modal: DesktopRecorderModal;
+    modal = new DesktopRecorderModal(this, () => {
+      if (this.desktopRecorderModal === modal) this.desktopRecorderModal = undefined;
+    });
+    this.desktopRecorderModal = modal;
+    modal.open();
+    return modal;
+  }
+
+  private removeDeprecatedCaptureViews(): void {
+    for (const viewType of [
+      LEGACY_CAPTURE_CENTER_VIEW_TYPE,
+      LINK_CAPTURE_VIEW_TYPE,
+      DESKTOP_RECORDER_VIEW_TYPE,
+    ]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(viewType)) leaf.detach();
     }
   }
 

@@ -156,6 +156,13 @@ export interface BrowserCaptureSettings {
   accessToken: string;
 }
 
+export interface DesktopCaptureSettings {
+  /** 留空时沿用阅读列表/收集箱路径。 */
+  linkFolder: string;
+  /** 留空时使用“收集箱路径/录音”。 */
+  recordingFolder: string;
+}
+
 export interface KnowGroveSettings {
   trackedFolder: string;
   statusProperty: string;
@@ -182,6 +189,7 @@ export interface KnowGroveSettings {
   recentFileLimit: number;
   runtime: KnowGroveRuntimeSettings;
   browserCapture: BrowserCaptureSettings;
+  desktopCapture: DesktopCaptureSettings;
   aiProperties: AIPropertySettings;
   creationStudio: CreationStudioSettings;
   propertySystem: PropertySystemSettings;
@@ -461,6 +469,10 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
     whisperPath: "",
     whisperModel: "small",
     accessToken: "",
+  },
+  desktopCapture: {
+    linkFolder: "",
+    recordingFolder: "",
   },
   aiProperties: {
     enabled: false,

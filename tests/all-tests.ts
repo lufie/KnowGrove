@@ -11,6 +11,7 @@ import "./research-sources.test";
 import "./block-drag.test";
 import "./brand-migration.test";
 import "./browser-capture.test";
+import "./capture-center.test";
 import "./runtime-core.test";
 import "./reading-menu.test";
 import "./recent-files.test";
