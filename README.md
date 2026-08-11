@@ -93,7 +93,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public, and version `2.7.4` is available through GitHub Releases and the Obsidian community directory. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public, and version `2.7.5` is available through GitHub Releases and the Obsidian community directory. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 
