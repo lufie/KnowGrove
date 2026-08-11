@@ -85,7 +85,7 @@ const AUDIO_HOSTS = [
 ];
 
 const VIDEO_EXTENSIONS = /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i;
-const AUDIO_EXTENSIONS = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)(?:$|[?#])/i;
+const AUDIO_EXTENSIONS = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)(?:$|[?#])/i;
 const YT_DLP_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 export const BROWSER_CAPTURE_SKILLS: BrowserCaptureSkill[] = [
@@ -165,7 +165,7 @@ export function classifyBrowserCaptureResource(
       (name === "og:type" && /audio|music/.test(content))
       || /^og:audio(?::|$)/.test(name),
     )
-    || /<(?:audio|source)\b[^>]*(?:type=["']audio\/|src=["'][^"']+\.(?:mp3|m4a|wav|aac|flac|ogg|opus))/i.test(html)
+    || /<(?:audio|source)\b[^>]*(?:type=["']audio\/|src=["'][^"']+\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm))/i.test(html)
   ) return "audio";
   return "article";
 }
@@ -326,12 +326,12 @@ function detectLocalAudioNoteCandidate(
 ): LinkNoteCandidate | null {
   const embeddedMedia = Array.from(body.matchAll(/!\[\[([^\]]+)]]/g))
     .map((match) => match[1]!.split("|")[0]!.trim())
-    .filter((path) => /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(path));
+    .filter((path) => /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(path));
   const frontmatterMedia = frontmatterScalar(markdown, ["audio", "音频", "语音文件"])
     .replace(/^!?\[\[|\]\]$/g, "")
     .split("|")[0]!
     .trim();
-  if (frontmatterMedia && /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(frontmatterMedia)) {
+  if (frontmatterMedia && /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(frontmatterMedia)) {
     embeddedMedia.push(frontmatterMedia);
   }
   const mediaPaths = Array.from(new Set(embeddedMedia));

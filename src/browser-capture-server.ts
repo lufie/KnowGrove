@@ -1,4 +1,4 @@
-import { Platform, TFile, normalizePath, requestUrl, type App } from "obsidian";
+import { FileSystemAdapter, Platform, TFile, normalizePath, requestUrl, type App } from "obsidian";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type {
   AIProviderAvailability,
@@ -1506,7 +1506,7 @@ export class BrowserCaptureServer {
       : exact instanceof TFile
         ? exact
         : undefined;
-    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus)$/i.test(mediaFile.path)) {
+    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(mediaFile.path)) {
       throw new Error(`找不到本地语音文件：${linkPath}`);
     }
 
@@ -1517,9 +1517,15 @@ export class BrowserCaptureServer {
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-local-audio-"));
     try {
       const extension = extname(mediaFile.name) || ".m4a";
-      const audioPath = join(directory, `source${extension}`);
-      const audio = await this.host.app.vault.readBinary(mediaFile);
-      await writeFile(audioPath, Buffer.from(audio));
+      const adapter = this.host.app.vault.adapter;
+      let audioPath: string;
+      if (adapter instanceof FileSystemAdapter) {
+        audioPath = adapter.getFullPath(mediaFile.path);
+      } else {
+        audioPath = join(directory, `source${extension}`);
+        const audio = await this.host.app.vault.readBinary(mediaFile);
+        await writeFile(audioPath, Buffer.from(audio));
+      }
       await this.updateJob(job.id, {
         progress: 30,
         message: "已读取本地语音，正在检测本机 Whisper",

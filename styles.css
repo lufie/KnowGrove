@@ -4668,3 +4668,207 @@ button.knowgrove-property-issue-row:hover {
   display: inline-flex;
   align-items: center;
 }
+
+/* Desktop link capture and recorder */
+.knowgrove-capture-modal {
+  width: min(560px, calc(100vw - var(--size-4-10)));
+  max-width: 560px;
+}
+
+.knowgrove-capture-modal .modal-content {
+  max-height: min(72vh, 720px);
+  overflow: auto;
+}
+
+.knowgrove-capture-view {
+  display: flex;
+  flex-direction: column;
+  padding: var(--size-4-3);
+  color: var(--text-normal);
+}
+
+.knowgrove-capture-help {
+  margin: 0 0 var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.55;
+}
+
+.knowgrove-batch-link-input {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.knowgrove-batch-link-footer,
+.knowgrove-recorder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-3);
+}
+
+.knowgrove-batch-link-footer span,
+.knowgrove-batch-link-progress {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.knowgrove-batch-link-progress {
+  margin-top: var(--size-4-3);
+  padding: var(--size-4-3);
+  border-left: 2px solid var(--interactive-accent);
+  background: var(--background-secondary-alt);
+}
+
+.knowgrove-batch-link-progress:empty,
+.knowgrove-batch-link-results:empty {
+  display: none;
+}
+
+.knowgrove-batch-link-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  margin-top: var(--size-4-2);
+}
+
+button.knowgrove-batch-link-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--size-4-2);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--size-4-2);
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-normal);
+  text-align: left;
+}
+
+button.knowgrove-batch-link-result:hover,
+button.knowgrove-batch-link-result:focus-visible {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+
+.knowgrove-batch-link-result-icon,
+.knowgrove-batch-link-result-arrow {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.knowgrove-batch-link-result-icon svg,
+.knowgrove-batch-link-result-arrow svg {
+  width: 16px;
+  height: 16px;
+}
+
+.knowgrove-batch-link-result-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-recorder-card {
+  display: grid;
+  gap: var(--size-4-2);
+  margin: 0 0 var(--size-4-4);
+  padding: var(--size-4-5);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  text-align: center;
+}
+
+.knowgrove-recorder-card strong {
+  font-weight: 500;
+}
+
+.knowgrove-recorder-card p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.knowgrove-recorder-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-2);
+  color: var(--interactive-accent);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.7em;
+}
+
+.knowgrove-recorder-title,
+.knowgrove-recorder-start {
+  width: 100%;
+}
+
+.knowgrove-recording-overlay {
+  position: fixed;
+  right: var(--size-4-5);
+  bottom: var(--size-4-5);
+  z-index: var(--layer-popover, 30);
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  max-width: min(420px, calc(100vw - var(--size-4-10)));
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.knowgrove-recording-overlay-status {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--size-4-2);
+  min-width: 0;
+}
+
+.knowgrove-recording-overlay-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-recording-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-red);
+  animation: knowgrove-recording-pulse 1.4s ease-in-out infinite;
+}
+
+.knowgrove-recording-overlay[data-state="interrupted"] .knowgrove-recording-dot,
+.knowgrove-recording-overlay[data-state="resuming"] .knowgrove-recording-dot,
+.knowgrove-recording-overlay[data-state="needs-attention"] .knowgrove-recording-dot {
+  background: var(--color-orange);
+}
+
+.knowgrove-recording-stop {
+  color: var(--color-red);
+}
+
+@keyframes knowgrove-recording-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowgrove-recording-dot {
+    animation: none;
+  }
+}

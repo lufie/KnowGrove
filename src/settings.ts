@@ -156,6 +156,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
   private renderReadItLaterSettings(containerEl: HTMLElement): void {
     const settings = this.plugin.settings;
     const capture = settings.browserCapture;
+    const desktopCapture = settings.desktopCapture;
 
     new Setting(containerEl)
       .setName("收集箱路径")
@@ -173,6 +174,54 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
           this.plugin.refreshReadingViews();
         }));
+
+    const addDesktopFolder = (
+      name: string,
+      description: string,
+      value: string,
+      placeholder: string,
+      save: (value: string) => void,
+    ): void => {
+      let input: HTMLInputElement | undefined;
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(description)
+        .addText((text) => {
+          input = text.inputEl;
+          text
+            .setPlaceholder(placeholder)
+            .setValue(value)
+            .onChange(async (next) => {
+              save(next.trim() ? normalizePath(next.trim()).replace(/^\/+|\/+$/g, "") : "");
+              await this.plugin.savePluginData();
+            });
+        })
+        .addButton((button) => button
+          .setButtonText("选择文件夹")
+          .onClick(() => {
+            new VaultFolderPickerModal(this.app, (folder) => {
+              const next = normalizePath(folder.path).replace(/^\/+|\/+$/g, "");
+              save(next);
+              if (input) input.value = next;
+              void this.plugin.savePluginData();
+            }).open();
+          }));
+    };
+
+    addDesktopFolder(
+      "Mac 批量链接目录",
+      "每个链接保存为一篇独立笔记。留空时沿用收集箱路径。",
+      desktopCapture.linkFolder,
+      settings.trackedFolder || "阅读列表",
+      (value) => { desktopCapture.linkFolder = value; },
+    );
+    addDesktopFolder(
+      "Mac 录音目录",
+      "录音、整理笔记和安全恢复片段保存在这里。留空时使用“收集箱路径/录音”。",
+      desktopCapture.recordingFolder,
+      `${settings.trackedFolder || "阅读列表"}/录音`,
+      (value) => { desktopCapture.recordingFolder = value; },
+    );
 
     new Setting(containerEl)
       .setName("浏览器授权")
