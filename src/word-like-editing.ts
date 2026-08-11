@@ -6,6 +6,7 @@ import {
   EditorView,
   ViewPlugin,
   type ViewUpdate,
+  WidgetType,
 } from "@codemirror/view";
 import type KnowGrovePlugin from "./main";
 
@@ -22,11 +23,20 @@ interface HiddenMarkerRange {
   side: "open" | "close";
 }
 
+export interface TaskListMarkerRange {
+  from: number;
+  to: number;
+  contentFrom: number;
+  stateFrom: number;
+  state: string;
+}
+
 const refreshWordLikeEditingEffect = StateEffect.define<void>();
 
 const HEADING_PREFIX = /^(#{1,6})[ \t]+/;
 const QUOTE_PREFIX = /^([ \t]*>)[ \t]+/;
 const LIST_PREFIX = /^([ \t]*)([-+*]|(\d+)([.)]))([ \t]+)(.*)$/;
+const TASK_LIST_PREFIX = /^([ \t]*)(?:[-+*]|\d+[.)])[ \t]+\[([^\]\n])\]([ \t]*)(?:.*)$/;
 const MEDIA_BLOCK = /^\s*(?:!\[\[[^\n]+?\]\]|!\[[^\]]*\]\([^\n)]+\))\s*(?:\^[A-Za-z0-9-]+)?\s*$/;
 
 interface ListLineInfo {
@@ -119,11 +129,96 @@ function hiddenFormattingMarkers(view: EditorView): HiddenMarkerRange[] {
   return mergedMarkerRanges(ranges);
 }
 
+export function taskListMarkerRange(text: string): TaskListMarkerRange | null {
+  const match = text.match(TASK_LIST_PREFIX);
+  if (!match) return null;
+  const indentLength = (match[1] ?? "").length;
+  const checkboxOpen = text.indexOf("[", indentLength);
+  if (checkboxOpen < 0) return null;
+  const checkboxClose = checkboxOpen + 2;
+  let contentFrom = checkboxClose + 1;
+  while (contentFrom < text.length && /[ \t]/.test(text[contentFrom] ?? "")) contentFrom += 1;
+  return {
+    from: indentLength,
+    to: checkboxClose + 1,
+    contentFrom,
+    stateFrom: checkboxOpen + 1,
+    state: match[2] ?? " ",
+  };
+}
+
+class PersistentTaskCheckboxWidget extends WidgetType {
+  constructor(
+    private readonly stateFrom: number,
+    private readonly state: string,
+  ) {
+    super();
+  }
+
+  eq(other: PersistentTaskCheckboxWidget): boolean {
+    return other.stateFrom === this.stateFrom && other.state === this.state;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const label = document.createElement("label");
+    label.className = "task-list-label knowgrove-task-list-label";
+    label.contentEditable = "false";
+    const input = document.createElement("input");
+    input.className = "task-list-item-checkbox knowgrove-task-list-item-checkbox";
+    input.type = "checkbox";
+    input.checked = this.state !== " ";
+    input.dataset.task = this.state;
+    input.setAttribute("aria-label", "Toggle task");
+    const stopPointerEvent = (event: Event): void => event.stopImmediatePropagation();
+    input.addEventListener("pointerdown", stopPointerEvent);
+    input.addEventListener("mousedown", stopPointerEvent);
+    input.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const current = view.state.doc.sliceString(this.stateFrom, this.stateFrom + 1);
+      if (!current || current === "[" || current === "]" || current.includes("\n")) return;
+      const next = current === " " ? "x" : " ";
+      view.dispatch({
+        changes: { from: this.stateFrom, to: this.stateFrom + 1, insert: next },
+        scrollIntoView: false,
+        userEvent: "input",
+      });
+    });
+    label.append(input);
+    return label;
+  }
+}
+
+function visibleTaskMarkerDecorations(view: EditorView): Array<Range<Decoration>> {
+  if (!isLivePreview(view)) return [];
+  const ranges: Array<Range<Decoration>> = [];
+  const visitedLines = new Set<number>();
+  for (const visibleRange of view.visibleRanges) {
+    const firstLine = view.state.doc.lineAt(visibleRange.from).number;
+    const lastLine = view.state.doc.lineAt(visibleRange.to).number;
+    for (let lineNumber = firstLine; lineNumber <= lastLine; lineNumber += 1) {
+      if (visitedLines.has(lineNumber)) continue;
+      visitedLines.add(lineNumber);
+      const line = view.state.doc.line(lineNumber);
+      const marker = taskListMarkerRange(line.text);
+      if (!marker) continue;
+      const stateFrom = line.from + marker.stateFrom;
+      ranges.push(Decoration.replace({
+        widget: new PersistentTaskCheckboxWidget(stateFrom, marker.state),
+        inclusive: false,
+      }).range(line.from + marker.from, line.from + marker.to));
+    }
+  }
+  return ranges;
+}
+
 function markerDecorations(view: EditorView): DecorationSet {
-  const ranges: Array<Range<Decoration>> = hiddenFormattingMarkers(view).map((range) =>
-    Decoration.replace({
+  const ranges: Array<Range<Decoration>> = [
+    ...hiddenFormattingMarkers(view).map((range) => Decoration.replace({
       attributes: { "data-knowgrove-marker-side": range.side },
-    }).range(range.from, range.to));
+    }).range(range.from, range.to)),
+    ...visibleTaskMarkerDecorations(view),
+  ];
   return Decoration.set(ranges, true);
 }
 
@@ -286,6 +381,11 @@ function atomicListMarkerRanges(view: EditorView): Array<{ from: number; to: num
   const ranges: Array<{ from: number; to: number }> = [];
   for (let number = 1; number <= view.state.doc.lines; number += 1) {
     const line = view.state.doc.line(number);
+    const taskMarker = taskListMarkerRange(line.text);
+    if (taskMarker) {
+      ranges.push({ from: line.from + taskMarker.from, to: line.from + taskMarker.contentFrom });
+      continue;
+    }
     const item = parseListLine(line.text);
     if (!item) continue;
     const markerFrom = line.from + item.indent.length;
@@ -624,6 +724,7 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
 
     constructor(private readonly view: EditorView) {
       this.decorations = markerDecorations(view);
+      view.dom.classList.toggle("knowgrove-word-like-editing", plugin.settings.enableWordLikeEditing);
       view.dom.addEventListener("pointerdown", this.handleMediaPointer, { capture: true });
       view.dom.addEventListener("mousedown", this.handleMediaPointer, { capture: true });
       const sourceView = view.dom.closest(".markdown-source-view");
@@ -633,8 +734,10 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
     update(update: ViewUpdate): void {
       if (!plugin.settings.enableWordLikeEditing) {
         this.decorations = Decoration.none;
+        this.view.dom.classList.remove("knowgrove-word-like-editing");
         return;
       }
+      this.view.dom.classList.add("knowgrove-word-like-editing");
       const forced = update.transactions.some((transaction) =>
         transaction.effects.some((effect) => effect.is(refreshWordLikeEditingEffect)));
       if (forced || update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged) {
@@ -656,6 +759,7 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
       this.view.dom.removeEventListener("pointerdown", this.handleMediaPointer, { capture: true });
       this.view.dom.removeEventListener("mousedown", this.handleMediaPointer, { capture: true });
       this.modeObserver.disconnect();
+      this.view.dom.classList.remove("knowgrove-word-like-editing");
     }
   }, {
     decorations: (instance) => instance.decorations,

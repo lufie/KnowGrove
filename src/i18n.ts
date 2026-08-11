@@ -90,7 +90,7 @@ const ENGLISH: Record<string, string> = {
   "选中文字支持整块拖动": "Drag selected text as a block",
   "默认开启。选中源笔记中的文字并拖到另一篇 Markdown 后，自动引用选区所在的完整块；源内容修改后，目标笔记会同步展示。": "On by default. Drag selected text to another Markdown note to embed its full source block and keep it in sync.",
   "类 Word 实时编辑": "Word-like live editing",
-  "默认开启。实时预览中保持排版；支持列表层级编辑，以及从块外一次删除完整图片或代码块。": "On by default. Preserve formatting in Live Preview, edit list levels, and delete an image or code block as one unit from outside the block.",
+  "默认开启。实时预览中保持排版；任务列表整行选中仍显示复选框，并支持列表层级编辑及从块外一次删除完整图片或代码块。": "On by default. Preserve formatting in Live Preview, keep task checkboxes visible when a full row is selected, edit list levels, and delete an image or code block as one unit from outside the block.",
   "启用评论": "Enable comments",
   "评论后，评论内容将在目标文档末尾以“评论”为标题，在该章节进行记录。": "Comments are stored in a Comments section at the end of the target note.",
   "自动整理组件配置": "Content processing components",

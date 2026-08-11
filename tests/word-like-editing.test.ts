@@ -4,6 +4,7 @@ import { createDefaultSettings } from "../src/types";
 import {
   findFencedCodeBlockRanges,
   isStandaloneMediaBlock,
+  taskListMarkerRange,
   wordLikeBackspaceEdit,
   wordLikeDeleteEdit,
   wordLikeEnterEdit,
@@ -136,6 +137,24 @@ test("task lists keep Obsidian native checkbox behavior", () => {
   assert.equal(wordLikeBackspaceEdit(content, content.indexOf("待办")), null);
   assert.equal(wordLikeEnterEdit(content, content.length), null);
   assert.equal(wordLikeIndentEdit(content, content.length, "indent"), null);
+});
+
+test("task list markers remain a single visual checkbox across full-line selections", () => {
+  assert.deepEqual(taskListMarkerRange("- [ ] 待办"), {
+    from: 0,
+    to: 5,
+    contentFrom: 6,
+    stateFrom: 3,
+    state: " ",
+  });
+  assert.deepEqual(taskListMarkerRange("    2. [x] 已完成"), {
+    from: 4,
+    to: 10,
+    contentFrom: 11,
+    stateFrom: 8,
+    state: "x",
+  });
+  assert.equal(taskListMarkerRange("- 普通列表"), null);
 });
 
 test("recognizes only complete fenced code blocks with matching fences", () => {

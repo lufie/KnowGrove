@@ -4655,3 +4655,16 @@ button.knowgrove-property-issue-row:hover {
     animation: none;
   }
 }
+.markdown-source-view.is-live-preview
+  .cm-editor.knowgrove-word-like-editing
+  .HyperMD-task-line
+  .task-list-label:not(.knowgrove-task-list-label) {
+  display: none;
+}
+
+.markdown-source-view.is-live-preview
+  .cm-editor.knowgrove-word-like-editing
+  .knowgrove-task-list-label {
+  display: inline-flex;
+  align-items: center;
+}
