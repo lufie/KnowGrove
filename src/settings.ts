@@ -567,7 +567,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     this.addClickableToggleSetting(
       containerEl,
       "类 Word 实时编辑",
-      "默认开启。实时预览中保持排版；支持列表层级编辑，以及从块外一次删除完整图片或代码块。",
+      "默认开启。实时预览中保持排版；任务列表整行选中仍显示复选框，并支持列表层级编辑及从块外一次删除完整图片或代码块。",
       this.plugin.settings.enableWordLikeEditing,
       async (value) => {
         this.plugin.settings.enableWordLikeEditing = value;
