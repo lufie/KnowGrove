@@ -132,11 +132,40 @@ test("ordered delete merge closes the numbering gap", () => {
   );
 });
 
-test("task lists keep Obsidian native checkbox behavior", () => {
-  const content = "- [ ] 待办";
-  assert.equal(wordLikeBackspaceEdit(content, content.indexOf("待办")), null);
-  assert.equal(wordLikeEnterEdit(content, content.length), null);
-  assert.equal(wordLikeIndentEdit(content, content.length, "indent"), null);
+test("task list editing keeps the checkbox marker atomic", () => {
+  const content = "- [x] 已完成";
+  const enter = wordLikeEnterEdit(content, content.length);
+  assert.equal(applyEdit(content, enter), "- [x] 已完成\n- [ ] ");
+  assert.equal(enter?.cursor, "- [x] 已完成\n- [ ] ".length);
+
+  const emptyTask = "- [ ] 上一项\n- [ ] ";
+  assert.equal(
+    applyEdit(emptyTask, wordLikeBackspaceEdit(emptyTask, emptyTask.length)),
+    "- [ ] 上一项\n",
+  );
+
+  const nested = "- [ ] 父项\n    - [ ] 子项";
+  assert.equal(
+    applyEdit(nested, wordLikeBackspaceEdit(nested, nested.indexOf("子项"))),
+    "- [ ] 父项\n- [ ] 子项",
+  );
+});
+
+test("task list indent, merge, and malformed-marker recovery preserve valid Markdown", () => {
+  const nested = "- [ ] 第一\n- [x] 第二\n    - [ ] 子项";
+  const indented = wordLikeIndentEdit(nested, nested.indexOf("第二"), "indent");
+  assert.equal(
+    applyEdit(nested, indented),
+    "- [ ] 第一\n    - [x] 第二\n        - [ ] 子项",
+  );
+
+  const siblings = "- [ ] 第一\n- [x] 第二";
+  assert.equal(
+    applyEdit(siblings, wordLikeDeleteEdit(siblings, siblings.indexOf("\n"))),
+    "- [ ] 第一 第二",
+  );
+
+  assert.equal(applyEdit("- [", wordLikeBackspaceEdit("- [", 3)), "");
 });
 
 test("task list markers remain a single visual checkbox across full-line selections", () => {

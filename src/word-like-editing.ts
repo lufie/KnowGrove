@@ -48,6 +48,8 @@ interface ListLineInfo {
   spacing: string;
   content: string;
   prefix: string;
+  taskState: string | null;
+  taskSpacing: string;
 }
 
 export interface FencedCodeBlockRange {
@@ -239,7 +241,11 @@ function parseListLine(text: string): ListLineInfo | null {
   const delimiter = ordered ? ((match[4] ?? ".") as "." | ")") : null;
   const spacing = match[5] ?? " ";
   const itemContent = match[6] ?? "";
-  if (/^\[[ xX]\](?:[ \t]|$)/.test(itemContent)) return null;
+  const task = itemContent.match(/^\[([^\]\n])\]([ \t]*)(.*)$/);
+  const taskState = task?.[1] ?? null;
+  const taskSpacing = task?.[2] ?? "";
+  const content = task?.[3] ?? itemContent;
+  const taskPrefix = taskState === null ? "" : `[${taskState}]${taskSpacing}`;
   return {
     indent,
     marker,
@@ -247,9 +253,27 @@ function parseListLine(text: string): ListLineInfo | null {
     number: ordered ? Number.parseInt(match[3] ?? "1", 10) : null,
     delimiter,
     spacing,
-    content: itemContent,
-    prefix: `${indent}${marker}${spacing}`,
+    content,
+    prefix: `${indent}${marker}${spacing}${taskPrefix}`,
+    taskState,
+    taskSpacing,
   };
+}
+
+function formatListLine(
+  item: ListLineInfo,
+  options: { indent?: string; marker?: string; content?: string; taskState?: string | null } = {},
+): string {
+  const indent = options.indent ?? item.indent;
+  const marker = options.marker ?? item.marker;
+  const content = options.content ?? item.content;
+  const taskState = options.taskState === undefined ? item.taskState : options.taskState;
+  const taskPrefix = taskState === null ? "" : `[${taskState}]${item.taskSpacing}`;
+  return `${indent}${marker}${item.spacing}${taskPrefix}${content}`;
+}
+
+function malformedTaskMarkerOnly(text: string): boolean {
+  return /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[(?:[^\]\n])?$/.test(text);
 }
 
 function indentColumns(indent: string, tabSize: number): number {
@@ -319,7 +343,7 @@ function renumberOrderedLines(lines: string[], tabSize: number): string[] {
       ? (counters.get(columns) ?? 0) + 1
       : (item.number ?? 1);
     counters.set(columns, number);
-    return `${item.indent}${number}${item.delimiter ?? "."}${item.spacing}${item.content}`;
+    return formatListLine(item, { marker: `${number}${item.delimiter ?? "."}` });
   });
 }
 
@@ -513,7 +537,7 @@ export function wordLikeIndentEdit(
     const marker = index === currentIndex
       ? listMarkerAtLevel(content, line.from, targetColumns, nested, tabSize)
       : nested.marker;
-    return `${nextIndent}${marker}${nested.spacing}${nested.content}`;
+    return formatListLine(nested, { indent: nextIndent, marker });
   });
   const renumberedLines = renumberOrderedLines(adjustedLines, tabSize);
   const adjusted = renumberedLines.join("\n");
@@ -533,6 +557,10 @@ export function wordLikeIndentEdit(
 export function wordLikeBackspaceEdit(content: string, position: number, tabSize = 4): WordLikeEdit | null {
   const line = lineBounds(content, position);
   const offset = position - line.from;
+
+  if (offset === line.text.length && malformedTaskMarkerOnly(line.text)) {
+    return { from: line.from, to: line.to, insert: "", cursor: line.from };
+  }
 
   if (!line.text.trim()) {
     const codeBlock = fencedCodeBlockBeforeBlankLine(content, line.from);
@@ -593,12 +621,15 @@ export function wordLikeDeleteEdit(content: string, position: number, tabSize = 
   if (position === line.to && currentItem && following && followingItem) {
     const currentColumns = indentColumns(currentItem.indent, tabSize);
     const nextColumns = indentColumns(followingItem.indent, tabSize);
-    if (currentColumns === nextColumns && currentItem.ordered === followingItem.ordered) {
+    const sameTaskType = (currentItem.taskState === null) === (followingItem.taskState === null);
+    if (currentColumns === nextColumns && currentItem.ordered === followingItem.ordered && sameTaskType) {
       const separator = currentItem.content && followingItem.content ? " " : "";
       const block = listBlockBounds(content, line);
       const lines = content.slice(block.from, block.to).split("\n");
       const currentIndex = content.slice(block.from, line.from).split("\n").length - 1;
-      lines[currentIndex] = `${currentItem.prefix}${currentItem.content}${separator}${followingItem.content}`;
+      lines[currentIndex] = formatListLine(currentItem, {
+        content: `${currentItem.content}${separator}${followingItem.content}`,
+      });
       lines.splice(currentIndex + 1, 1);
       const renumbered = renumberOrderedLines(lines, tabSize);
       const beforeCurrent = renumbered.slice(0, currentIndex)
@@ -646,7 +677,12 @@ export function wordLikeEnterEdit(content: string, position: number, tabSize = 4
   const after = line.text.slice(offset);
   const nextNumber = (item.number ?? 0) + 1;
   const nextMarker = item.ordered ? `${nextNumber}${item.delimiter ?? "."}` : item.marker;
-  const newPrefix = `${item.indent}${nextMarker}${item.spacing}`;
+  const nextTaskState = item.taskState === null ? null : " ";
+  const newPrefix = formatListLine(item, {
+    marker: nextMarker,
+    content: "",
+    taskState: nextTaskState,
+  });
   const replacementLines = [`${item.prefix}${before}`, `${newPrefix}${after}`];
   let end = line.to;
   let cursor = line.to;
@@ -662,7 +698,9 @@ export function wordLikeEnterEdit(content: string, position: number, tabSize = 4
     let followingText = following.text;
     if (item.ordered && followingItem.ordered && followingColumns === currentColumns) {
       orderedNumber += 1;
-      followingText = `${followingItem.indent}${orderedNumber}${followingItem.delimiter ?? "."}${followingItem.spacing}${followingItem.content}`;
+      followingText = formatListLine(followingItem, {
+        marker: `${orderedNumber}${followingItem.delimiter ?? "."}`,
+      });
     }
     replacementLines.push(followingText);
     end = following.to;
