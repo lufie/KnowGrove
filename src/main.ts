@@ -50,7 +50,7 @@ import {
 } from "./browser-capture-server";
 import {
   DESKTOP_RECORDER_VIEW_TYPE,
-  DesktopRecorderModal,
+  DesktopRecorderView,
   DesktopRecordingOverlay,
   LEGACY_CAPTURE_CENTER_VIEW_TYPE,
   LINK_CAPTURE_VIEW_TYPE,
@@ -417,8 +417,8 @@ export default class KnowGrovePlugin extends Plugin {
   private desktopRecorder?: DesktopRecorderController;
   private recordingOverlay?: DesktopRecordingOverlay;
   private linkCaptureModal?: LinkCaptureModal;
-  private desktopRecorderModal?: DesktopRecorderModal;
   private captureViewCleanupTimer?: number;
+  private recordingUiUnsubscribe?: () => void;
   private runtimeManager?: KnowGroveRuntimeManager;
   private runtimeInstallPromise?: Promise<void>;
   private runtimeBootstrapPromise?: Promise<void>;
@@ -463,6 +463,8 @@ export default class KnowGrovePlugin extends Plugin {
       await this.desktopRecorder.initialize().catch((error) => {
         console.error("KnowGrove: failed to restore desktop recording session", error);
       });
+      this.recordingUiUnsubscribe = this.desktopRecorder.subscribe(() => this.syncRecordingOverlay());
+      this.register(() => this.recordingUiUnsubscribe?.());
     }
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
@@ -509,6 +511,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerView(TOPIC_INDEX_VIEW_TYPE, (leaf) => new TopicIndexView(leaf, this));
     this.registerView(PROPERTY_WORKBENCH_VIEW_TYPE, (leaf) => new PropertyWorkbenchView(leaf, this));
     this.registerView(CREATION_ASSISTANT_VIEW_TYPE, (leaf) => new CreationAssistantView(leaf, this));
+    this.registerView(DESKTOP_RECORDER_VIEW_TYPE, (leaf) => new DesktopRecorderView(leaf, this));
     this.removeDeprecatedCaptureViews();
     this.captureViewCleanupTimer = window.setTimeout(
       () => this.removeDeprecatedCaptureViews(),
@@ -542,7 +545,9 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("layout-change", () => {
       this.scheduleCoreSidebarMaintenance();
       this.scheduleRecentFilesSection();
+      this.syncRecordingOverlay();
     }));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncRecordingOverlay()));
     this.register(() => window.clearTimeout(this.coreSidebarMaintenanceTimer));
     this.register(() => window.clearTimeout(this.recentFilesRenderTimer));
     this.initializeSelectionCommentButton();
@@ -859,7 +864,6 @@ export default class KnowGrovePlugin extends Plugin {
     void this.browserCaptureServer?.stop();
     this.desktopRecorder?.shutdown();
     this.linkCaptureModal?.close();
-    this.desktopRecorderModal?.close();
     this.recordingOverlay?.hide();
     this.runtimeInstallProgressListeners.clear();
     this.attachmentCleanupManager?.stop();
@@ -1839,8 +1843,15 @@ export default class KnowGrovePlugin extends Plugin {
     await this.desktopRecorder?.discardCompletedState();
   }
 
-  showRecordingOverlay(): void {
-    this.recordingOverlay?.show();
+  syncRecordingOverlay(): void {
+    const snapshot = this.getDesktopRecordingSnapshot();
+    const recorderOpen = this.app.workspace.getLeavesOfType(DESKTOP_RECORDER_VIEW_TYPE)
+      .some((leaf) => leaf === this.app.workspace.activeLeaf);
+    const shouldFloat = !recorderOpen
+      && snapshot.state !== "idle"
+      && snapshot.state !== "completed";
+    if (shouldFloat) this.recordingOverlay?.show();
+    else this.recordingOverlay?.hide();
   }
 
   async captureBatchLinks(
@@ -2763,7 +2774,6 @@ export default class KnowGrovePlugin extends Plugin {
       new Notice("批量存链接目前只支持 Obsidian 桌面版");
       return null;
     }
-    this.desktopRecorderModal?.close();
     this.linkCaptureModal?.close();
     let modal: LinkCaptureModal;
     modal = new LinkCaptureModal(this, () => {
@@ -2774,28 +2784,28 @@ export default class KnowGrovePlugin extends Plugin {
     return modal;
   }
 
-  activateDesktopRecorder(): DesktopRecorderModal | null {
+  async activateDesktopRecorder(): Promise<void> {
     if (!Platform.isDesktopApp) {
       new Notice("录音目前只支持 Obsidian 桌面版");
-      return null;
+      return;
     }
     this.linkCaptureModal?.close();
-    this.desktopRecorderModal?.close();
-    this.recordingOverlay?.hide();
-    let modal: DesktopRecorderModal;
-    modal = new DesktopRecorderModal(this, () => {
-      if (this.desktopRecorderModal === modal) this.desktopRecorderModal = undefined;
-    });
-    this.desktopRecorderModal = modal;
-    modal.open();
-    return modal;
+    const existing = this.app.workspace.getLeavesOfType(DESKTOP_RECORDER_VIEW_TYPE)[0];
+    const leaf = existing ?? this.app.workspace.getLeftLeaf(false);
+    if (!leaf) {
+      new Notice("无法打开录音");
+      return;
+    }
+    if (!existing) await leaf.setViewState({ type: DESKTOP_RECORDER_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    this.syncRecordingOverlay();
   }
 
   private removeDeprecatedCaptureViews(): void {
     for (const viewType of [
       LEGACY_CAPTURE_CENTER_VIEW_TYPE,
       LINK_CAPTURE_VIEW_TYPE,
-      DESKTOP_RECORDER_VIEW_TYPE,
     ]) {
       for (const leaf of this.app.workspace.getLeavesOfType(viewType)) leaf.detach();
     }

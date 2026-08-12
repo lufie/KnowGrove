@@ -91,6 +91,23 @@ export function recordingExtension(mimeType: string): "webm" | "m4a" {
   return /mp4|m4a/i.test(mimeType) ? "m4a" : "webm";
 }
 
+export function recordingStreamCopyExtension(
+  segments: Pick<DesktopRecordingSegment, "mimeType">[],
+): "webm" | "m4a" | undefined {
+  if (!segments.length) return undefined;
+  const extension = recordingExtension(segments[0]!.mimeType);
+  return segments.every((segment) => recordingExtension(segment.mimeType) === extension)
+    ? extension
+    : undefined;
+}
+
+export function recordingFinalizationMode(
+  segments: Pick<DesktopRecordingSegment, "mimeType">[],
+): "direct-copy" | "stream-copy" | "transcode" {
+  if (segments.length === 1) return "direct-copy";
+  return recordingStreamCopyExtension(segments) ? "stream-copy" : "transcode";
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }

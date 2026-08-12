@@ -4,7 +4,9 @@ import {
   RECORDING_RESUME_DELAYS_MS,
   localRecordingFileStem,
   recordingExtension,
+  recordingFinalizationMode,
   recordingMimeType,
+  recordingStreamCopyExtension,
   type DesktopRecordingManifest,
   type DesktopRecordingSegment,
   type DesktopRecordingSnapshot,
@@ -545,17 +547,18 @@ export class DesktopRecorderController {
     const manifest = this.requireManifest();
     const adapter = this.requireFileSystemAdapter();
     const folder = normalizePath(this.host.getRecordingFolder()).replace(/^\/+|\/+$/g, "");
-    const { access, copyFile, mkdir, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { access, copyFile, mkdir, unlink, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
     const { dirname, join } = require("node:path") as typeof import("node:path");
     const base = safeFileName(manifest.title);
-    let relativePath = normalizePath(`${folder}/${base}.m4a`);
-    let suffix = 2;
-    while (await access(adapter.getFullPath(relativePath)).then(() => true).catch(() => false)) {
-      relativePath = normalizePath(`${folder}/${base} ${suffix}.m4a`);
-      suffix += 1;
+    const compatibleExtension = recordingStreamCopyExtension(manifest.segments);
+    const finalizationMode = recordingFinalizationMode(manifest.segments);
+    if (finalizationMode === "direct-copy" && compatibleExtension) {
+      const relativePath = await this.uniqueRecordingOutputPath(folder, base, compatibleExtension, access);
+      await mkdir(dirname(adapter.getFullPath(relativePath)), { recursive: true });
+      await copyFile(this.absolutePath(manifest.segments[0]!.relativePath), adapter.getFullPath(relativePath));
+      return relativePath;
     }
-    const outputAbsolutePath = adapter.getFullPath(relativePath);
-    await mkdir(dirname(outputAbsolutePath), { recursive: true });
+
     const ffmpeg = await resolveLocalExecutable(this.host.getFfmpegPath().trim() || "ffmpeg");
     if (ffmpeg) {
       const concatPath = join(this.absolutePath(this.sessionRelativePath), "segments.txt");
@@ -564,6 +567,25 @@ export class DesktopRecorderController {
         return `file '${absolute}'`;
       });
       await writeFile(concatPath, `${lines.join("\n")}\n`, "utf8");
+      if (finalizationMode === "stream-copy" && compatibleExtension) {
+        const fastPath = await this.uniqueRecordingOutputPath(folder, base, compatibleExtension, access);
+        const fastAbsolutePath = adapter.getFullPath(fastPath);
+        await mkdir(dirname(fastAbsolutePath), { recursive: true });
+        const fastResult = await runLocalCommand(ffmpeg, [
+          "-y",
+          "-f", "concat",
+          "-safe", "0",
+          "-i", concatPath,
+          "-vn",
+          "-c", "copy",
+          fastAbsolutePath,
+        ], "", 4 * 60 * 60);
+        if (fastResult.exitCode === 0) return fastPath;
+        await unlink(fastAbsolutePath).catch(() => undefined);
+      }
+      const relativePath = await this.uniqueRecordingOutputPath(folder, base, "m4a", access);
+      const outputAbsolutePath = adapter.getFullPath(relativePath);
+      await mkdir(dirname(outputAbsolutePath), { recursive: true });
       const result = await runLocalCommand(ffmpeg, [
         "-y",
         "-f", "concat",
@@ -575,6 +597,7 @@ export class DesktopRecorderController {
         outputAbsolutePath,
       ], "", 4 * 60 * 60);
       if (result.exitCode === 0) return relativePath;
+      await unlink(outputAbsolutePath).catch(() => undefined);
       if (manifest.segments.length > 1) {
         throw new Error(result.stderr.trim() || "FFmpeg 无法合并录音片段；原始片段已经安全保留");
       }
@@ -584,13 +607,24 @@ export class DesktopRecorderController {
     }
     const source = manifest.segments[0]!;
     const extension = recordingExtension(source.mimeType);
-    relativePath = normalizePath(`${folder}/${base}.${extension}`);
-    suffix = 2;
+    const relativePath = await this.uniqueRecordingOutputPath(folder, base, extension, access);
+    await copyFile(this.absolutePath(source.relativePath), adapter.getFullPath(relativePath));
+    return relativePath;
+  }
+
+  private async uniqueRecordingOutputPath(
+    folder: string,
+    base: string,
+    extension: "webm" | "m4a",
+    access: typeof import("node:fs/promises").access,
+  ): Promise<string> {
+    const adapter = this.requireFileSystemAdapter();
+    let relativePath = normalizePath(`${folder}/${base}.${extension}`);
+    let suffix = 2;
     while (await access(adapter.getFullPath(relativePath)).then(() => true).catch(() => false)) {
       relativePath = normalizePath(`${folder}/${base} ${suffix}.${extension}`);
       suffix += 1;
     }
-    await copyFile(this.absolutePath(source.relativePath), adapter.getFullPath(relativePath));
     return relativePath;
   }
 

@@ -189,6 +189,8 @@ const ENGLISH: Record<string, string> = {
   "打开录音笔记": "Open recording note",
   "新建录音": "New recording",
   "展开录音": "Expand recorder",
+  "返回录音": "Return to recorder",
+  "返回录音页": "Return to recorder",
   "录音中": "Recording",
   "打开录音": "Open recorder",
   "整理新链接文档": "Process new link notes",
