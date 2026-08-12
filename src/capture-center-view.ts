@@ -1,4 +1,4 @@
-import { Modal, Notice, setIcon } from "obsidian";
+import { ItemView, Modal, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import {
   extractBatchCaptureUrls,
@@ -92,37 +92,45 @@ export class LinkCaptureModal extends Modal {
   }
 }
 
-export class DesktopRecorderModal extends Modal {
+export class DesktopRecorderView extends ItemView {
   private unsubscribeRecording?: () => void;
   private recordingSnapshot: DesktopRecordingSnapshot;
   private recordingTitle = "";
 
   constructor(
+    leaf: WorkspaceLeaf,
     private readonly plugin: KnowGrovePlugin,
-    private readonly onClosed: () => void,
   ) {
-    super(plugin.app);
+    super(leaf);
     this.recordingSnapshot = plugin.getDesktopRecordingSnapshot();
   }
 
-  onOpen(): void {
-    this.modalEl.addClass("knowgrove-capture-modal", "knowgrove-desktop-recorder-modal");
+  getViewType(): string {
+    return DESKTOP_RECORDER_VIEW_TYPE;
+  }
+
+  getDisplayText(): string {
+    return "录音";
+  }
+
+  getIcon(): string {
+    return "mic";
+  }
+
+  async onOpen(): Promise<void> {
     this.unsubscribeRecording = this.plugin.subscribeDesktopRecording((snapshot) => {
       this.recordingSnapshot = snapshot;
       this.render();
     });
     this.render();
+    this.plugin.syncRecordingOverlay();
   }
 
-  onClose(): void {
+  async onClose(): Promise<void> {
     this.unsubscribeRecording?.();
     this.unsubscribeRecording = undefined;
     this.contentEl.empty();
-    if (this.plugin.getDesktopRecordingSnapshot().state !== "idle"
-      && this.plugin.getDesktopRecordingSnapshot().state !== "completed") {
-      this.plugin.showRecordingOverlay();
-    }
-    this.onClosed();
+    this.plugin.syncRecordingOverlay();
   }
 
   private render(): void {
@@ -169,15 +177,6 @@ export class DesktopRecorderModal extends Modal {
     }
 
     const actions = container.createDiv("knowgrove-recorder-actions");
-    if (snapshot.state === "recording" || snapshot.state === "interrupted" || snapshot.state === "resuming") {
-      const minimize = actions.createEl("button", { text: "收起为悬浮框" });
-      const minimizeIcon = minimize.createSpan();
-      setIcon(minimizeIcon, "minimize-2");
-      minimize.addEventListener("click", () => {
-        this.plugin.showRecordingOverlay();
-        this.close();
-      });
-    }
     if (snapshot.state === "needs-attention") {
       const resume = actions.createEl("button", {
         text: snapshot.recordedMilliseconds > 0 ? "继续录音" : "重新连接麦克风",
@@ -213,6 +212,12 @@ export class DesktopRecorderModal extends Modal {
 export class DesktopRecordingOverlay {
   private root?: HTMLElement;
   private unsubscribe?: () => void;
+  private durationEl?: HTMLElement;
+  private labelEl?: HTMLElement;
+  private stopButton?: HTMLButtonElement;
+  private dragCleanup?: () => void;
+
+  private static readonly positionKey = "knowgrove-recording-overlay-position";
 
   constructor(private readonly plugin: KnowGrovePlugin) {}
 
@@ -220,14 +225,40 @@ export class DesktopRecordingOverlay {
     if (this.root) return;
     const document = this.plugin.app.workspace.containerEl.ownerDocument;
     this.root = document.body.createDiv("knowgrove-recording-overlay");
+    const status = this.root.createDiv("knowgrove-recording-overlay-status");
+    status.createSpan("knowgrove-recording-dot");
+    this.durationEl = status.createSpan("knowgrove-recording-overlay-duration");
+    this.labelEl = status.createSpan("knowgrove-recording-overlay-label");
+    const restore = this.root.createEl("button", {
+      cls: "knowgrove-recording-restore",
+      attr: { "aria-label": "返回录音页" },
+    });
+    const restoreIcon = restore.createSpan("knowgrove-recording-restore-icon");
+    setIcon(restoreIcon, "panel-left-open");
+    restore.createSpan({ text: "返回录音" });
+    restore.addEventListener("click", () => void this.plugin.activateDesktopRecorder());
+    this.stopButton = this.root.createEl("button", {
+      cls: "clickable-icon knowgrove-recording-stop",
+      attr: { "aria-label": "停止并保存录音" },
+    });
+    setIcon(this.stopButton, "square");
+    this.stopButton.addEventListener("click", () => void this.plugin.stopDesktopRecording().catch((error) => {
+      new Notice(`保存录音失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+    }));
+    this.installDragBehavior();
     this.unsubscribe = this.plugin.subscribeDesktopRecording((snapshot) => this.render(snapshot));
   }
 
   hide(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.dragCleanup?.();
+    this.dragCleanup = undefined;
     this.root?.remove();
     this.root = undefined;
+    this.durationEl = undefined;
+    this.labelEl = undefined;
+    this.stopButton = undefined;
   }
 
   private render(snapshot: DesktopRecordingSnapshot): void {
@@ -237,24 +268,87 @@ export class DesktopRecordingOverlay {
       this.hide();
       return;
     }
-    root.empty();
     root.setAttr("data-state", snapshot.state);
-    const status = root.createDiv("knowgrove-recording-overlay-status");
-    status.createSpan("knowgrove-recording-dot");
-    status.createSpan({ text: formatRecordingDuration(snapshot.recordedMilliseconds) });
-    status.createSpan({ cls: "knowgrove-recording-overlay-label", text: snapshot.state === "recording" ? "录音中" : snapshot.message });
-    const restore = root.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "展开录音" } });
-    setIcon(restore, "panel-left-open");
-    restore.addEventListener("click", () => {
-      this.hide();
-      void this.plugin.activateDesktopRecorder();
-    });
-    if (snapshot.state !== "requesting" && snapshot.state !== "finalizing") {
-      const stop = root.createEl("button", { cls: "clickable-icon knowgrove-recording-stop", attr: { "aria-label": "停止并保存录音" } });
-      setIcon(stop, "square");
-      stop.addEventListener("click", () => void this.plugin.stopDesktopRecording().catch((error) => {
-        new Notice(`保存录音失败：${error instanceof Error ? error.message : String(error)}`, 9000);
-      }));
+    this.durationEl?.setText(formatRecordingDuration(snapshot.recordedMilliseconds));
+    this.labelEl?.setText(snapshot.state === "recording" ? "录音中" : snapshot.message);
+    if (this.stopButton) {
+      this.stopButton.hidden = snapshot.state === "requesting" || snapshot.state === "finalizing";
+      this.stopButton.disabled = snapshot.state === "finalizing";
     }
+  }
+
+  private installDragBehavior(): void {
+    const root = this.root;
+    if (!root) return;
+    const document = root.ownerDocument;
+    const saved = window.localStorage.getItem(DesktopRecordingOverlay.positionKey);
+    if (saved) {
+      try {
+        const position = JSON.parse(saved) as { left?: number; top?: number };
+        if (Number.isFinite(position.left) && Number.isFinite(position.top)) {
+          this.placeWithinViewport(position.left!, position.top!);
+        }
+      } catch {
+        window.localStorage.removeItem(DesktopRecordingOverlay.positionKey);
+      }
+    }
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+    const pointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+      const bounds = root.getBoundingClientRect();
+      dragging = true;
+      offsetX = event.clientX - bounds.left;
+      offsetY = event.clientY - bounds.top;
+      root.addClass("is-dragging");
+      root.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+    const pointerMove = (event: PointerEvent): void => {
+      if (!dragging) return;
+      this.placeWithinViewport(event.clientX - offsetX, event.clientY - offsetY);
+    };
+    const pointerUp = (event: PointerEvent): void => {
+      if (!dragging) return;
+      dragging = false;
+      root.removeClass("is-dragging");
+      if (root.hasPointerCapture(event.pointerId)) root.releasePointerCapture(event.pointerId);
+      const bounds = root.getBoundingClientRect();
+      window.localStorage.setItem(DesktopRecordingOverlay.positionKey, JSON.stringify({
+        left: Math.round(bounds.left),
+        top: Math.round(bounds.top),
+      }));
+    };
+    const resize = (): void => {
+      const bounds = root.getBoundingClientRect();
+      this.placeWithinViewport(bounds.left, bounds.top);
+    };
+    root.addEventListener("pointerdown", pointerDown);
+    root.addEventListener("pointermove", pointerMove);
+    root.addEventListener("pointerup", pointerUp);
+    root.addEventListener("pointercancel", pointerUp);
+    window.addEventListener("resize", resize);
+    this.dragCleanup = () => {
+      root.removeEventListener("pointerdown", pointerDown);
+      root.removeEventListener("pointermove", pointerMove);
+      root.removeEventListener("pointerup", pointerUp);
+      root.removeEventListener("pointercancel", pointerUp);
+      window.removeEventListener("resize", resize);
+    };
+  }
+
+  private placeWithinViewport(left: number, top: number): void {
+    const root = this.root;
+    if (!root) return;
+    const gap = 12;
+    const width = root.offsetWidth || 320;
+    const height = root.offsetHeight || 48;
+    const safeLeft = Math.max(gap, Math.min(left, window.innerWidth - width - gap));
+    const safeTop = Math.max(gap, Math.min(top, window.innerHeight - height - gap));
+    root.style.left = `${safeLeft}px`;
+    root.style.top = `${safeTop}px`;
+    root.style.right = "auto";
+    root.style.bottom = "auto";
   }
 }

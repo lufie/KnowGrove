@@ -7,7 +7,9 @@ import {
   extractBatchCaptureUrls,
   formatRecordingDuration,
   recordingExtension,
+  recordingFinalizationMode,
   recordingMimeType,
+  recordingStreamCopyExtension,
   type DesktopRecordingManifest,
 } from "../src/capture-center-core";
 
@@ -38,6 +40,24 @@ test("desktop recording chooses supported media formats and formats duration", (
   assert.equal(recordingMimeType(() => false), "");
   assert.equal(recordingExtension("audio/webm;codecs=opus"), "webm");
   assert.equal(recordingExtension("audio/mp4"), "m4a");
+  assert.equal(recordingStreamCopyExtension([{ mimeType: "audio/webm;codecs=opus" }]), "webm");
+  assert.equal(recordingStreamCopyExtension([
+    { mimeType: "audio/webm;codecs=opus" },
+    { mimeType: "audio/webm" },
+  ]), "webm");
+  assert.equal(recordingStreamCopyExtension([
+    { mimeType: "audio/webm" },
+    { mimeType: "audio/mp4" },
+  ]), undefined);
+  assert.equal(recordingFinalizationMode([{ mimeType: "audio/webm" }]), "direct-copy");
+  assert.equal(recordingFinalizationMode([
+    { mimeType: "audio/webm;codecs=opus" },
+    { mimeType: "audio/webm" },
+  ]), "stream-copy");
+  assert.equal(recordingFinalizationMode([
+    { mimeType: "audio/webm" },
+    { mimeType: "audio/mp4" },
+  ]), "transcode");
   assert.equal(formatRecordingDuration(65_500), "01:05");
   assert.equal(formatRecordingDuration(3_665_000), "01:01:05");
 });

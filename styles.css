@@ -4687,6 +4687,13 @@ button.knowgrove-property-issue-row:hover {
   color: var(--text-normal);
 }
 
+.knowgrove-desktop-recorder-view {
+  height: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--size-4-4) var(--size-4-3);
+}
+
 .knowgrove-capture-help {
   margin: 0 0 var(--size-4-2);
   color: var(--text-muted);
@@ -4709,6 +4716,12 @@ button.knowgrove-property-issue-row:hover {
   justify-content: space-between;
   gap: var(--size-4-2);
   margin-top: var(--size-4-3);
+}
+
+.knowgrove-recorder-actions button {
+  min-width: 0;
+  flex: 1 1 128px;
+  white-space: normal;
 }
 
 .knowgrove-batch-link-footer span,
@@ -4779,7 +4792,7 @@ button.knowgrove-batch-link-result:focus-visible {
   display: grid;
   gap: var(--size-4-2);
   margin: 0 0 var(--size-4-4);
-  padding: var(--size-4-5);
+  padding: var(--size-4-4) var(--size-4-3);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l);
   background: var(--background-secondary);
@@ -4787,7 +4800,10 @@ button.knowgrove-batch-link-result:focus-visible {
 }
 
 .knowgrove-recorder-card strong {
+  overflow: hidden;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .knowgrove-recorder-card p {
@@ -4802,7 +4818,7 @@ button.knowgrove-batch-link-result:focus-visible {
   gap: var(--size-4-2);
   color: var(--interactive-accent);
   font-variant-numeric: tabular-nums;
-  font-size: 1.7em;
+  font-size: clamp(1.35em, 7vw, 1.7em);
 }
 
 .knowgrove-recorder-title,
@@ -4826,6 +4842,14 @@ button.knowgrove-batch-link-result:focus-visible {
   box-shadow: var(--shadow-l);
   color: var(--text-normal);
   font-variant-numeric: tabular-nums;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.knowgrove-recording-overlay.is-dragging {
+  cursor: grabbing;
+  opacity: 0.94;
 }
 
 .knowgrove-recording-overlay-status {
@@ -4841,6 +4865,40 @@ button.knowgrove-batch-link-result:focus-visible {
   color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.knowgrove-recording-overlay-duration {
+  flex: 0 0 auto;
+}
+
+button.knowgrove-recording-restore {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--size-4-1);
+  min-height: 30px;
+  padding: 0 var(--size-4-2);
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+button.knowgrove-recording-restore:hover,
+button.knowgrove-recording-restore:focus-visible {
+  box-shadow: none;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.knowgrove-recording-restore-icon {
+  display: inline-flex;
+}
+
+.knowgrove-recording-restore-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .knowgrove-recording-dot {
@@ -4870,5 +4928,16 @@ button.knowgrove-batch-link-result:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .knowgrove-recording-dot {
     animation: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .knowgrove-recording-overlay {
+    max-width: calc(100vw - var(--size-4-6));
+  }
+
+  .knowgrove-recording-overlay-label,
+  button.knowgrove-recording-restore span:last-child {
+    display: none;
   }
 }
