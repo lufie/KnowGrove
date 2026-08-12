@@ -12,6 +12,7 @@ import {
   parentVaultPath,
   selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
+  shouldPromptForLostAttachmentReference,
   uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
 export {
@@ -26,6 +27,7 @@ export {
   parentVaultPath,
   selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
+  shouldPromptForLostAttachmentReference,
   uniqueAttachmentTargetPath,
 } from "./attachment-cleanup-core";
 
@@ -1038,6 +1040,10 @@ export class AttachmentCleanupManager {
   }
 
   private queuePotentialOrphans(paths: Iterable<string>, reason: AttachmentCleanupReason, metadataSourcePath?: string): void {
+    // Obsidian already owns the destructive confirmation for deleting a whole
+    // note and its attachments. Keep the orphan history for a later manual
+    // full-vault check, but never stack a second modal or race the same file.
+    if ((reason === "reference-removed" || reason === "source-deleted") && !shouldPromptForLostAttachmentReference(reason)) return;
     for (const path of paths) {
       this.pendingPromptPaths.add(path);
       if (metadataSourcePath) {

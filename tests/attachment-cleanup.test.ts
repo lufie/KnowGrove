@@ -12,6 +12,7 @@ import {
   parentVaultPath,
   selectAttachmentReferenceSourcePaths,
   selectPreviouslyReferencedOrphanPaths,
+  shouldPromptForLostAttachmentReference,
   uniqueAttachmentTargetPath,
 } from "../src/attachment-cleanup-core";
 import { createDefaultSettings } from "../src/types";
@@ -25,6 +26,11 @@ test("attachment cleanup is enabled by default but never implies automatic delet
   assert.equal(settings.moveAttachmentsWithNote, false);
   assert.equal(settings.autoOrganizeAttachments, false);
   assert.equal(settings.sharedAttachmentHandling, "skip");
+});
+
+test("whole-note deletion uses Obsidian's single confirmation while in-note removal keeps the cleanup prompt", () => {
+  assert.equal(shouldPromptForLostAttachmentReference("reference-removed"), true);
+  assert.equal(shouldPromptForLostAttachmentReference("source-deleted"), false);
 });
 
 test("attachment organization follows the Obsidian global attachment location", () => {

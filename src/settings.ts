@@ -481,7 +481,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     this.addClickableToggleSetting(
       containerEl,
       "附件冗余检测",
-      "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。",
+      "正文移除最后一处附件引用时提醒；删除整篇笔记沿用 Obsidian 自己的一次确认，不再重复弹窗。启动时不扫描全库，从未引用的文件不会进入删除候选。",
       this.plugin.settings.enableAttachmentCleanup,
       async (value) => {
         this.plugin.settings.enableAttachmentCleanup = value;

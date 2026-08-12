@@ -7,6 +7,14 @@ const ATTACHMENT_EXTENSIONS = new Set([
 ]);
 const REFERENCE_SOURCE_EXTENSIONS = new Set([".md", ".canvas", ".base"]);
 
+export function shouldPromptForLostAttachmentReference(reason: "reference-removed" | "source-deleted"): boolean {
+  // Deleting an entire source note is already confirmed by Obsidian, including
+  // its own attachment handling. Opening another modal from the ensuing Vault
+  // delete event stacks two destructive confirmations and can race Obsidian for
+  // the same file. Keep KnowGrove's prompt for in-note reference edits only.
+  return reason === "reference-removed";
+}
+
 export function normalizeAttachmentExtensions(values: Iterable<string>): string[] {
   const normalized = new Set<string>();
   for (const rawValue of values) {

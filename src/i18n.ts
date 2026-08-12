@@ -63,6 +63,7 @@ const ENGLISH: Record<string, string> = {
   "附件冗余检测": "Orphaned attachment check",
   "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。": "Tracks only attachments previously used by notes and alerts when the last reference is removed. Never treats never-referenced files as cleanup candidates.",
   "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。": "Checks only notes you just created, edited, moved, or deleted. Alerts when an attachment loses its last reference. Never scans the full vault at startup or treats never-referenced files as cleanup candidates.",
+  "正文移除最后一处附件引用时提醒；删除整篇笔记沿用 Obsidian 自己的一次确认，不再重复弹窗。启动时不扫描全库，从未引用的文件不会进入删除候选。": "Alerts when the last attachment reference is removed while editing. Deleting an entire note uses Obsidian's single confirmation without another popup. Never scans the full vault at startup or treats never-referenced files as cleanup candidates.",
   "立即检查": "Check now",
   "全面检查": "Full check",
   "检查附件": "Check attachments",
