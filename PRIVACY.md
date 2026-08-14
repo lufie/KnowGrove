@@ -19,6 +19,10 @@ Some local CLIs and external APIs have their own privacy terms. Users should rev
 
 Runtime components are stored in the operating system's application data directory rather than in the vault. Browser capture job state is stored inside the plugin's configuration directory. Uninstalling the plugin does not delete user notes or generated Markdown.
 
+KnowGrove uses direct filesystem access only for user-selected external audio or video, and for its signed runtime components outside the vault. Normal note, property, reference, and attachment operations use Obsidian's Vault and FileManager APIs. Local AI and media executables are started with an explicit executable and argument list, without a command shell.
+
+Whole-vault enumeration is used only for workflows that inherently require a global result, such as a user-triggered property audit, topic index refresh, or full attachment check. Startup does not rebuild the attachment index. Clipboard reads or writes happen only in response to an explicit paste or copy action. Recording overlay position is kept only for the current Obsidian session and is not stored in browser local storage.
+
 ## Contact
 
 Open a privacy or security issue in the KnowGrove GitHub repository. Do not include API keys, private notes, access tokens, or personal recordings in a public issue.
