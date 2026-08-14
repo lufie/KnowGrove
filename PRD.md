@@ -10,10 +10,10 @@
 | 中文名称 | 言序 |
 | 产品形态 | Obsidian 桌面端插件 + 浏览器剪藏扩展 |
 | 当前产品版本 | 2.8.11（GitHub 正式发布，官方标签预扫描已完成） |
-| 本轮目标版本 | 2.8.11 等待 Obsidian 社区目录自动刷新正式版本 |
+| 本轮目标版本 | 2.8.11 已同步至 Obsidian 社区目录并完成正式扫描 |
 | PRD 版本 | 1.8.5 |
 | 基线日期 | 2026-07-31 |
-| 文档状态 | 2.8.11 已正式发布，官方标签预扫描状态 `Completed`，源码 Warning 0、CSS Warning 0、Error 0、Recommendation 0；当前 Obsidian 社区目录展示版本仍为 2.8.9，等待平台自动刷新。必要的文件系统、本地进程、全库枚举和剪贴板能力继续作为准确的桌面能力披露保留，Obsidian 员工人工审核仍待完成 |
+| 文档状态 | 2.8.11 已正式发布并同步至 Obsidian 社区目录，正式扫描状态 `Completed`：源码 Warning 0、CSS Warning 0、Error 0；仍有 2 条必要桌面行为 Warning（文件系统、本地进程）和 2 条能力 Recommendation（显式全库枚举、用户点击复制），属于准确能力披露而非源码质量问题。Obsidian 员工人工审核仍待完成 |
 | 源代码仓库 | `https://github.com/lufie/KnowGrove`（公开） |
 
 ## 2. 产品愿景
@@ -828,7 +828,7 @@ Runtime 1.0.x 托管：
 
 - 本机浏览器服务：`http://127.0.0.1:47831`
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
-- Obsidian 社区插件 ID：`knowgrove`（已收录到官方 `community-plugins.json`；2.8.11 官方标签预扫描已完成且源码 / CSS Warning、Error、Recommendation 均为 0，社区目录当前展示版本仍为 2.8.9，尚未完成人工审核）
+- Obsidian 社区插件 ID：`knowgrove`（已收录到官方 `community-plugins.json`；社区目录当前版本为 2.8.11，正式扫描状态 `Completed`，源码 / CSS Warning 与 Error 均为 0；2 条必要行为 Warning 和 2 条能力 Recommendation 继续准确披露，尚未完成人工审核）
 - 最新 GitHub 正式插件版本：`2.8.11`，发布地址：`https://github.com/lufie/KnowGrove/releases/tag/2.8.11`
 - 最新 Obsidian 本地安装包：`release/言序-KnowGrove-2.5.17-安装包/knowgrove-2.5.17.zip`，SHA-256 `1f64e80ae92efcd9b3e969f63aa7a7bc794405eb60204c6c45c2e94069faa4b6`
 - 最新浏览器剪藏扩展本地安装包：`release/言序-KnowGrove-2.5.4-安装包/浏览器剪藏扩展/KnowGrove-Capture-0.3.3.zip`，SHA-256 `02424304d772f1bfd6725c7a10844295dd967e19d5a8d91e380dec7adc9a12fd`
@@ -970,7 +970,7 @@ Runtime 1.0.x 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
-| 2026-08-15 | 2.8.11（GitHub 正式发布，官方标签预扫描完成） | 1.8.5 | 修复 / CSS 兼容性警告治理 / 发布 | 根据 2.8.10 官方分支预扫描的唯一剩余警告，将评论文本的 `text-decoration-*` 下划线实现替换为兼容的内阴影，保留原有标记视觉与交互；版本映射同步更新至 2.8.11 | PR #15 通过 CI 后合并；GitHub Release、三个标准资产和来源证明已发布；官方 2.8.11 标签预扫描状态 `Completed`，源码 Warning 0、CSS Warning 0、Error 0、Recommendation 0；当前 Vault 已覆盖安装并重载，`data.json` 哈希不变，插件错误和控制台错误为 0；社区目录当前展示版本仍为 2.8.9，等待平台自动刷新，Obsidian 员工人工审核仍待完成 |
+| 2026-08-15 | 2.8.11（GitHub 与社区目录正式发布，正式扫描完成） | 1.8.5 | 修复 / CSS 兼容性警告治理 / 发布 | 根据 2.8.10 官方分支预扫描的唯一剩余警告，将评论文本的 `text-decoration-*` 下划线实现替换为兼容的内阴影，保留原有标记视觉与交互；版本映射同步更新至 2.8.11 | PR #15 通过 CI 后合并；GitHub Release、三个标准资产和来源证明已发布；官方正式扫描状态 `Completed`，源码 Warning 0、CSS Warning 0、Error 0，发布资产、网络、依赖与可复现构建均通过；2 条文件系统 / 本地进程行为 Warning 和 2 条全库枚举 / 剪贴板 Recommendation 属于产品核心桌面能力披露；当前 Vault 已覆盖安装并重载，`data.json` 哈希不变，插件错误和控制台错误为 0；社区目录当前版本已更新为 2.8.11，Obsidian 员工人工审核仍待完成 |
 | 2026-08-15 | 2.8.10（GitHub 正式发布，官方标签预扫描完成） | 1.8.4 | 修复 / 社区源码警告治理 / 发布 | 根据 2.8.9 已完成的社区扫描报告逐项治理 6 类 TypeScript 类型安全源码 Warning 和 2 条 CSS 兼容性 Warning：显式声明 Node 类型环境，将 `no-unsafe-member-access`、`no-unsafe-assignment`、`no-unsafe-call`、`no-unsafe-argument`、`no-unsafe-return` 与 `prefer-promise-reject-errors` 固化为本地 Error 门禁；移除扫描器无法安全推断的 `Array.prototype.at()` 用法并规范子进程错误；拆分文本装饰简写，移除扩展系统字体关键字 | 本地完整门禁、PR #14、GitHub Release、标准资产和来源证明均完成；官方标签预扫描确认 6 类 TypeScript 源码 Warning 全部清零，仅剩 `text-decoration-*` CSS 兼容性 Warning，随后由 2.8.11 清理。文件系统访问与受控本地进程属于媒体导入、录音恢复、Runtime 和用户选择 CLI 的核心能力，显式全库检查与剪贴板操作均由用户动作触发，继续作为准确能力披露保留 |
 | 2026-08-15 | 2.8.9（GitHub 正式发布，社区扫描完成） | 1.8.3 | 修复 / 社区警告治理 / 发布 | 启用 `eslint-plugin-obsidianmd` 完整推荐规则与 TypeScript 类型规则并把警告视为失败；移除不安全未知值转换、遗留 `require`、跨窗口 `instanceof`、异步事件误用、硬编码配置目录、废弃 Workspace / Slider API 和浏览器 `localStorage`；设置页迁移到 Obsidian 1.13 可搜索声明式 API，最低版本调整为 1.13.0；清理插件、浏览器扩展和云端样式中的 `!important`、扩展系统字体与过时文本装饰写法；补充文件系统、本地进程、全库枚举和剪贴板的主动触发边界；新增 PR 与 `main` 推送自动验证工作流，并将 GitHub Actions 升级到 Node 24 运行版本 | 官方规则 lint 达到 0 错误 / 0 警告，类型检查、235 项测试、生产构建与差异检查全部通过；PR #11 合并并发布 2.8.9，标准资产与来源证明齐全；当前 Vault 已覆盖安装并重载，`data.json` 哈希保持不变，插件及控制台错误为 0；PR #12 完成 CI Actions 升级且流水线通过；社区后台已完成 2.8.9 / `3b897a5` 扫描，发布资产、网络、依赖和可复现构建均通过，0 个阻断 Error；报告中的源码与 CSS 警告转入 2.8.10 修复 |
 | 2026-08-14 | 2.8.8（正式发布，社区自动复检完成） | 1.8.1 | 修复 / 发布 / 社区自动审核 | 从 Obsidian 社区作者后台逐项核对 2.8.4 报告，确认唯一阻断 Error 为录音悬浮窗对 `right` / `bottom` 的直接静态样式赋值；改为 Obsidian `setCssProps`，并将 `eslint-plugin-obsidianmd` 0.4.1 的全部官方 Obsidian 规则及其严重级别同步进本地 Lint 门禁；移除两处非必要 `console.info`，避免新版规则把开发诊断日志升级为发布阻断 | 修改以独立 Git 提交保存并通过 PR #9 合并；官方 Obsidian 规则门禁、类型检查、235 项单元测试、生产构建和差异检查全部通过；2.8.8 已覆盖部署并重载到当前 Documents Vault，`data.json` 哈希不变，插件与控制台错误为 0；GitHub Release `2.8.8`、三个标准资产及构建来源证明已发布；社区后台识别版本 2.8.8 / 提交 `0681658`，自动复检状态为 `Completed`、7 项 Pass、29 项 Warning、14 项 Recommendation、0 个阻断 Error，市场页恢复展示 `Add to Obsidian` 安装入口；人工审核与 Windows/macOS Intel 干净机验收仍待完成 |
