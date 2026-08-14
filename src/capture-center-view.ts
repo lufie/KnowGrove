@@ -337,8 +337,7 @@ export class DesktopRecordingOverlay {
   private labelEl?: HTMLElement;
   private stopButton?: HTMLButtonElement;
   private dragCleanup?: () => void;
-
-  private static readonly positionKey = "knowgrove-recording-overlay-position";
+  private position?: { left: number; top: number };
 
   constructor(private readonly plugin: KnowGrovePlugin) {}
 
@@ -401,18 +400,7 @@ export class DesktopRecordingOverlay {
   private installDragBehavior(): void {
     const root = this.root;
     if (!root) return;
-    const document = root.ownerDocument;
-    const saved = window.localStorage.getItem(DesktopRecordingOverlay.positionKey);
-    if (saved) {
-      try {
-        const position = JSON.parse(saved) as { left?: number; top?: number };
-        if (Number.isFinite(position.left) && Number.isFinite(position.top)) {
-          this.placeWithinViewport(position.left!, position.top!);
-        }
-      } catch {
-        window.localStorage.removeItem(DesktopRecordingOverlay.positionKey);
-      }
-    }
+    if (this.position) this.placeWithinViewport(this.position.left, this.position.top);
     let dragging = false;
     let offsetX = 0;
     let offsetY = 0;
@@ -436,10 +424,10 @@ export class DesktopRecordingOverlay {
       root.removeClass("is-dragging");
       if (root.hasPointerCapture(event.pointerId)) root.releasePointerCapture(event.pointerId);
       const bounds = root.getBoundingClientRect();
-      window.localStorage.setItem(DesktopRecordingOverlay.positionKey, JSON.stringify({
+      this.position = {
         left: Math.round(bounds.left),
         top: Math.round(bounds.top),
-      }));
+      };
     };
     const resize = (): void => {
       const bounds = root.getBoundingClientRect();

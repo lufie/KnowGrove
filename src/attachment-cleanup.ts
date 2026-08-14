@@ -652,7 +652,8 @@ export class AttachmentCleanupManager {
     const vaultWithConfig = this.plugin.app.vault as typeof this.plugin.app.vault & {
       getConfig?: (key: string) => unknown;
     };
-    const configuredFolder = String(vaultWithConfig.getConfig?.("attachmentFolderPath") ?? "/");
+    const configuredValue = vaultWithConfig.getConfig?.("attachmentFolderPath");
+    const configuredFolder = typeof configuredValue === "string" ? configuredValue : "/";
     const targetFolder = attachmentFolderForNote(source.path, configuredFolder);
     const oldFolder = parentVaultPath(oldSourcePath ?? source.path);
     const ownerPath = oldSourcePath ?? source.path;
@@ -1109,7 +1110,7 @@ export class AttachmentCleanupManager {
     for (const sourcePath of sourcePaths) {
       const file = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
       if (!(file instanceof TFile) || file.extension !== "md") continue;
-      await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(frontmatter)) {
           if (typeof value === "string" && this.isExactFrontmatterAttachmentReference(value, file, attachmentPath)) {
             delete frontmatter[key];

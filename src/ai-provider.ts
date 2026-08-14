@@ -1,4 +1,9 @@
 import { Platform, requestUrl } from "obsidian";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { AIPropertySettings, AIProviderAvailability, AIProviderId } from "./types";
 import {
   FALLBACK_PROVIDER_MODELS,
@@ -9,7 +14,6 @@ import {
   parseModelsFromHelp,
   parsePlainModelList,
   parseQoderModels,
-  providerModelOptions,
 } from "./ai-provider-utils";
 import {
   mergeExecutablePath,
@@ -84,7 +88,6 @@ async function readLoginShellPath(): Promise<string> {
   if (process.platform === "win32") return "";
   if (!loginShellPathPromise) {
     loginShellPathPromise = (async () => {
-      const { spawn } = require("node:child_process") as typeof import("node:child_process");
       const shell = process.env.SHELL?.trim() || "/bin/zsh";
       const marker = "__KNOWGROVE_LOGIN_PATH__";
       return await new Promise<string>((resolve) => {
@@ -94,7 +97,7 @@ async function readLoginShellPath(): Promise<string> {
           { env: process.env, stdio: ["ignore", "pipe", "ignore"], shell: false },
         );
         let stdout = "";
-        const timer = globalThis.setTimeout(() => {
+        const timer = window.setTimeout(() => {
           child.kill("SIGTERM");
           resolve("");
         }, 4_000);
@@ -103,11 +106,11 @@ async function readLoginShellPath(): Promise<string> {
           if (stdout.length > 100_000) stdout = stdout.slice(-100_000);
         });
         child.once("error", () => {
-          globalThis.clearTimeout(timer);
+          window.clearTimeout(timer);
           resolve("");
         });
         child.once("close", () => {
-          globalThis.clearTimeout(timer);
+          window.clearTimeout(timer);
           const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
           resolve(line?.slice(marker.length).trim() ?? "");
         });
@@ -132,11 +135,6 @@ export async function runLocalCommand(
   timeoutSeconds: number,
 ): Promise<LocalCommandResult> {
   if (!Platform.isDesktopApp) throw new Error("CLI 模型只支持 Obsidian 桌面版");
-  const { spawn } = require("node:child_process") as typeof import("node:child_process");
-  const { tmpdir } = require("node:os") as typeof import("node:os");
-  const { mkdtemp, rm } = require("node:fs/promises") as typeof import("node:fs/promises");
-  const { join } = require("node:path") as typeof import("node:path");
-  const { StringDecoder } = require("node:string_decoder") as typeof import("node:string_decoder");
   const workingDirectory = await mkdtemp(join(tmpdir(), "knowgrove-ai-"));
   const loginShellPath = await readLoginShellPath();
   const resolvedExecutable = await resolveLocalExecutable(executable, { loginShellPath }) ?? executable;
@@ -179,10 +177,10 @@ export async function runLocalCommand(
       const finish = (callback: () => void): void => {
         if (settled) return;
         settled = true;
-        globalThis.clearTimeout(timer);
+        window.clearTimeout(timer);
         callback();
       };
-      const timer = globalThis.setTimeout(() => {
+      const timer = window.setTimeout(() => {
         child.kill("SIGTERM");
         finish(() => reject(new Error(`${executable} 运行超过 ${timeoutSeconds} 秒，已停止`)));
       }, Math.max(5, timeoutSeconds) * 1_000);
@@ -350,9 +348,6 @@ async function detectCLIModels(id: CLIProviderId, executable: string): Promise<s
 
 async function readCodexConfiguredModel(): Promise<string | undefined> {
   try {
-    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { homedir } = require("node:os") as typeof import("node:os");
-    const { join } = require("node:path") as typeof import("node:path");
     const content = await readFile(join(homedir(), ".codex", "config.toml"), "utf8");
     return content.match(/^model\s*=\s*["']([^"']+)["']/m)?.[1];
   } catch {
@@ -362,9 +357,6 @@ async function readCodexConfiguredModel(): Promise<string | undefined> {
 
 async function readCodexCachedModels(): Promise<string[]> {
   try {
-    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { homedir } = require("node:os") as typeof import("node:os");
-    const { join } = require("node:path") as typeof import("node:path");
     return parseCodexModelCache(await readFile(join(homedir(), ".codex", "models_cache.json"), "utf8"));
   } catch {
     return [];
@@ -374,9 +366,6 @@ async function readCodexCachedModels(): Promise<string[]> {
 /** Qoder stores a model label separately from its credentials. Never read auth files. */
 async function readQoderConfiguredModel(): Promise<string | undefined> {
   try {
-    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { homedir } = require("node:os") as typeof import("node:os");
-    const { join } = require("node:path") as typeof import("node:path");
     const content = await readFile(join(homedir(), ".qoder", ".models", "default"), "utf8");
     const parsed = JSON.parse(content) as { key?: unknown };
     return typeof parsed.key === "string" && parsed.key.trim() ? parsed.key.trim() : undefined;
@@ -390,10 +379,10 @@ async function requestWithTimeout(
   headers: Record<string, string>,
   timeoutMilliseconds = 4_000,
 ): Promise<number> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let timeoutId: number | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error("连接超时")), timeoutMilliseconds);
+      timeoutId = window.setTimeout(() => reject(new Error("连接超时")), timeoutMilliseconds);
     });
     const response = await Promise.race([
       requestUrl({ url, method: "GET", headers }),
@@ -401,7 +390,7 @@ async function requestWithTimeout(
     ]);
     return response.status;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    if (timeoutId) window.clearTimeout(timeoutId);
   }
 }
 

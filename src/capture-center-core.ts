@@ -93,9 +93,10 @@ export function safeLocalMediaImportFileName(fileName: string): string {
   const leafName = fileName.trim().split(/[\\/]/).at(-1) ?? "";
   const match = /^(.*?)(\.[^.]+)$/.exec(leafName);
   const extension = match?.[2]?.toLowerCase() ?? "";
-  const stem = (match?.[1] ?? leafName)
-    .normalize("NFKC")
-    .replace(/[\u0000-\u001F<>:"/\\|?*]+/g, " ")
+  const stem = Array.from((match?.[1] ?? leafName).normalize("NFKC"), (character) => (
+    character.charCodeAt(0) <= 31 ? " " : character
+  )).join("")
+    .replace(/[<>:"/\\|?*]+/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[. ]+$/g, "")
     .trim()

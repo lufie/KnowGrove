@@ -6,6 +6,7 @@ import {
   Platform,
   PluginSettingTab,
   Setting,
+  type SettingDefinitionItem,
   TFolder,
   normalizePath,
 } from "obsidian";
@@ -71,8 +72,26 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
-    const { containerEl } = this;
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{
+      name: "言序 KnowGrove 设置",
+      desc: "配置大模型、稍后阅读、属性管理、知识工作台与增强功能。",
+      aliases: [
+        "大模型配置", "模型选择", "Read It Later", "阅读列表", "浏览器剪藏", "手机剪藏",
+        "属性管理", "知识工作台", "主题列表", "附件清理", "录音", "内容解析", "增强功能",
+      ],
+      render: (setting) => {
+        setting.settingEl.empty();
+        this.renderContent(setting.settingEl);
+        return () => {
+          this.runtimeProgressUnsubscribe?.();
+          this.runtimeProgressUnsubscribe = undefined;
+        };
+      },
+    }];
+  }
+
+  private renderContent(containerEl: HTMLElement): void {
     this.runtimeProgressUnsubscribe?.();
     this.runtimeProgressUnsubscribe = undefined;
     containerEl.empty();
@@ -145,7 +164,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     summary.createSpan({ cls: "knowgrove-settings-module-index", text: index });
     const copy = summary.createDiv("knowgrove-settings-module-copy");
     copy.createEl("strong", { text: title });
-    copy.createEl("span", { text: description });
+    copy.createSpan({ text: description });
     details.addEventListener("toggle", () => {
       if (details.open) this.openModules.add(id);
       else this.openModules.delete(id);
@@ -321,7 +340,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   private renderReadItLaterAdvancedSettings(containerEl: HTMLElement): void {
     const settings = this.plugin.settings;
-    const capture = settings.browserCapture;
     const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
     details.createEl("summary", { text: "阅读习惯设置" });
     const content = details.createDiv("knowgrove-settings-details-content");
@@ -363,7 +381,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .setDesc("默认 3 秒，用于避免快速滑过时误标已读。")
       .addSlider((slider) => slider
         .setLimits(1, 10, 1)
-        .setDynamicTooltip()
         .setValue(settings.finishDwellSeconds)
         .onChange(async (value) => {
           settings.finishDwellSeconds = value;
@@ -447,7 +464,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           this.plugin.settings.autoMarkFinishedAtEnd = value;
           this.plugin.resetAutoCompletionTracking();
           await this.plugin.savePluginData();
-          this.display();
+          this.update();
         }));
 
     if (this.plugin.settings.autoMarkFinishedAtEnd) {
@@ -456,7 +473,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .setDesc("到达文末后等待多久再标记完成，用于减少快速滑过导致的误判。")
         .addSlider((slider) => slider
           .setLimits(1, 10, 1)
-          .setDynamicTooltip()
           .setValue(this.plugin.settings.finishDwellSeconds)
           .onChange(async (value) => {
             this.plugin.settings.finishDwellSeconds = value;
@@ -539,7 +555,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .addTextArea((text) => {
         text.inputEl.rows = 3;
         text
-          .setPlaceholder("例如：Archive/长期保留")
+          .setPlaceholder("例如：archive/长期保留")
           .setValue(this.plugin.settings.attachmentCleanupExcludedFolders.join("\n"))
           .onChange(async (value) => {
             this.plugin.settings.attachmentCleanupExcludedFolders = Array.from(new Set(value
@@ -582,7 +598,6 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .setDesc("默认显示 8 篇，可设置为 3–20 篇。")
       .addSlider((slider) => slider
         .setLimits(3, 20, 1)
-        .setDynamicTooltip()
         .setValue(this.plugin.settings.recentFileLimit)
         .onChange(async (value) => {
           this.plugin.settings.recentFileLimit = value;
@@ -816,7 +831,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           } catch (error) {
             new Notice(`浏览器接收切换失败：${error instanceof Error ? error.message : String(error)}`);
           }
-          this.display();
+          this.update();
         }))
       .addButton((button) => button
         .setButtonText("撤销浏览器授权")
@@ -1022,7 +1037,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
     new Setting(tools)
       .setName("Whisper")
-      .setDesc("视频没有字幕时使用；留空会自动检测 whisper 或 whisper-cli。")
+      .setDesc("视频没有字幕时使用；留空会自动检测 Whisper 或 whisper-cli。")
       .addText((text) => text
         .setPlaceholder("/opt/homebrew/bin/whisper-cli")
         .setValue(settings.whisperPath)
@@ -1069,7 +1084,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           settings.endpoint = "";
           this.plugin.clearAIProviderDetection();
           await this.plugin.savePluginData();
-          this.display();
+          this.update();
         }));
     const providerStatus = section.createDiv("knowgrove-provider-status");
     providerStatus.createDiv({ text: "正在检查本机命令、API 配置和接口连接…" });
@@ -1100,7 +1115,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     if (cached) updateProviderDescription(cached);
     else void this.plugin.getAIProviders().then((providers) => {
       updateProviderDescription(providers);
-      this.display();
+      this.update();
     }).catch((error) => {
       providerStatus.setText(`模型检测失败：${error instanceof Error ? error.message : String(error)}`);
     });
@@ -1125,7 +1140,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           dropdown.onChange(async (value) => {
             settings.model = value === "__custom__" ? "__custom__" : value;
             await this.plugin.savePluginData();
-            this.display();
+            this.update();
           });
         });
       if (settings.model === "__custom__" || modelIsCustom) {
@@ -1185,7 +1200,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
       const secretStored = Boolean(this.plugin.getAISecret(settings.provider));
       new Setting(section)
-        .setName("API Key")
+        .setName("API key")
         .setDesc(this.plugin.supportsAISecretStorage()
           ? `${secretStored ? "已保存" : "尚未保存"}；密钥进入 Obsidian SecretStorage，不写入 data.json。OpenAI 兼容的本地接口可留空。`
           : "当前 Obsidian 版本不支持安全密钥存储，请升级后使用 API 提供方。")
@@ -1203,7 +1218,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           .setDisabled(!secretStored)
           .onClick(() => {
             this.plugin.setAISecret(settings.provider, "");
-            this.display();
+            this.update();
           }));
     }
 
@@ -1216,7 +1231,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           button.setDisabled(true).setButtonText("检测中…");
           try {
             await this.plugin.getAIProviders(true);
-            this.display();
+            this.update();
           } finally {
             button.setDisabled(false).setButtonText("重新检测");
           }
@@ -1234,7 +1249,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           settings.enabled = value;
           await this.plugin.savePluginData();
-          this.display();
+          this.update();
         }));
 
   }
@@ -1277,13 +1292,13 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           settings.imageGenerationEnabled = value;
           await this.plugin.savePluginData();
-          this.display();
+          this.update();
         }));
 
     if (!settings.imageGenerationEnabled) return;
     new Setting(containerEl)
       .setName("配图接口与模型")
-      .setDesc("支持 OpenAI Images API 或相同返回结构的兼容服务。")
+      .setDesc("支持 OpenAI images API 或相同返回结构的兼容服务。")
       .addText((text) => text
         .setPlaceholder("https://api.openai.com/v1/images/generations")
         .setValue(settings.imageEndpoint)
@@ -1319,13 +1334,13 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
     new Setting(containerEl)
-      .setName("配图 API Key")
+      .setName("配图 API key")
       .setDesc(this.plugin.supportsAISecretStorage()
         ? "只保存在 Obsidian 安全密钥存储中，不写入 data.json。"
         : "当前 Obsidian 版本不支持安全密钥存储。")
       .addText((text) => {
         text.inputEl.type = "password";
-        text.setPlaceholder(this.plugin.getCreationImageSecret() ? "已安全保存，输入新值可替换" : "输入 API Key");
+        text.setPlaceholder(this.plugin.getCreationImageSecret() ? "已安全保存，输入新值可替换" : "输入 API key");
         text.onChange((value) => {
           if (value.trim()) this.plugin.setCreationImageSecret(value.trim());
         });
@@ -1334,8 +1349,8 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         .setButtonText("清除")
         .onClick(() => {
           this.plugin.setCreationImageSecret("");
-          new Notice("已清除配图 API Key");
-          this.display();
+          new Notice("已清除配图 API key");
+          this.update();
         }));
   }
 
@@ -1421,7 +1436,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       void this.plugin.generatePropertyTaxonomyProposal()
         .then(() => {
           new Notice("AI 分类建议已生成，请选择是否使用");
-          this.display();
+          this.update();
         })
         .catch((error) => {
           console.error("KnowGrove: taxonomy proposal failed", error);
@@ -1446,14 +1461,14 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       adopt.addEventListener("click", () => {
         adopt.disabled = true;
         void this.plugin.adoptPropertyTaxonomyProposal()
-          .then(() => this.display())
+          .then(() => this.update())
           .catch((error) => {
             new Notice(`采用失败：${error instanceof Error ? error.message : String(error)}`);
             adopt.disabled = false;
           });
       });
       const dismiss = proposalActions.createEl("button", { text: "暂不使用" });
-      dismiss.addEventListener("click", () => void this.plugin.dismissPropertyTaxonomyProposal().then(() => this.display()));
+      dismiss.addEventListener("click", () => void this.plugin.dismissPropertyTaxonomyProposal().then(() => this.update()));
     }
 
     new Setting(guide)
@@ -1482,7 +1497,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       .setName("忽略文件夹")
       .setDesc("属性检查默认覆盖整个知识库，并自动跳过系统文件和代码依赖；这里每行可再添加一个不需要检查的文件夹。")
       .addTextArea((text) => text
-        .setPlaceholder("例如：Home/🕹️skills")
+        .setPlaceholder("例如：home/🕹️skills")
         .setValue(settings.excludedFolders.join("\n"))
         .onChange(async (value) => {
           settings.excludedFolders = Array.from(new Set(value.split("\n")
@@ -1512,7 +1527,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       void this.plugin.updatePropertyTaxonomyDomains(editor.value)
         .then(() => {
           modal.close();
-          this.display();
+          this.update();
         })
         .catch((error) => {
           new Notice(`分类树保存失败：${error instanceof Error ? error.message : String(error)}`);

@@ -610,7 +610,7 @@ export function findMarkdownSection(content: string, heading: string): MarkdownS
   const level = current[1]?.length ?? 2;
   const next = matches.find((match) =>
     match.index !== undefined
-    && match.index > current.index!
+    && match.index > current.index
     && (match[1]?.length ?? 7) <= level);
   const end = next?.index ?? content.length;
   return {

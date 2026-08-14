@@ -71,7 +71,8 @@ export function parseCodexModelCache(json: string): string[] {
  * the model selector.
  */
 export function parseModelsFromHelp(helpText: string): string[] {
-  const text = helpText.replace(/\u001b\[[0-9;]*m/g, "");
+  const ansiColorSequence = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+  const text = helpText.replace(ansiColorSequence, "");
   const candidates: string[] = [];
   const supported = text.match(/Currently supported:\s*\(([^)]{1,4000})\)/i)?.[1];
   if (supported) candidates.push(...supported.split(","));

@@ -149,7 +149,7 @@ export class CommentsSidebarView extends ItemView {
     input.addEventListener("input", () => {
       save.disabled = !input.value.trim();
     });
-    save.addEventListener("click", async () => {
+    save.addEventListener("click", () => void (async () => {
       if (!input.value.trim()) return;
       save.disabled = true;
       save.setText("保存中…");
@@ -162,7 +162,7 @@ export class CommentsSidebarView extends ItemView {
       this.draft = undefined;
       this.activeRecordId = record.id;
       this.render();
-    });
+    })());
     window.setTimeout(() => input.focus(), 50);
   }
 
@@ -205,11 +205,11 @@ export class CommentsSidebarView extends ItemView {
     comment.addEventListener("input", () => {
       save.disabled = !comment.value.trim() || comment.value.trim() === record.comment;
     });
-    save.addEventListener("click", async () => {
+    save.addEventListener("click", () => void (async () => {
       if (!comment.value.trim()) return;
       save.disabled = true;
       await this.plugin.updateReferenceComment(record.id, comment.value.trim());
-    });
+    })());
 
     const targetRow = card.createDiv("knowgrove-sidebar-target-row");
     if (record.targetPath) {
@@ -284,7 +284,7 @@ export class CommentsSidebarView extends ItemView {
       this.render();
     });
     const add = actions.createEl("button", { cls: "mod-cta", text: "添加" });
-    add.addEventListener("click", async () => {
+    add.addEventListener("click", () => void (async () => {
       let target = selectedFile;
       if (!target && input.value.trim()) {
         const file = this.app.vault.getAbstractFileByPath(input.value.trim());
@@ -304,7 +304,7 @@ export class CommentsSidebarView extends ItemView {
         add.disabled = false;
         add.setText("添加");
       }
-    });
+    })());
     window.setTimeout(() => input.focus(), 50);
   }
 
@@ -318,7 +318,7 @@ export class CommentsSidebarView extends ItemView {
       this.render();
     });
     const remove = actions.createEl("button", { cls: "mod-warning", text: "删除" });
-    remove.addEventListener("click", async () => {
+    remove.addEventListener("click", () => void (async () => {
       remove.disabled = true;
       const succeeded = await this.plugin.deleteReference(record.id);
       if (succeeded) {
@@ -328,7 +328,7 @@ export class CommentsSidebarView extends ItemView {
       } else {
         remove.disabled = false;
       }
-    });
+    })());
   }
 
   private closeTargetSuggests(): void {

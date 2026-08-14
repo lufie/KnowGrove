@@ -1,4 +1,17 @@
 import { App, FileSystemAdapter, normalizePath } from "obsidian";
+import {
+  access,
+  copyFile,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { runLocalCommand } from "./ai-provider";
 import {
   RECORDING_RESUME_DELAYS_MS,
@@ -29,8 +42,8 @@ export interface DesktopRecorderHost {
 type RecordingListener = (snapshot: DesktopRecordingSnapshot) => void;
 
 function recordingId(): string {
-  return typeof globalThis.crypto?.randomUUID === "function"
-    ? globalThis.crypto.randomUUID()
+  return typeof window.crypto?.randomUUID === "function"
+    ? window.crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -88,8 +101,6 @@ export class DesktopRecorderController {
 
   async initialize(): Promise<void> {
     if (!(this.host.app.vault.adapter instanceof FileSystemAdapter)) return;
-    const { readdir, readFile, stat } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { join } = require("node:path") as typeof import("node:path");
     const root = this.absolutePath(normalizePath(`${this.host.getRecordingFolder()}/${SESSION_DIRECTORY}`));
     let names: string[];
     try {
@@ -296,8 +307,6 @@ export class DesktopRecorderController {
     const index = manifest.segments.length + 1;
     const relativePath = normalizePath(`${this.sessionRelativePath}/segment-${String(index).padStart(4, "0")}.${extension}`);
     const absolutePath = this.absolutePath(relativePath);
-    const { mkdir } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { dirname } = require("node:path") as typeof import("node:path");
     await mkdir(dirname(absolutePath), { recursive: true });
 
     const segment: DesktopRecordingSegment = {
@@ -314,7 +323,6 @@ export class DesktopRecorderController {
       const data = event.data;
       this.appendQueue = this.appendQueue.then(async () => {
         const buffer = Buffer.from(await data.arrayBuffer());
-        const { open } = require("node:fs/promises") as typeof import("node:fs/promises");
         const handle = await open(absolutePath, "a");
         try {
           await handle.write(buffer);
@@ -366,7 +374,6 @@ export class DesktopRecorderController {
     await this.appendQueue;
     if (this.pendingWriteError) throw this.pendingWriteError;
 
-    const { stat } = require("node:fs/promises") as typeof import("node:fs/promises");
     const endedAt = new Date();
     const file = await stat(this.absolutePath(segment.relativePath));
     segment.endedAt = endedAt.toISOString();
@@ -551,8 +558,6 @@ export class DesktopRecorderController {
     const manifest = this.requireManifest();
     const adapter = this.requireFileSystemAdapter();
     const folder = normalizePath(this.host.getRecordingFolder()).replace(/^\/+|\/+$/g, "");
-    const { access, copyFile, mkdir, unlink, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { dirname, join } = require("node:path") as typeof import("node:path");
     const base = safeFileName(manifest.title);
     const compatibleExtension = recordingStreamCopyExtension(manifest.segments);
     const finalizationMode = recordingFinalizationMode(manifest.segments);
@@ -657,8 +662,6 @@ export class DesktopRecorderController {
     const path = this.absolutePath(normalizePath(`${this.sessionRelativePath}/manifest.json`));
     const content = `${JSON.stringify(manifest, null, 2)}\n`;
     this.manifestQueue = this.manifestQueue.then(async () => {
-      const { mkdir, open, rename } = require("node:fs/promises") as typeof import("node:fs/promises");
-      const { dirname } = require("node:path") as typeof import("node:path");
       await mkdir(dirname(path), { recursive: true });
       const temporaryPath = `${path}.tmp`;
       const handle = await open(temporaryPath, "w");

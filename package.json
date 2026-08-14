@@ -8,7 +8,7 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "check": "tsc --noEmit --skipLibCheck",
-    "lint": "eslint . --quiet",
+    "lint": "eslint . --max-warnings 0",
     "test": "node scripts/run-tests.mjs",
     "runtime:resign": "node scripts/resign-runtime-manifest.mjs",
     "runtime:verify": "node scripts/verify-runtime-release.mjs"

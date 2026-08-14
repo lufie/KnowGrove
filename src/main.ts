@@ -19,6 +19,8 @@ import {
   parseYaml,
   setIcon,
 } from "obsidian";
+import { access, copyFile, stat } from "node:fs/promises";
+import { basename, isAbsolute, relative, sep } from "node:path";
 import { AIPropertyBatchModal } from "./ai-property-modal";
 import { AttachmentCleanupManager, normalizeAttachmentExtensions, type AttachmentScanProgress } from "./attachment-cleanup";
 import {
@@ -164,7 +166,6 @@ import {
 import { isRecentDocumentPath, selectRecentDocumentPaths } from "./recent-files";
 import {
   captureReferenceSourceContext,
-  hasBlockAnchor,
   locateReferenceSelection,
   repairReferenceAnchor,
 } from "./reference-repair";
@@ -1074,7 +1075,7 @@ export default class KnowGrovePlugin extends Plugin {
       ":scope > .markdown-embed-content p, :scope > .markdown-embed-content li, :scope > .markdown-embed-content pre, :scope > .markdown-embed-content blockquote, :scope > .markdown-embed-content table",
     )).some((element) => !element.closest(".mod-header") && element.textContent?.trim());
     const existingFallback = Array.from(embed.children)
-      .find((element): element is HTMLElement => element instanceof HTMLElement
+      .find((element): element is HTMLElement => element.instanceOf(HTMLElement)
         && element.hasClass("knowgrove-block-embed-fallback"));
     if (nativeContent) {
       if (existingFallback) this.unloadBlockEmbedRenderChild(existingFallback);
@@ -1106,7 +1107,7 @@ export default class KnowGrovePlugin extends Plugin {
       await MarkdownRenderer.render(this.app, markdown, fallback, sourceFile.path, renderChild);
       if (!existingFallback) {
         const link = Array.from(embed.children)
-          .find((element) => element instanceof HTMLElement && element.hasClass("markdown-embed-link"));
+          .find((element) => element.instanceOf(HTMLElement) && element.hasClass("markdown-embed-link"));
         embed.insertBefore(fallback, link ?? null);
       }
       embed.addClass("knowgrove-has-block-fallback");
@@ -1194,7 +1195,7 @@ export default class KnowGrovePlugin extends Plugin {
       this.hideSelectionCommentButton();
       return;
     }
-    const rangeElement = range.commonAncestorContainer instanceof Element
+    const rangeElement = range.commonAncestorContainer.instanceOf(Element)
       ? range.commonAncestorContainer
       : range.commonAncestorContainer.parentElement;
     const selectionSurface = rangeElement?.closest<HTMLElement>(".cm-scroller, .markdown-preview-view");
@@ -1345,7 +1346,7 @@ export default class KnowGrovePlugin extends Plugin {
     try {
       const parsed = JSON.parse(await this.app.vault.adapter.read(path)) as unknown;
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Partial<KnowGroveData>
+        ? parsed
         : null;
     } catch (error) {
       console.error("KnowGrove: failed to read legacy plugin data", error);
@@ -1388,7 +1389,8 @@ export default class KnowGrovePlugin extends Plugin {
     const needsAutoProcessMigration = savedAIProperties?.autoEnrichNewNotes !== autoProcessNewNotes
       || savedBrowserCapture?.autoProcessLinkNotes !== autoProcessNewNotes
       || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
-    const needsKeepAudioSourceMigration = savedBrowserCapture?.keepAudioSource === false;
+    const legacyBrowserCapture = savedSettings?.browserCapture as unknown as Record<string, unknown> | undefined;
+    const needsKeepAudioSourceMigration = legacyBrowserCapture?.keepAudioSource === false;
     const savedAIProvider = (savedAIProperties as { provider?: unknown } | undefined)?.provider;
     const normalizedAIProvider = normalizeAIProviderId(savedAIProvider, defaults.aiProperties.provider);
     const savedBrowserProviders = savedBrowserCapture as {
@@ -1608,7 +1610,7 @@ export default class KnowGrovePlugin extends Plugin {
 
     this.renderingRecentFiles = true;
     current?.remove();
-    const section = filesContainer.ownerDocument.createElement("div");
+    const section = filesContainer.ownerDocument.body.createDiv();
     section.className = `tree-item nav-folder knowgrove-recent-files${this.recentFilesCollapsed ? " is-collapsed" : ""}`;
     section.dataset.signature = signature;
 
@@ -1704,7 +1706,7 @@ export default class KnowGrovePlugin extends Plugin {
       for (const leaf of leaves) leaf.detach();
       return undefined;
     }
-    const preferred = healthyLeaves.find((leaf) => leaf === this.app.workspace.activeLeaf)
+    const preferred = healthyLeaves.find((leaf) => leaf === this.app.workspace.getMostRecentLeaf())
       ?? healthyLeaves[0];
     for (const leaf of leaves) {
       if (leaf !== preferred) leaf.detach();
@@ -1857,8 +1859,7 @@ export default class KnowGrovePlugin extends Plugin {
 
   syncRecordingOverlay(): void {
     const snapshot = this.getDesktopRecordingSnapshot();
-    const recorderOpen = this.app.workspace.getLeavesOfType(DESKTOP_RECORDER_VIEW_TYPE)
-      .some((leaf) => leaf === this.app.workspace.activeLeaf);
+    const recorderOpen = this.app.workspace.getActiveViewOfType(DesktopRecorderView) !== null;
     const shouldFloat = !recorderOpen
       && snapshot.state !== "idle"
       && snapshot.state !== "completed";
@@ -1918,8 +1919,6 @@ export default class KnowGrovePlugin extends Plugin {
     const noteFolder = this.desktopLinkFolder();
     await this.ensureVaultFolder(mediaFolder.split("/"));
     await this.ensureVaultFolder(noteFolder.split("/"));
-    const { access, copyFile, stat } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { basename, isAbsolute, relative, sep } = require("node:path") as typeof import("node:path");
     const vaultRoot = adapter.getFullPath("");
     const seenSourcePaths = new Set<string>();
     const files: TFile[] = [];
@@ -2023,10 +2022,12 @@ export default class KnowGrovePlugin extends Plugin {
     const legacyPath = (file as File & { path?: string }).path?.trim();
     if (legacyPath) return legacyPath;
     try {
-      const electron = require("electron") as {
-        webUtils?: { getPathForFile(value: File): string };
+      const desktopWindow = window as Window & {
+        require?: (moduleId: "electron") => {
+          webUtils: { getPathForFile(value: File): string };
+        };
       };
-      return electron.webUtils?.getPathForFile(file)?.trim() ?? "";
+      return desktopWindow.require?.("electron").webUtils.getPathForFile(file).trim() ?? "";
     } catch {
       return "";
     }
@@ -2570,7 +2571,7 @@ export default class KnowGrovePlugin extends Plugin {
     ]));
     let applied = 0;
     let updatedFrontmatter = context.frontmatter;
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
       for (const [property, value] of Object.entries(generated.properties)) {
         if (JSON.stringify(frontmatter[property]) !== before.get(property)) continue;
         if (!overwrite && !isEmptyPropertyValue(frontmatter[property])) continue;
@@ -2849,7 +2850,10 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   classifyStatus(file: TFile): "reading" | "finished" | "unclassified" {
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    const cachedFrontmatter: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    const frontmatter = cachedFrontmatter && typeof cachedFrontmatter === "object" && !Array.isArray(cachedFrontmatter)
+      ? cachedFrontmatter as Record<string, unknown>
+      : undefined;
     const value = frontmatter?.[this.settings.statusProperty];
     if (value === this.settings.finishedStatus) return "finished";
     if (value === this.settings.readingStatus) return "reading";
@@ -2857,7 +2861,7 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async setReadingStatus(file: TFile, value: string, automatic = false): Promise<void> {
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
       frontmatter[this.settings.statusProperty] = value;
     });
     this.resetAutoCompletionTracking();
@@ -2875,7 +2879,7 @@ export default class KnowGrovePlugin extends Plugin {
     const files = this.getTrackedMarkdownFiles().filter((file) => this.classifyStatus(file) === "unclassified");
     let updated = 0;
     for (const file of files) {
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         if (frontmatter[this.settings.statusProperty] === undefined) {
           frontmatter[this.settings.statusProperty] = this.settings.readingStatus;
           updated += 1;
@@ -3320,7 +3324,7 @@ export default class KnowGrovePlugin extends Plugin {
         continue;
       }
       try {
-        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
           for (const operation of change.operations) {
             if (operation.property === "文件名" && frontmatter[operation.property] !== file.basename) {
               frontmatter[operation.property] = file.basename;
@@ -3466,7 +3470,7 @@ export default class KnowGrovePlugin extends Plugin {
         const abstract = this.app.vault.getAbstractFileByPath(change.path);
         if (!(abstract instanceof TFile)) throw new Error(`文件已不存在：${change.path}`);
         const original = await this.app.vault.read(abstract);
-        await this.app.fileManager.processFrontMatter(abstract, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(abstract, (frontmatter: Record<string, unknown>) => {
           for (const operation of change.operations) {
             if (!operationStillApplies(frontmatter, operation)) {
               throw new Error(`预览后属性已变化，请重新扫描：${change.path} · ${operation.property}`);
@@ -3533,7 +3537,7 @@ export default class KnowGrovePlugin extends Plugin {
     const upgraded = ensureResearchSourceBrowser(ensureResearchTopicActions(current));
     if (upgraded !== current) await this.app.vault.process(file, () => upgraded);
     if (["资料范围", "候选资料", "候选扫描版本", "候选扫描时间"].some((key) => Object.prototype.hasOwnProperty.call(parsedFrontmatter, key))) {
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         delete frontmatter.资料范围;
         delete frontmatter.候选资料;
         delete frontmatter.候选扫描版本;
@@ -3545,7 +3549,7 @@ export default class KnowGrovePlugin extends Plugin {
     for (const sourcePath of state.adopted) {
       const source = this.app.vault.getAbstractFileByPath(sourcePath);
       if (!(source instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(source, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(source, (frontmatter: Record<string, unknown>) => {
         const values = stringValues(frontmatter.课题);
         if (!values.some((value) => normalizeKnowledgeTopic(value).toLocaleLowerCase() === topicName.toLocaleLowerCase())) {
           frontmatter.课题 = [...values, topicLink];
@@ -3581,7 +3585,7 @@ export default class KnowGrovePlugin extends Plugin {
     const managedFiles = this.app.vault.getMarkdownFiles()
       .filter((file) => file.path.startsWith("_KnowGrove/") && !file.path.startsWith(`${RESEARCH_TOPIC_WORKSPACE_ROOT}/`));
     for (const file of managedFiles) {
-      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (!frontmatter) continue;
       const themeWorkspace = frontmatter.knowgrove_topic_workspace === true;
       const genericWorkspace = frontmatter.knowgrove_workspace === true;
@@ -3593,7 +3597,7 @@ export default class KnowGrovePlugin extends Plugin {
         for (const sourcePath of sourcePaths) {
           const source = this.app.vault.getAbstractFileByPath(sourcePath);
           if (!(source instanceof TFile)) continue;
-          await this.app.fileManager.processFrontMatter(source, (sourceFrontmatter) => {
+          await this.app.fileManager.processFrontMatter(source, (sourceFrontmatter: Record<string, unknown>) => {
             const values = stringValues(sourceFrontmatter.主题);
             if (!values.some((value) => normalizeKnowledgeTopic(value).toLocaleLowerCase() === name.toLocaleLowerCase())) {
               sourceFrontmatter.主题 = [...values, themeLink];
@@ -3608,7 +3612,7 @@ export default class KnowGrovePlugin extends Plugin {
         for (const sourcePath of sourcePaths) {
           const source = this.app.vault.getAbstractFileByPath(sourcePath);
           if (!(source instanceof TFile)) continue;
-          await this.app.fileManager.processFrontMatter(source, (sourceFrontmatter) => {
+          await this.app.fileManager.processFrontMatter(source, (sourceFrontmatter: Record<string, unknown>) => {
             const values = stringValues(sourceFrontmatter[relationProperty]);
             if (!values.some((value) => normalizeKnowledgeTopic(value).toLocaleLowerCase() === name.toLocaleLowerCase())) {
               sourceFrontmatter[relationProperty] = [...values, workspaceLink];
@@ -3619,7 +3623,7 @@ export default class KnowGrovePlugin extends Plugin {
       if (Object.prototype.hasOwnProperty.call(frontmatter, "资料范围")
         || Object.prototype.hasOwnProperty.call(frontmatter, "课题范围")
         || Object.prototype.hasOwnProperty.call(frontmatter, "子空间")) {
-        await this.app.fileManager.processFrontMatter(file, (managedFrontmatter) => {
+        await this.app.fileManager.processFrontMatter(file, (managedFrontmatter: Record<string, unknown>) => {
           delete managedFrontmatter.资料范围;
           delete managedFrontmatter.课题范围;
           delete managedFrontmatter.子空间;
@@ -3652,7 +3656,7 @@ export default class KnowGrovePlugin extends Plugin {
       if (!/knowgrove_topic_workspace:\s*true/.test(current)) {
         throw new Error(`主题文档已存在且不是插件生成：${theme.workspacePath}`);
       }
-      await this.app.fileManager.processFrontMatter(noteAbstract, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(noteAbstract, (frontmatter: Record<string, unknown>) => {
         if (frontmatter.固定主题 !== true) frontmatter.固定主题 = true;
         delete frontmatter.资料范围;
         delete frontmatter.课题范围;
@@ -3696,7 +3700,7 @@ export default class KnowGrovePlugin extends Plugin {
     }));
     const themeFile = this.app.vault.getAbstractFileByPath(theme.workspacePath);
     if (themeFile instanceof TFile) {
-      await this.app.fileManager.processFrontMatter(themeFile, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(themeFile, (frontmatter: Record<string, unknown>) => {
         delete frontmatter.课题范围;
         delete frontmatter.资料范围;
         const questions = stringValues(frontmatter.研究课题);
@@ -3886,7 +3890,7 @@ export default class KnowGrovePlugin extends Plugin {
         const file = await this.ensureKnowledgeResearchTopicFiles(currentTheme, currentTopic);
         const selected = new Set(paths);
         const documents = snapshot.knowledgeDocuments.filter((document) => selected.has(document.path));
-        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
           frontmatter.核心问题 = question;
           delete frontmatter.资料范围;
         });
@@ -3895,7 +3899,7 @@ export default class KnowGrovePlugin extends Plugin {
         for (const path of affected) {
           const source = this.app.vault.getAbstractFileByPath(path);
           if (!(source instanceof TFile)) continue;
-          await this.app.fileManager.processFrontMatter(source, (frontmatter) => {
+          await this.app.fileManager.processFrontMatter(source, (frontmatter: Record<string, unknown>) => {
             const values = stringValues(frontmatter.课题);
             const withoutCurrent = values.filter((value) => normalizeKnowledgeTopic(value).toLocaleLowerCase() !== currentTopic.name.toLocaleLowerCase());
             const next = selected.has(path) ? [...withoutCurrent, topicLink] : withoutCurrent;
@@ -4271,7 +4275,7 @@ export default class KnowGrovePlugin extends Plugin {
       rejected: Array.from(rejected),
       scannedAt: state.scannedAt,
     }));
-    await this.app.fileManager.processFrontMatter(topicFile, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(topicFile, (frontmatter: Record<string, unknown>) => {
       delete frontmatter.资料范围;
       delete frontmatter.候选资料;
       delete frontmatter.候选扫描版本;
@@ -4281,7 +4285,7 @@ export default class KnowGrovePlugin extends Plugin {
     for (const decision of decisions) {
       const file = this.app.vault.getAbstractFileByPath(decision.path);
       if (!(file instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         const current = stringValues(frontmatter.课题).filter((value) => value !== topicLink);
         if (decision.decision === "相关") frontmatter.课题 = [...current, topicLink];
         else if (current.length) frontmatter.课题 = current;
@@ -4380,7 +4384,7 @@ export default class KnowGrovePlugin extends Plugin {
     );
     const document = candidates.find((candidate) => candidate.path === sourceView.file?.path);
     if (document) {
-      await this.app.fileManager.processFrontMatter(topicFile, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(topicFile, (frontmatter: Record<string, unknown>) => {
         delete frontmatter.资料范围;
       });
       const sourceState = await this.readResearchSourceState(topic.workspacePath)
@@ -4393,7 +4397,7 @@ export default class KnowGrovePlugin extends Plugin {
         scannedAt: sourceState.scannedAt,
       }));
       const topicLink = `[[${topic.workspacePath.replace(/\.md$/i, "")}]]`;
-      await this.app.fileManager.processFrontMatter(sourceView.file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(sourceView.file, (frontmatter: Record<string, unknown>) => {
         const topics = stringValues(frontmatter.课题);
         if (!topics.includes(topicLink)) frontmatter.课题 = [...topics, topicLink];
       });
@@ -4925,14 +4929,14 @@ export default class KnowGrovePlugin extends Plugin {
       const note = this.app.vault.getAbstractFileByPath(oldPaths.notePath);
       if (!(note instanceof TFile)) throw new Error(`主题文档不存在：${oldPaths.notePath}`);
       await this.app.fileManager.renameFile(note, newPaths.notePath);
-      await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(note, (frontmatter: Record<string, unknown>) => {
         frontmatter.文件名 = name;
         frontmatter.主题名称 = name;
       });
       for (const document of affectedDocuments) {
         const source = this.app.vault.getAbstractFileByPath(document.path);
         if (!(source instanceof TFile)) continue;
-        await this.app.fileManager.processFrontMatter(source, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(source, (frontmatter: Record<string, unknown>) => {
           const values = renameKnowledgeThemePropertyValues(
             stringValues(frontmatter.主题),
             theme.name,
@@ -4948,7 +4952,7 @@ export default class KnowGrovePlugin extends Plugin {
         const topicPath = researchTopicWorkspacePaths(name, topic.name).notePath;
         const topicFile = this.app.vault.getAbstractFileByPath(topicPath);
         if (!(topicFile instanceof TFile)) continue;
-        await this.app.fileManager.processFrontMatter(topicFile, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(topicFile, (frontmatter: Record<string, unknown>) => {
           frontmatter.上级主题 = `[[${newPaths.notePath.replace(/\.md$/i, "")}]]`;
           const values = renameKnowledgeThemePropertyValues(
             stringValues(frontmatter.主题),
@@ -4964,7 +4968,7 @@ export default class KnowGrovePlugin extends Plugin {
         candidate.parentName && knowledgeNamesMatch(candidate.parentName, theme.name))) {
         const childFile = this.app.vault.getAbstractFileByPath(childTheme.workspacePath);
         if (!(childFile instanceof TFile)) continue;
-        await this.app.fileManager.processFrontMatter(childFile, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(childFile, (frontmatter: Record<string, unknown>) => {
           frontmatter.上级主题 = name;
         });
       }
@@ -4991,7 +4995,7 @@ export default class KnowGrovePlugin extends Plugin {
       for (const document of affectedDocuments) {
         const file = this.app.vault.getAbstractFileByPath(document.path);
         if (!(file instanceof TFile)) continue;
-        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
           const values = renameRawKnowledgeTopicPropertyValues(stringValues(frontmatter.主题), theme.name, name);
           if (values.length) frontmatter.主题 = values;
           else delete frontmatter.主题;
@@ -5023,7 +5027,7 @@ export default class KnowGrovePlugin extends Plugin {
     for (const document of affectedDocuments) {
       const file = this.app.vault.getAbstractFileByPath(document.path);
       if (!(file instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         const values = removeKnowledgeTopicPropertyValues(
           stringValues(frontmatter.主题),
           theme.name,
@@ -5038,7 +5042,7 @@ export default class KnowGrovePlugin extends Plugin {
       candidate.parentName && knowledgeNamesMatch(candidate.parentName, currentTheme.name))) {
       const childFile = this.app.vault.getAbstractFileByPath(childTheme.workspacePath);
       if (!(childFile instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(childFile, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(childFile, (frontmatter: Record<string, unknown>) => {
         delete frontmatter.上级主题;
       });
       detachedChildren += 1;
@@ -5078,13 +5082,13 @@ export default class KnowGrovePlugin extends Plugin {
       const base = this.app.vault.getAbstractFileByPath(topic.basePath);
       if (base instanceof TFile) await this.app.fileManager.renameFile(base, paths.basePath);
       await this.app.fileManager.renameFile(note, paths.notePath);
-      await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(note, (frontmatter: Record<string, unknown>) => {
         frontmatter.文件名 = name;
         frontmatter.课题名称 = name;
       });
       const themeFile = this.app.vault.getAbstractFileByPath(theme.workspacePath);
       if (themeFile instanceof TFile) {
-        await this.app.fileManager.processFrontMatter(themeFile, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(themeFile, (frontmatter: Record<string, unknown>) => {
           frontmatter.研究课题 = stringValues(frontmatter.研究课题).map((value) => value === topic.name ? name : value);
         });
       }
@@ -5112,7 +5116,7 @@ export default class KnowGrovePlugin extends Plugin {
       if (!/knowgrove_workspace:\s*true/.test(current)) {
         throw new Error(`工作空间已存在且不是插件生成：${workspace.workspacePath}`);
       }
-      await this.app.fileManager.processFrontMatter(noteAbstract, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(noteAbstract, (frontmatter: Record<string, unknown>) => {
         delete frontmatter.资料范围;
         delete frontmatter.子空间;
       });
@@ -5231,7 +5235,7 @@ export default class KnowGrovePlugin extends Plugin {
     const file = await this.ensureKnowledgeWorkspaceFiles(workspace);
     const selected = new Set(sourcePaths);
     const documents = candidates.filter((document) => selected.has(document.path));
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
       frontmatter.目标 = objective;
       delete frontmatter.资料范围;
       delete frontmatter.子空间;
@@ -5242,7 +5246,7 @@ export default class KnowGrovePlugin extends Plugin {
     for (const path of affected) {
       const source = this.app.vault.getAbstractFileByPath(path);
       if (!(source instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(source, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(source, (frontmatter: Record<string, unknown>) => {
         const values = stringValues(frontmatter[relationProperty]);
         const withoutCurrent = values.filter((value) => {
           const normalized = normalizeKnowledgeTopic(value).toLocaleLowerCase();
@@ -5278,7 +5282,7 @@ export default class KnowGrovePlugin extends Plugin {
       const base = this.app.vault.getAbstractFileByPath(workspace.basePath);
       if (base instanceof TFile) await this.app.fileManager.renameFile(base, paths.basePath);
       await this.app.fileManager.renameFile(note, paths.notePath);
-      await this.app.fileManager.processFrontMatter(note, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(note, (frontmatter: Record<string, unknown>) => {
         frontmatter.文件名 = name;
         frontmatter.空间名称 = name;
       });
@@ -5362,13 +5366,13 @@ export default class KnowGrovePlugin extends Plugin {
       };
       const nextTopic = { ...topic, parentThemeName: theme.name, domains };
       const topicFile = await this.ensureKnowledgeResearchTopicFiles(nextTheme, nextTopic);
-      await this.app.fileManager.processFrontMatter(topicFile, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(topicFile, (frontmatter: Record<string, unknown>) => {
         frontmatter.领域 = domains;
         frontmatter.上级主题 = `[[${theme.workspacePath.replace(/\.md$/i, "")}]]`;
       });
       researchTopics.push({ ...nextTopic, workspaceExists: true });
     }
-    await this.app.fileManager.processFrontMatter(workspace, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(workspace, (frontmatter: Record<string, unknown>) => {
       frontmatter.固定主题 = true;
       frontmatter.领域 = domains;
       if (normalizedParentName) frontmatter.上级主题 = normalizedParentName;
@@ -5385,7 +5389,7 @@ export default class KnowGrovePlugin extends Plugin {
     for (const document of affectedDocuments) {
       const source = this.app.vault.getAbstractFileByPath(document.path);
       if (!(source instanceof TFile)) continue;
-      await this.app.fileManager.processFrontMatter(source, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(source, (frontmatter: Record<string, unknown>) => {
         const values = stringValues(frontmatter.主题);
         const withoutCurrent = values.filter((value) => normalizeKnowledgeTopic(value).toLocaleLowerCase() !== theme.name.toLocaleLowerCase());
         const nextTopics = selected.has(document.path) ? [...withoutCurrent, themeLink] : withoutCurrent;
@@ -5502,7 +5506,7 @@ export default class KnowGrovePlugin extends Plugin {
           const withStructure = ensureThemeDimensionHeadings(current, proposal);
           return mergeThemeSynthesis(withStructure, proposal);
         });
-        await this.app.fileManager.processFrontMatter(workspace, (frontmatter) => {
+        await this.app.fileManager.processFrontMatter(workspace, (frontmatter: Record<string, unknown>) => {
           if (frontmatter.当前阶段 === "P" || frontmatter.当前阶段 === "D") frontmatter.当前阶段 = "S";
           const existing = Array.isArray(frontmatter.研究课题)
             ? frontmatter.研究课题.filter((value: unknown): value is string => typeof value === "string")
@@ -5991,7 +5995,7 @@ export default class KnowGrovePlugin extends Plugin {
       ".knowgrove-commented-text",
     ));
     if (!annotations.length) return;
-    const scroller = target instanceof HTMLElement
+    const scroller = target.instanceOf(HTMLElement)
       ? target.closest<HTMLElement>(".cm-scroller, .markdown-preview-view")
       : null;
     if (!scroller) return;
@@ -6173,7 +6177,7 @@ export default class KnowGrovePlugin extends Plugin {
       const deferredProperties = aiSettings.enabled && aiSettings.autoEnrichNewNotes
         ? new Set(aiManagedDimensions(this.settings.propertySystem.dimensions).map((dimension) => dimension.name))
         : new Set<string>();
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         initializeTrackedNoteFrontmatter(
           frontmatter,
           file.basename,
@@ -6538,7 +6542,7 @@ export default class KnowGrovePlugin extends Plugin {
       for (const record of sourceChanged) await this.syncManagedReference(record);
     }
     if (isPropertyGovernedPath(file.path, this.settings.propertySystem)) {
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
         if (frontmatter.文件名 !== file.basename) frontmatter.文件名 = file.basename;
       });
     }
@@ -6598,7 +6602,7 @@ export default class KnowGrovePlugin extends Plugin {
     const nodes: Text[] = [];
     let current = walker.nextNode();
     while (current) {
-      if (current instanceof Text && current.data) nodes.push(current);
+      if (current.instanceOf(Text) && current.data) nodes.push(current);
       current = walker.nextNode();
     }
     const renderedText = nodes.map((node) => node.data).join("");
@@ -6640,7 +6644,7 @@ export default class KnowGrovePlugin extends Plugin {
       const range = ownerDocument.createRange();
       range.setStart(node, overlapStart - nodeStart);
       range.setEnd(node, overlapEnd - nodeStart);
-      const annotation = ownerDocument.createElement("span");
+      const annotation = ownerDocument.body.createSpan();
       annotation.className = "knowgrove-commented-text";
       annotation.dataset.commentId = record.id;
       annotation.setAttribute("role", "button");

@@ -79,7 +79,7 @@ const ENGLISH: Record<string, string> = {
   "复制独立副本": "Create a separate copy",
   "附件与链接排除目录": "Excluded attachment and link folders",
   "清理、整理和一致性检查都会跳过这些 Vault 相对目录；属性管理中的排除目录也会继续生效。": "Cleanup, organization, and consistency checks skip these vault-relative folders. Property-management exclusions also remain in effect.",
-  "例如：Archive/长期保留": "Example: Archive/Keep",
+  "例如：archive/长期保留": "Example: archive/Keep",
   "额外附件格式": "Additional attachment types",
   "通常无需修改。仅添加默认未覆盖的附件扩展名；Markdown、Canvas 和 Base 不会被当作附件。": "Usually no changes are needed. Add only attachment extensions not covered by default. Markdown, Canvas, and Bases are never treated as attachments.",
   "例如：zip, psd": "Example: zip, psd",
@@ -130,7 +130,7 @@ const ENGLISH: Record<string, string> = {
   "生成真实配图": "Generate images",
   "配图接口与模型": "Image endpoint and model",
   "配图尺寸与附件目录": "Image size and attachment folder",
-  "配图 API Key": "Image API key",
+  "配图 API key": "Image API key",
   "清除": "Clear",
   "忽略文件夹": "Excluded folders",
   "阅读列表": "Reading list",
@@ -236,7 +236,7 @@ const ENGLISH: Record<string, string> = {
   "网页内置解析失败时使用；留空自动检测 defuddle。": "Used when the built-in article parser fails. Leave blank to detect Defuddle automatically.",
   "通常留空自动检测；用于读取字幕，以及下载公开视频或公开音频。": "Usually detected automatically. Reads subtitles and downloads public video or audio.",
   "通常由运行环境自动配置；用于音视频格式转换。": "Usually configured automatically. Converts audio and video formats.",
-  "视频没有字幕时使用；留空会自动检测 whisper 或 whisper-cli。": "Used when a video has no subtitles. Leave blank to detect Whisper automatically.",
+  "视频没有字幕时使用；留空会自动检测 Whisper 或 whisper-cli。": "Used when a video has no subtitles. Leave blank to detect Whisper automatically.",
   "Whisper 模型": "Whisper model",
   "Python Whisper 可填 small；whisper.cpp 可填 small 或 GGML 模型完整路径。": "For Python Whisper, enter small. For whisper.cpp, enter small or the full path to a GGML model.",
   "从已检测或官方推荐的模型中选择；选择“自定义模型 ID”后才需要手动填写。": "Choose a detected or officially recommended model. Enter an ID only after selecting Custom model ID.",
@@ -249,13 +249,13 @@ const ENGLISH: Record<string, string> = {
   "保存首稿、渠道稿和版本记录。可直接输入路径，或从当前 Vault 选择已有文件夹。": "Stores first drafts, channel versions, and revision history. Enter a path or choose an existing folder.",
   "_KnowGrove/输出": "_KnowGrove/Output",
   "关闭时仍会生成可复制的配图方案；开启后可在创作助手中生成图片并保存为 Vault 附件。": "When off, KnowGrove still creates a reusable image brief. When on, the creation assistant can generate images as vault attachments.",
-  "支持 OpenAI Images API 或相同返回结构的兼容服务。": "Supports the OpenAI Images API and compatible services with the same response format.",
+  "支持 OpenAI images API 或相同返回结构的兼容服务。": "Supports the OpenAI Images API and compatible services with the same response format.",
   "_KnowGrove/输出/assets": "_KnowGrove/Output/assets",
   "微调分类树": "Fine-tune taxonomy",
   "只在 AI 建议不符合你的分类习惯时调整领域名称和层级。": "Adjust domain names and levels only when the AI suggestion does not match your taxonomy.",
   "微调": "Fine-tune",
   "属性检查默认覆盖整个知识库，并自动跳过系统文件和代码依赖；这里每行可再添加一个不需要检查的文件夹。": "Property checks cover the entire vault and skip system files and code dependencies. Add one excluded folder per line.",
-  "例如：Home/🕹️skills": "For example: Home/skills",
+  "例如：home/🕹️skills": "For example: home/skills",
   "阅读状态管理": "Reading status",
   "存储路径与本地解析工具": "Storage paths and local processing tools",
   "AI 自动搭建你的分类树": "Let AI build your taxonomy",
@@ -268,7 +268,7 @@ const ENGLISH: Record<string, string> = {
   "浏览器授权已撤销。再次打开扩展即可重新配对。": "Browser authorization revoked. Reopen the extension to pair again.",
   "自动整理组件已配置": "Content processing components are ready.",
   "浏览器授权已撤销。再次打开扩展，点击“重新连接 KnowGrove”即可配对。": "Browser authorization revoked. Reopen the extension and select Reconnect KnowGrove to pair again.",
-  "已清除配图 API Key": "Image API key cleared.",
+  "已清除配图 API key": "Image API key cleared.",
   "AI 分类建议已生成，请选择是否使用": "AI taxonomy suggestion generated. Review it before applying.",
   "GLM CLI（zai 兼容）": "GLM CLI (zai-compatible)",
   "OpenAI 兼容接口": "OpenAI-compatible API",
@@ -523,15 +523,15 @@ function translateAttributes(element: Element, locale: KnowGroveLocale): void {
 
 export function localizeKnowGroveElement(root: Node, locale = currentKnowGroveLocale()): void {
   if (locale === "zh-CN") return;
-  if (root instanceof Element) translateAttributes(root, locale);
-  if (root instanceof Text) translateTextNode(root, locale);
-  const document = root.ownerDocument ?? (root instanceof Document ? root : undefined);
+  if (root.instanceOf(Element)) translateAttributes(root, locale);
+  if (root.instanceOf(Text)) translateTextNode(root, locale);
+  const document = root.ownerDocument ?? (root.instanceOf(Document) ? root : undefined);
   if (!document) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   let current = walker.nextNode();
   while (current) {
-    if (current instanceof Text) translateTextNode(current, locale);
-    else if (current instanceof Element) translateAttributes(current, locale);
+    if (current.instanceOf(Text)) translateTextNode(current, locale);
+    else if (current.instanceOf(Element)) translateAttributes(current, locale);
     current = walker.nextNode();
   }
 }
