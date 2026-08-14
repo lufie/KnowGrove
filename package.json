@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowgrove",
-  "version": "2.8.10",
+  "version": "2.8.11",
   "description": "KnowGrove turns an Obsidian vault into a self-growing knowledge research workspace.",
   "main": "main.js",
   "type": "module",
