@@ -68,7 +68,7 @@ function mergedMarkerRanges(ranges: HiddenMarkerRange[]): HiddenMarkerRange[] {
     .sort((left, right) => left.from - right.from || left.to - right.to);
   const merged: HiddenMarkerRange[] = [];
   for (const range of sorted) {
-    const previous = merged.at(-1);
+    const previous = merged[merged.length - 1];
     if (!previous || range.from > previous.to) {
       merged.push({ ...range });
       continue;

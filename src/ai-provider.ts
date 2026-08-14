@@ -184,9 +184,13 @@ export async function runLocalCommand(
         child.kill("SIGTERM");
         finish(() => reject(new Error(`${executable} 运行超过 ${timeoutSeconds} 秒，已停止`)));
       }, Math.max(5, timeoutSeconds) * 1_000);
-      child.once("error", (error) => finish(() => reject(error)));
+      child.once("error", (error) => finish(() => reject(
+        error instanceof Error ? error : new Error(String(error)),
+      )));
       child.stdin.on("error", (error: NodeJS.ErrnoException) => {
-        if (error.code !== "EPIPE") finish(() => reject(error));
+        if (error.code !== "EPIPE") finish(() => reject(
+          error instanceof Error ? error : new Error(String(error)),
+        ));
       });
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += stdoutDecoder.write(chunk);
@@ -536,7 +540,7 @@ function extractCodexMessage(stdout: string): string {
       // Codex JSONL should be structured, but keep a raw fallback below.
     }
   }
-  return messages.at(-1) ?? stdout;
+  return messages[messages.length - 1] ?? stdout;
 }
 
 async function runCodex(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {

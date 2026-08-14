@@ -511,7 +511,8 @@ export class DesktopRecorderController {
   }
 
   private closeLatestInterruption(resumedAutomatically: boolean): void {
-    const interruption = this.manifest?.interruptions.at(-1);
+    const interruptions = this.manifest?.interruptions;
+    const interruption = interruptions?.[interruptions.length - 1];
     if (!interruption || interruption.endedAt) return;
     interruption.endedAt = new Date().toISOString();
     interruption.resumedAutomatically = resumedAutomatically;
