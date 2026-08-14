@@ -4,7 +4,7 @@
 
 ## 1. 当前结论
 
-KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失败结果；修复版本 `2.7.3` 消除了原来的 3 个阻断 Error。`2.8.4` 后续因一处 `obsidianmd/no-static-styles-assignment` 阻断 Error 未通过自动审核，`2.8.8` 已修复并于 2026-08-14 完成重新扫描：状态 `Completed`、0 个阻断 Error。`2.8.9` 已通过 GitHub 正式发布并进入社区自动扫描队列；截至 2026-08-15，作者后台状态仍为 `Pending`，社区目录当前继续提供 `2.8.8`。插件 ID `knowgrove` 已收录到 Obsidian 官方 `community-plugins.json`，市场页已显示安装入口。当前社区条目仍明确标记为“尚未由 Obsidian 员工人工审核”，不能描述为已经通过人工审核。
+KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失败结果；修复版本 `2.7.3` 消除了原来的 3 个阻断 Error。`2.8.4` 后续因一处 `obsidianmd/no-static-styles-assignment` 阻断 Error 未通过自动审核，`2.8.8` 已修复并于 2026-08-14 完成重新扫描。`2.8.9` 的社区扫描已于 2026-08-14 完成，状态 `Completed`、0 个阻断 Error；报告仍显示 6 类 TypeScript 类型安全源码 Warning、2 条 CSS 兼容性 Warning，以及 2 条必要桌面行为 Warning 和 2 条能力 Recommendation。`2.8.10` 正在清零源码与 CSS 警告。插件 ID `knowgrove` 已收录到 Obsidian 官方 `community-plugins.json`，市场页已显示安装入口。当前社区条目仍明确标记为“尚未由 Obsidian 员工人工审核”，不能描述为已经通过人工审核。
 
 已完成：
 
@@ -13,7 +13,7 @@ KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失�
 3. Release 已包含 `main.js`、`manifest.json` 和 `styles.css`，不包含用户数据或密钥。
 4. GitHub 自动发布工作流已执行 Obsidian 官方规则预检、类型检查、235 项测试与生产构建，并为三个 `2.8.9` 发布文件生成构建来源证明。
 5. `2.8.9` 将完整 Obsidian 官方规则和 TypeScript 类型规则纳入零警告门禁，清理了可修复的源码、CSS、弃用 API 与浏览器持久化警告；本地文件、受控子进程、显式全库检查和用户点击复制等必要桌面能力已最小化并在 README / PRIVACY 中披露。
-6. 社区审核记录已识别 `2.8.9` / `3b897a5` 并排队扫描；最终报告尚未产生，因此不能提前声明 2.8.9 社区自动审核完成。
+6. 社区审核记录已识别并完成 `2.8.9` / `3b897a5` 扫描；发布资产、网络请求、依赖与可复现构建均通过，0 个阻断 Error。源码与 CSS 警告由 `2.8.10` 发布候选继续清理。
 
 `2.6.1` 的阻断错误与 `2.7.3` 的处理：
 
@@ -23,7 +23,7 @@ KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失�
 
 同时将 Manifest 标记为桌面专属，以匹配本产品对本地 CLI、接收服务和 Runtime 的真实依赖。缺少构建来源证明属于建议项而非失败原因，但 `2.7.3` 的发布工作流也会补齐。
 
-已完成：`2.8.9` 的当前 Vault 实机验收、GitHub Release、公开资产哈希核对、构建来源证明、源码零警告门禁和 CI Actions Node 24 迁移。待完成：社区自动扫描队列给出最终报告、Windows 与 macOS Intel 干净机验收、真实麦克风停止耗时与 macOS 电话接力恢复的用户手动验收，以及 Obsidian 员工后续人工审核。
+已完成：`2.8.9` 的当前 Vault 实机验收、GitHub Release、公开资产哈希核对、构建来源证明、社区自动扫描和 CI Actions Node 24 迁移。`2.8.10` 已在修复分支完成源码与 CSS 警告治理，待正式发布和社区复扫验证。Windows 与 macOS Intel 干净机验收、真实麦克风停止耗时与 macOS 电话接力恢复的用户手动验收，以及 Obsidian 员工后续人工审核仍待完成。
 
 插件 ID `knowgrove` 已在 Obsidian 官方社区插件清单中登记，仓库为 `lufie/KnowGrove`。
 
@@ -80,8 +80,8 @@ git diff --check
 
 ```bash
 # 确认 manifest.json、package.json、versions.json 都是同一版本
-git tag 2.8.9
-git push origin 2.8.9
+git tag 2.8.10
+git push origin 2.8.10
 ```
 
 工作流会验证标签与 Manifest 版本一致，并上传：
