@@ -274,7 +274,7 @@ code {
   border-radius: 5px;
   padding: 2px 5px;
   background: #f3eae8;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Courier New", Courier, monospace;
 }
 
 @media (max-width: 620px) {

@@ -618,7 +618,9 @@
 
 .knowgrove-commented-text {
   border-radius: 2px;
-  text-decoration: underline 1.5px rgba(var(--knowgrove-brand-rgb), 0.8);
+  text-decoration-line: underline;
+  text-decoration-color: rgba(var(--knowgrove-brand-rgb), 0.8);
+  text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
   cursor: pointer;
   transition: color 120ms ease, background-color 120ms ease;
