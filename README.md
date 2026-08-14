@@ -6,7 +6,7 @@
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source: `2.8.10` release candidate; current GitHub and Obsidian community release: `2.8.9`
+Current source and GitHub release: `2.8.11`; the Obsidian community directory is awaiting its automatic release refresh from `2.8.9`.
 
 ## What KnowGrove does
 
@@ -98,7 +98,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public, and version `2.8.9` is available through [GitHub Releases](https://github.com/lufie/KnowGrove/releases/tag/2.8.9) and the Obsidian community directory. Its automated scan completed with no blocking errors; `2.8.10` is the release candidate that removes the remaining source-code and CSS compatibility warnings. The directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public, and version `2.8.11` is available through [GitHub Releases](https://github.com/lufie/KnowGrove/releases/tag/2.8.11). The official Obsidian preview scan for the release tag completed with zero source-code warnings, CSS warnings, errors, or recommendations. The community directory is still refreshing from `2.8.9`, and the directory entry has not yet been manually reviewed by Obsidian staff. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 
