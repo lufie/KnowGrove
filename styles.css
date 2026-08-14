@@ -4227,6 +4227,12 @@ button.knowgrove-property-issue-row:hover {
   margin-top: var(--size-4-8, 32px);
 }
 
+.setting-item.knowgrove-settings {
+  display: block;
+  padding: 0;
+  border-top: 0;
+}
+
 .knowgrove-settings-module {
   margin-top: var(--size-4-3, 12px);
   border-bottom: 1px solid var(--background-modifier-border);

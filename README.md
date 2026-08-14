@@ -6,7 +6,7 @@
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source and public release: `2.8.8` (community automated review completed with no blocking errors)
+Current source: `2.8.9` (release candidate); current public release: `2.8.8` (community automated review completed with no blocking errors)
 
 ## What KnowGrove does
 
