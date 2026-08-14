@@ -467,9 +467,11 @@ export class DesktopRecordingOverlay {
     const height = root.offsetHeight || 48;
     const safeLeft = Math.max(gap, Math.min(left, window.innerWidth - width - gap));
     const safeTop = Math.max(gap, Math.min(top, window.innerHeight - height - gap));
-    root.style.left = `${safeLeft}px`;
-    root.style.top = `${safeTop}px`;
-    root.style.right = "auto";
-    root.style.bottom = "auto";
+    root.setCssProps({
+      left: `${safeLeft}px`,
+      top: `${safeTop}px`,
+      right: "auto",
+      bottom: "auto",
+    });
   }
 }

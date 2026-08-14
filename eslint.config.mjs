@@ -28,6 +28,7 @@ export default defineConfig([
       "obsidianmd/no-unsupported-api": "error",
       "obsidianmd/settings-tab/no-manual-html-headings": "error",
       "obsidianmd/settings-tab/no-problematic-settings-headings": "error",
+      "obsidianmd/no-static-styles-assignment": "error",
     },
   },
 ]);
