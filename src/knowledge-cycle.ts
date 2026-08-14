@@ -137,8 +137,10 @@ export function safeTopicFileName(topic: string): string {
   const substitutions: Record<string, string> = {
     "/": "／", "\\": "＼", ":": "：", "*": "＊", "?": "？", '"': "＂", "<": "＜", ">": "＞", "|": "｜",
   };
-  const safe = topic.replace(/[\\/:*?"<>|]/g, (character) => substitutions[character] ?? "-")
-    .replace(/[\u0000-\u001f]/g, " ")
+  const withoutControlCharacters = Array.from(topic, (character) => (
+    character.charCodeAt(0) <= 31 ? " " : character
+  )).join("");
+  const safe = withoutControlCharacters.replace(/[\\/:*?"<>|]/g, (character) => substitutions[character] ?? "-")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 100);
@@ -721,10 +723,10 @@ export function rankThemeSourceCandidates(
 
 export function researchTopicKeywords(value: string): string[] {
   const words = value.toLocaleLowerCase()
-    .split(/[\s，。！？、：；,.:;!?（）()【】\[\]“”"'—_/]+/)
+    .split(/[\s，。！？、：；,.:;!?（）()【】[\]“”"'—_/]+/)
     .map((word) => word.trim())
     .filter((word) => word.length >= 2);
-  const compact = value.toLocaleLowerCase().replace(/[\s，。！？、：；,.:;!?（）()【】\[\]“”"'—_/]+/g, "");
+  const compact = value.toLocaleLowerCase().replace(/[\s，。！？、：；,.:;!?（）()【】[\]“”"'—_/]+/g, "");
   const chunks = compact.length >= 4
     ? Array.from({ length: Math.min(12, compact.length - 1) }, (_, index) => compact.slice(index, index + 2))
     : [];
@@ -968,10 +970,10 @@ export function parseThemeSynthesisResponse(raw: string, allowedPaths: string[])
     const evidencePaths = Array.from(new Set((Array.isArray(item.evidencePaths) ? item.evidencePaths : [])
       .filter((path): path is string => typeof path === "string" && allowed.has(path)))).slice(0, 8);
     const requestedStatus = cleanText(item.status, 20);
-    const status = evidencePaths.length
+    const status: "待验证" | "有证据" | "存在争议" = evidencePaths.length
       ? requestedStatus === "存在争议" ? "存在争议" : "有证据"
       : "待验证";
-    return [{ title, status: status as "待验证" | "有证据" | "存在争议", evidencePaths }];
+    return [{ title, status: status, evidencePaths }];
   }).slice(0, 15);
   const gaps = Array.from(new Set((Array.isArray(parsed.gaps) ? parsed.gaps : [])
     .map((value) => cleanText(value, 180)).filter((value): value is string => Boolean(value)))).slice(0, 8);

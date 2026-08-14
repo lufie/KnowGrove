@@ -4,9 +4,12 @@ import type { PropertyAIRepairPreview, PropertyAudit, PropertyAuditIssue } from 
 
 function displayValue(value: unknown): string {
   if (value === undefined) return "未设置";
-  if (Array.isArray(value)) return value.length ? value.join("、") : "空列表";
+  if (Array.isArray(value)) return value.length ? value.map(displayValue).join("、") : "空列表";
   if (typeof value === "object" && value !== null) return JSON.stringify(value);
-  return String(value);
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  if (typeof value === "symbol") return value.description ?? "";
+  return "";
 }
 
 function issueKindLabel(issue: PropertyAuditIssue): string {
@@ -92,7 +95,7 @@ export class PropertyIssueModal extends Modal {
 
     if (changes?.operations.length) {
       const fix = actions.createEl("button", { cls: "mod-cta", text: `修复确定性问题（${changes.operations.length} 项）` });
-      fix.addEventListener("click", async () => {
+      fix.addEventListener("click", () => void (async () => {
         fix.disabled = true;
         fix.setText("修复中…");
         const succeeded = await this.plugin.executePropertyAudit(filteredAudit(this.audit, this.path));
@@ -101,7 +104,7 @@ export class PropertyIssueModal extends Modal {
           fix.disabled = false;
           fix.setText(`修复确定性问题（${changes.operations.length} 项）`);
         }
-      });
+      })());
     }
 
     if (aiProperties.length && this.plugin.settings.aiProperties.enabled && !this.aiPreview) {
@@ -147,7 +150,7 @@ export class PropertyIssueModal extends Modal {
       list.createDiv({ text: `${name}：${displayValue(value)}` });
     }
     const apply = section.createEl("button", { cls: "mod-cta", text: "写入 AI 建议" });
-    apply.addEventListener("click", async () => {
+    apply.addEventListener("click", () => void (async () => {
       apply.disabled = true;
       apply.setText("写入中…");
       try {
@@ -160,7 +163,7 @@ export class PropertyIssueModal extends Modal {
         apply.setText("写入 AI 建议");
         new Notice(`AI 建议写入失败：${error instanceof Error ? error.message : String(error)}`);
       }
-    });
+    })());
   }
 
   private async previewAI(button: HTMLButtonElement, properties: string[]): Promise<void> {

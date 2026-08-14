@@ -162,10 +162,10 @@ class PersistentTaskCheckboxWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const label = document.createElement("label");
+    const label = createEl("label");
     label.className = "task-list-label knowgrove-task-list-label";
     label.contentEditable = "false";
-    const input = document.createElement("input");
+    const input = createEl("input");
     input.className = "task-list-item-checkbox knowgrove-task-list-item-checkbox";
     input.type = "checkbox";
     input.checked = this.state !== " ";

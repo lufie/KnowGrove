@@ -154,7 +154,6 @@ export function mergeExecutablePath(
   options: LocalExecutableOptions = {},
 ): string {
   const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
   const path = platformPath(platform);
   const separator = platform === "win32" ? ";" : ":";
   const executableDirectory = path.dirname(executable);

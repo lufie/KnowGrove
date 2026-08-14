@@ -260,8 +260,9 @@ export function selectPreferredSubtitleFile(files: string[]): string | undefined
 }
 
 export function formatYtDlpCaptureError(stderr: string, url: string): string {
+  const ansiColorSequence = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
   const cleaned = stderr
-    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(ansiColorSequence, "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -299,7 +300,7 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   if (/KnowGrove采集状态:\s*["']?(?:处理中|已完成)["']?/i.test(markdown)) return null;
   const body = stripCaptureFrontmatter(markdown);
   const urls = Array.from(body.matchAll(/https?:\/\/[^\s<>()\]]+/gi))
-    .map((match) => match[0]!.replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
+    .map((match) => match[0].replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
   const uniqueUrls = Array.from(new Set(urls));
   if (uniqueUrls.length === 0) {
     return detectLocalMediaNoteCandidate(markdown, body, fallbackTitle);
@@ -739,7 +740,7 @@ function imageSource(element: Element, baseUrl = ""): string {
 
 function inlineMarkdown(node: Node, baseUrl = ""): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-  if (!(node instanceof Element)) return "";
+  if (!(node.instanceOf(Element))) return "";
   const tag = node.tagName.toLowerCase();
   if (tag === "img") {
     const src = imageSource(node, baseUrl);
@@ -1049,6 +1050,10 @@ export function formatTranscriptParagraphs(source: string): string {
   return paragraphs.join("\n\n");
 }
 
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 export function parseSubtitleText(subtitle: string, fileName = ""): string {
   if (/\.json3?$|\.json$/i.test(fileName) || /^\s*[{[]/.test(subtitle)) {
     try {
@@ -1056,9 +1061,9 @@ export function parseSubtitleText(subtitle: string, fileName = ""): string {
         body?: Array<{ content?: unknown }>;
         events?: Array<{ segs?: Array<{ utf8?: unknown }> }>;
       };
-      const body = parsed.body?.map((item) => String(item.content ?? "").trim()).filter(Boolean) ?? [];
+      const body = parsed.body?.map((item) => stringField(item.content).trim()).filter(Boolean) ?? [];
       const events = parsed.events?.map((event) =>
-        event.segs?.map((segment) => String(segment.utf8 ?? "")).join("").trim() ?? "",
+        event.segs?.map((segment) => stringField(segment.utf8)).join("").trim() ?? "",
       ).filter(Boolean) ?? [];
       const jsonTranscript = [...body, ...events].join("\n");
       if (jsonTranscript) return formatTranscriptParagraphs(jsonTranscript);
@@ -1100,7 +1105,9 @@ export function safeCaptureFileName(value: string): string {
 }
 
 export function captureDatePrefix(value: unknown, fallbackTime?: number): string {
-  const raw = String(value ?? "").trim();
+  const raw = typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
   const dateOnly = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (dateOnly) {
     return `${dateOnly[1]}-${dateOnly[2]!.padStart(2, "0")}-${dateOnly[3]!.padStart(2, "0")}`;

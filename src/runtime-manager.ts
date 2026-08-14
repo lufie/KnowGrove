@@ -1,4 +1,22 @@
 import { Platform, requestUrl } from "obsidian";
+import { createHash, verify } from "node:crypto";
+import { createReadStream } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  statfs,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import * as https from "node:https";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { runLocalCommand } from "./ai-provider";
 import {
   compareRuntimeVersions,
@@ -45,8 +63,6 @@ export interface RuntimeInstallProgress {
 type ProgressHandler = (progress: RuntimeInstallProgress) => void;
 
 function runtimeRoot(): string {
-  const { homedir } = require("node:os") as typeof import("node:os");
-  const { join } = require("node:path") as typeof import("node:path");
   if (process.platform === "darwin") {
     return join(homedir(), "Library", "Application Support", "KnowGrove", "runtime");
   }
@@ -65,8 +81,6 @@ function toolFileName(id: KnowGroveRuntimeArtifactId): string {
 }
 
 function commandCandidates(id: KnowGroveRuntimeArtifactId, configured = ""): string[] {
-  const { homedir } = require("node:os") as typeof import("node:os");
-  const { join } = require("node:path") as typeof import("node:path");
   const home = homedir();
   const name = toolFileName(id);
   const candidates = [
@@ -84,8 +98,6 @@ function commandCandidates(id: KnowGroveRuntimeArtifactId, configured = ""): str
 }
 
 function modelCandidates(configured = ""): string[] {
-  const { homedir } = require("node:os") as typeof import("node:os");
-  const { join } = require("node:path") as typeof import("node:path");
   const home = homedir();
   const raw = configured.trim();
   const configuredPath = raw.endsWith(".bin")
@@ -103,8 +115,6 @@ function modelCandidates(configured = ""): string[] {
 }
 
 function modelDirectories(): string[] {
-  const { homedir } = require("node:os") as typeof import("node:os");
-  const { join } = require("node:path") as typeof import("node:path");
   const home = homedir();
   return [
     join(home, ".cache", "whisper-models"),
@@ -117,7 +127,6 @@ function modelDirectories(): string[] {
 }
 
 async function isFile(path: string): Promise<boolean> {
-  const { stat } = require("node:fs/promises") as typeof import("node:fs/promises");
   try {
     return (await stat(path)).isFile();
   } catch {
@@ -136,7 +145,6 @@ async function probeCommand(id: KnowGroveRuntimeArtifactId, candidate: string): 
 }
 
 function verifyManifestSignature(manifest: KnowGroveRuntimeManifest): void {
-  const { verify } = require("node:crypto") as typeof import("node:crypto");
   const payload = Buffer.from(stableRuntimeJson(unsignedRuntimeManifest(manifest)));
   const signature = Buffer.from(manifest.signature, "base64");
   if (!verify(null, payload, KNOWGROVE_RUNTIME_PUBLIC_KEY, signature)) {
@@ -151,8 +159,6 @@ function assertPluginVersion(manifest: KnowGroveRuntimeManifest, pluginVersion: 
 }
 
 async function sha256File(path: string): Promise<string> {
-  const { createReadStream } = require("node:fs") as typeof import("node:fs");
-  const { createHash } = require("node:crypto") as typeof import("node:crypto");
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(path);
@@ -169,8 +175,6 @@ async function downloadFile(
   expectedSize: number,
   onBytes: (bytes: number) => void,
 ): Promise<void> {
-  const { mkdir, open, stat, unlink } = require("node:fs/promises") as typeof import("node:fs/promises");
-  const { dirname } = require("node:path") as typeof import("node:path");
   await mkdir(dirname(destination), { recursive: true });
   let lastError: unknown;
   for (const url of urls) {
@@ -211,7 +215,7 @@ async function downloadFile(
           if (discarded) onBytes(-discarded);
         }
         if (attempt < 3) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1_000 * (attempt + 1)));
         }
       }
     }
@@ -229,7 +233,6 @@ async function downloadFromUrl(
   if (redirects > MAX_REDIRECTS) throw new Error("运行包下载重定向过多");
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") throw new Error("运行包仅允许通过 HTTPS 下载");
-  const https = require("node:https") as typeof import("node:https");
   await new Promise<void>((resolve, reject) => {
     const request = https.get(parsed, {
       headers: {
@@ -304,8 +307,6 @@ export class KnowGroveRuntimeManager {
   }
 
   async readInstallation(): Promise<KnowGroveRuntimeInstallationRecord | undefined> {
-    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { join } = require("node:path") as typeof import("node:path");
     try {
       const parsed = JSON.parse(await readFile(join(this.getRoot(), CURRENT_RECORD), "utf8")) as unknown;
       if (!parsed || typeof parsed !== "object") return undefined;
@@ -319,7 +320,6 @@ export class KnowGroveRuntimeManager {
     const installation = await this.readInstallation();
     const path = installation?.files["skill-pack"];
     if (!path) return undefined;
-    const { readFile } = require("node:fs/promises") as typeof import("node:fs/promises");
     try {
       return validateSkillPack(JSON.parse(await readFile(path, "utf8")) as unknown);
     } catch (error) {
@@ -362,8 +362,6 @@ export class KnowGroveRuntimeManager {
       }
     }
     if (!tools["whisper-model"]) {
-      const { readdir } = require("node:fs/promises") as typeof import("node:fs/promises");
-      const { join } = require("node:path") as typeof import("node:path");
       for (const directory of modelDirectories()) {
         try {
           const names = (await readdir(directory))
@@ -433,7 +431,6 @@ export class KnowGroveRuntimeManager {
     }
     let diskFreeBytes: number | undefined;
     try {
-      const { mkdir, statfs } = require("node:fs/promises") as typeof import("node:fs/promises");
       await mkdir(this.getRoot(), { recursive: true });
       const stats = await statfs(this.getRoot());
       diskFreeBytes = Number(stats.bavail) * Number(stats.bsize);
@@ -530,7 +527,6 @@ export class KnowGroveRuntimeManager {
 
   private async freeDiskBytes(): Promise<number | undefined> {
     try {
-      const { mkdir, statfs } = require("node:fs/promises") as typeof import("node:fs/promises");
       await mkdir(this.getRoot(), { recursive: true });
       const stats = await statfs(this.getRoot());
       return Number(stats.bavail) * Number(stats.bsize);
@@ -545,8 +541,6 @@ export class KnowGroveRuntimeManager {
     artifacts: KnowGroveRuntimeArtifact[],
     onProgress: ProgressHandler,
   ): Promise<KnowGroveRuntimeInstallationRecord> {
-    const { chmod, mkdir, readFile, rename, rm, stat, unlink, writeFile } = require("node:fs/promises") as typeof import("node:fs/promises");
-    const { dirname, join } = require("node:path") as typeof import("node:path");
     const root = this.getRoot();
     const transactionId = Date.now();
     const staging = join(root, `.staging-${manifest.runtimeVersion}-${transactionId}`);

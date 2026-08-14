@@ -15,7 +15,7 @@ import type {
 const INTERNAL_FRONTMATTER_KEYS = new Set(["position"]);
 const SPECIAL_PROPERTY_KEYS = new Set(["aliases", "cssclasses", "tags"]);
 const SYSTEM_FILE_NAMES = new Set(["AGENTS.md", "DESIGN.md", "SKILL.md"]);
-const SYSTEM_PATH_SEGMENTS = new Set([".git", ".obsidian", "node_modules"]);
+const SYSTEM_PATH_SEGMENTS = new Set([".git", "node_modules"]);
 const SYSTEM_DIMENSION_IDS = new Set(["file-name", "type", "status", "domain", "topic"]);
 export const PROPERTY_BASE_MANAGED_MARKER = "# KnowGrove managed property Base";
 export const PROPERTY_RULE_SCHEMA_VERSION = 8;
@@ -166,7 +166,7 @@ export function isPropertyGovernedPath(path: string, settings: PropertySystemSet
   if (!normalized.toLocaleLowerCase().endsWith(".md")) return false;
   const fileName = normalized.slice(normalized.lastIndexOf("/") + 1);
   if (SYSTEM_FILE_NAMES.has(fileName)) return false;
-  if (normalized.split("/").some((part) => SYSTEM_PATH_SEGMENTS.has(part))) return false;
+  if (normalized.split("/").some((part) => part.startsWith(".") || SYSTEM_PATH_SEGMENTS.has(part))) return false;
 
   const scope = normalizePathValue(settings.scopeFolder);
   if (scope && normalized !== `${scope}.md` && !normalized.startsWith(`${scope}/`)) return false;

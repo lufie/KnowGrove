@@ -12,7 +12,7 @@
   --amber-soft: #fff3da;
   --red: #9b3b3b;
   --red-soft: #fff0ef;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: system-ui, "Segoe UI", sans-serif;
 }
 
 * {
@@ -300,12 +300,12 @@ select {
 }
 
 .result-panel.is-partial .result-label {
-  color: var(--amber) !important;
+  color: var(--amber);
 }
 
 .result-label {
-  color: var(--brand) !important;
-  font-size: 10px !important;
+  color: var(--brand);
+  font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.1em;
 }

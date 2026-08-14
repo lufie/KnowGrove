@@ -90,7 +90,7 @@ export function uniqueAttachmentTargetPath(
 export function isAttachmentCleanupExcludedPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
   const segments = normalized.split("/").filter(Boolean);
-  if (segments.some((segment) => segment === "node_modules" || segment === ".git" || segment === ".obsidian" || segment === ".trash")) return true;
+  if (segments.some((segment) => segment === "node_modules" || segment === ".git" || segment === ".trash")) return true;
   if (normalized === "Home/🕹️skills" || normalized.startsWith("Home/🕹️skills/")) return true;
   return segments.some((segment) => segment.startsWith("."));
 }

@@ -1,12 +1,5 @@
 import { defineConfig } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
-import tseslint from "typescript-eslint";
-
-const recommendedObsidianRules = Object.fromEntries(
-  Object.entries(
-    Object.assign({}, ...obsidianmd.configs.recommended.map((config) => config.rules ?? {})),
-  ).filter(([ruleName]) => ruleName.startsWith("obsidianmd/")),
-);
 
 export default defineConfig([
   {
@@ -22,15 +15,42 @@ export default defineConfig([
       "言序浏览器一键入库/**",
     ],
   },
+  ...obsidianmd.configs.recommended,
   {
     files: ["src/**/*.ts"],
-    plugins: { obsidianmd },
     languageOptions: {
-      parser: tseslint.parser,
-      parserOptions: { project: "./tsconfig.json" },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
-      ...recommendedObsidianRules,
+      "obsidianmd/ui/sentence-case": ["warn", {
+        mode: "loose",
+        brands: [
+          "KnowGrove",
+          "Reading Companion",
+          "Obsidian",
+          "Markdown",
+          "Canvas",
+          "Vault",
+          "Base",
+          "WorkBuddy",
+          "CodeBuddy",
+          "OpenAI",
+          "Claude Code",
+          "Kimi Code",
+          "MiniMax",
+          "GLM",
+          "yt-dlp",
+          "FFmpeg",
+          "Whisper",
+          "whisper-cli",
+        ],
+        acronyms: ["AI", "API", "CLI", "URL", "HTTPS", "YAML", "JSON", "PDF", "ID", "GPT"],
+        ignoreWords: ["small", "YYYY-MM-DD"],
+        ignoreRegex: ["^https?://", "^/[^\\s]+", "^_[^\\s]+", "YYYY-MM-DD", "^small$", "^gpt-image-1$"],
+      }],
     },
   },
 ]);

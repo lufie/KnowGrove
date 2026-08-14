@@ -32,33 +32,38 @@ export function migrateLegacyBrandString(value: string): string {
   );
 }
 
-export function migrateLegacyBrandValue<T>(value: T): BrandMigrationResult<T> {
+function migrateLegacyBrandUnknown(value: unknown): BrandMigrationResult<unknown> {
   if (typeof value === "string") {
     const migrated = value === LEGACY_ROOT || value.startsWith(`${LEGACY_ROOT}/`)
       ? `${KNOWGROVE_ROOT}${value.slice(LEGACY_ROOT.length)}`
       : value;
-    return { value: migrated as T, changed: migrated !== value };
+    return { value: migrated, changed: migrated !== value };
   }
   if (Array.isArray(value)) {
     let changed = false;
     const migrated = value.map((item) => {
-      const result = migrateLegacyBrandValue(item);
+      const result = migrateLegacyBrandUnknown(item);
       changed ||= result.changed;
       return result.value;
     });
-    return { value: migrated as T, changed };
+    return { value: migrated, changed };
   }
   if (value && typeof value === "object") {
     let changed = false;
     const migrated: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      const result = migrateLegacyBrandValue(item);
+      const result = migrateLegacyBrandUnknown(item);
       changed ||= result.changed;
       migrated[key] = result.value;
     }
-    return { value: migrated as T, changed };
+    return { value: migrated, changed };
   }
   return { value, changed: false };
+}
+
+export function migrateLegacyBrandValue<T>(value: T): BrandMigrationResult<T> {
+  const result = migrateLegacyBrandUnknown(value);
+  return { value: result.value as T, changed: result.changed };
 }
 
 export function migrateLegacyManagedContent(content: string): BrandMigrationResult<string> {

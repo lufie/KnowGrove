@@ -10,11 +10,6 @@ import type {
 
 export const PROPERTY_WORKBENCH_VIEW_TYPE = "knowgrove-property-workbench";
 
-const GOVERNANCE_VIEWS = {
-  compliant: "✅ 已符合规范",
-  nonCompliant: "⚠️ 待规范",
-} as const;
-
 export class PropertyWorkbenchView extends ItemView {
   private snapshot?: PropertyWorkspaceSnapshot;
   private scanning = false;

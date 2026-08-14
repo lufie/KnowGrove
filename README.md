@@ -6,7 +6,7 @@
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source and public release: `2.8.8` (community automated review completed with no blocking errors)
+Current source: `2.8.9` (release candidate); current public release: `2.8.8` (community automated review completed with no blocking errors)
 
 ## What KnowGrove does
 
@@ -76,6 +76,10 @@ The local receiver listens only on `127.0.0.1:47831` and requires confirmation i
 - The plugin has no client telemetry or usage analytics.
 - API keys use Obsidian SecretStorage when available.
 - Local CLIs run without a shell and in isolated temporary directories.
+- Local process execution is limited to the provider or media tools selected by the user; executable arguments are passed directly rather than through a command shell.
+- Direct filesystem access is limited to user-selected external media and KnowGrove runtime files outside the vault. Normal note writes use Obsidian's Vault APIs.
+- Whole-vault enumeration is reserved for explicit property, topic, or attachment checks. Attachment checks do not rebuild the vault index at startup.
+- Clipboard access occurs only after a user clicks a copy action.
 - KnowGrove does not bypass paywalls, login restrictions, DRM, or platform permissions.
 - Attachment cleanup moves confirmed candidates to the Obsidian trash; it does not permanently delete them.
 

@@ -9,7 +9,7 @@
   --brand-dark: #d83f35;
   --brand-soft: #fff0ed;
   --red: #9b3b3b;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: system-ui, "Segoe UI", sans-serif;
 }
 
 * {

@@ -47,9 +47,12 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 
 export function propertyValueToDraft(value: unknown): string {
   if (value === undefined || value === null) return "";
-  if (Array.isArray(value)) return value.map((item) => String(item)).join("，");
+  if (Array.isArray(value)) return value.map(propertyValueToDraft).join("，");
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  if (typeof value === "symbol") return value.description ?? "";
+  return "";
 }
 
 export function parsePropertyDraft(valueType: PropertyValueType, draft: string): unknown {

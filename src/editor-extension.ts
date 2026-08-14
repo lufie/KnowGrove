@@ -41,7 +41,7 @@ class CommentPinWidget extends WidgetType {
 
   toDOM(): HTMLElement {
     const records = this.plugin.getReferencesForBlock(this.blockId);
-    const button = document.createElement("button");
+    const button = createEl("button");
     button.type = "button";
     button.className = "knowgrove-editor-pin";
     button.setAttribute("aria-label", `查看 ${records.length} 条评论`);
