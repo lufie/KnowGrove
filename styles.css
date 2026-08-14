@@ -22,13 +22,13 @@
 }
 
 .workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-title {
-  margin-inline-start: 0 !important;
-  padding-inline-start: var(--size-4-8, 32px) !important;
+  margin-inline-start: 0;
+  padding-inline-start: var(--size-4-8, 32px);
 }
 
 .workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file > .tree-item-self {
-  margin-inline-start: calc(var(--size-4-6, 24px) * -1) !important;
-  padding-inline-start: calc(var(--size-4-8, 32px) + var(--size-4-6, 24px)) !important;
+  margin-inline-start: calc(var(--size-4-6, 24px) * -1);
+  padding-inline-start: calc(var(--size-4-8, 32px) + var(--size-4-6, 24px));
 }
 
 .workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file .nav-file-title-content {
@@ -39,7 +39,7 @@
 }
 
 .workspace-leaf-content[data-type="file-explorer"] .knowgrove-recent-file .mdr-vertical-tab-close {
-  display: none !important;
+  display: none;
 }
 
 .knowgrove-view {
@@ -283,8 +283,8 @@
 }
 
 .knowgrove-note .knowgrove-more {
-  width: 0 !important;
-  padding: 0 !important;
+  width: 0;
+  padding: 0;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
@@ -297,7 +297,7 @@
 
 .knowgrove-note:hover .knowgrove-more,
 .knowgrove-note:focus-within .knowgrove-more {
-  width: 26px !important;
+  width: 26px;
   opacity: 1;
   pointer-events: auto;
 }
@@ -618,9 +618,7 @@
 
 .knowgrove-commented-text {
   border-radius: 2px;
-  text-decoration-line: underline;
-  text-decoration-color: rgba(var(--knowgrove-brand-rgb), 0.8);
-  text-decoration-thickness: 1.5px;
+  text-decoration: underline 1.5px rgba(var(--knowgrove-brand-rgb), 0.8);
   text-underline-offset: 3px;
   cursor: pointer;
   transition: color 120ms ease, background-color 120ms ease;
@@ -649,7 +647,7 @@
 }
 
 .knowgrove-selection-actions[hidden] {
-  display: none !important;
+  display: none;
 }
 
 .knowgrove-selection-actions .clickable-icon {
@@ -704,13 +702,13 @@
 .markdown-embed.inline-embed h5[data-heading*="not found"] {
   color: var(--text-muted);
   font-family: var(--font-text);
-  font-size: var(--font-text-size) !important;
+  font-size: var(--font-text-size);
   font-weight: var(--font-normal, 400);
-  line-height: var(--line-height-normal) !important;
+  line-height: var(--line-height-normal);
 }
 
 .markdown-embed.knowgrove-has-block-fallback > .markdown-embed-content {
-  display: none !important;
+  display: none;
 }
 
 .knowgrove-block-embed-fallback {
@@ -1066,7 +1064,7 @@
   width: 100%;
   max-width: 100%;
   padding: var(--size-4-3, 12px);
-  overflow-x: hidden !important;
+  overflow-x: hidden;
   box-sizing: border-box;
   color: var(--text-normal);
   background: transparent;
@@ -4500,8 +4498,8 @@ button.knowgrove-property-issue-row:hover {
   padding: 0 0 var(--size-4-3);
 }
 
-.knowgrove-topic-index-row,
-.knowgrove-topic-index-document {
+.knowgrove-topic-index-view button.knowgrove-topic-index-row,
+.knowgrove-topic-index-view button.knowgrove-topic-index-document {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -4511,8 +4509,8 @@ button.knowgrove-property-issue-row:hover {
   padding: var(--size-4-2) var(--size-4-3);
   border: 0;
   border-radius: var(--radius-s);
-  background: transparent !important;
-  box-shadow: none !important;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-normal);
   text-align: left;
   font-weight: 400;
@@ -4528,14 +4526,14 @@ button.knowgrove-property-issue-row:hover {
   color: var(--text-faint);
 }
 
-.knowgrove-topic-index-row:hover,
-.knowgrove-topic-index-row:focus-visible,
-.knowgrove-topic-index-document:hover,
-.knowgrove-topic-index-document:focus-visible,
-.knowgrove-topic-index-document.is-active-document {
-  background: var(--background-modifier-hover) !important;
+.knowgrove-topic-index-view button.knowgrove-topic-index-row:hover,
+.knowgrove-topic-index-view button.knowgrove-topic-index-row:focus-visible,
+.knowgrove-topic-index-view button.knowgrove-topic-index-document:hover,
+.knowgrove-topic-index-view button.knowgrove-topic-index-document:focus-visible,
+.knowgrove-topic-index-view button.knowgrove-topic-index-document.is-active-document {
+  background: var(--background-modifier-hover);
   color: var(--text-normal);
-  box-shadow: none !important;
+  box-shadow: none;
 }
 
 .knowgrove-topic-index-row-copy {
@@ -4617,23 +4615,23 @@ button.knowgrove-property-issue-row:hover {
   line-height: 1.35;
 }
 
-.knowgrove-topic-index-more {
+.knowgrove-topic-index-view button.knowgrove-topic-index-more {
   align-self: center;
   min-height: 34px;
   margin: var(--size-4-2) 0;
   padding: var(--size-4-1) var(--size-4-4);
   border: 0;
-  background: transparent !important;
-  box-shadow: none !important;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-muted);
   font-weight: 400;
 }
 
-.knowgrove-topic-index-more:hover,
-.knowgrove-topic-index-more:focus-visible {
-  background: var(--background-modifier-hover) !important;
+.knowgrove-topic-index-view button.knowgrove-topic-index-more:hover,
+.knowgrove-topic-index-view button.knowgrove-topic-index-more:focus-visible {
+  background: var(--background-modifier-hover);
   color: var(--text-normal);
-  box-shadow: none !important;
+  box-shadow: none;
 }
 
 .knowgrove-topic-index-empty {
