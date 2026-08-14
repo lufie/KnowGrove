@@ -3,7 +3,11 @@ import type KnowGrovePlugin from "./main";
 import {
   extractBatchCaptureUrls,
   formatRecordingDuration,
+  LOCAL_MEDIA_IMPORT_ACCEPT,
+  LOCAL_MEDIA_IMPORT_FORMAT_LABEL,
+  localMediaImportType,
   type DesktopRecordingSnapshot,
+  type LocalMediaImportProgress,
 } from "./capture-center-core";
 
 export const LEGACY_CAPTURE_CENTER_VIEW_TYPE = "knowgrove-capture-center";
@@ -96,6 +100,8 @@ export class DesktopRecorderView extends ItemView {
   private unsubscribeRecording?: () => void;
   private recordingSnapshot: DesktopRecordingSnapshot;
   private recordingTitle = "";
+  private mediaImportBusy = false;
+  private readonly mediaImportResults = new Map<string, LocalMediaImportProgress>();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -173,6 +179,7 @@ export class DesktopRecorderView extends ItemView {
         cls: "knowgrove-capture-help",
         text: "首次使用会请求麦克风权限；中断后可自动续录。",
       });
+      this.renderMediaImport(container);
       return;
     }
 
@@ -205,6 +212,120 @@ export class DesktopRecorderView extends ItemView {
       }
       const again = actions.createEl("button", { text: "新建录音" });
       again.addEventListener("click", () => void this.plugin.resetDesktopRecording());
+      this.renderMediaImport(container);
+    }
+  }
+
+  private renderMediaImport(container: HTMLElement): void {
+    const section = container.createDiv("knowgrove-media-import");
+    section.createEl("h4", { text: "导入音视频" });
+    const input = section.createEl("input", {
+      type: "file",
+      cls: "knowgrove-media-import-input",
+      attr: {
+        accept: LOCAL_MEDIA_IMPORT_ACCEPT,
+        multiple: "true",
+        "aria-label": "选择本地音频或视频",
+      },
+    });
+    const dropZone = section.createDiv({
+      cls: `knowgrove-media-drop-zone${this.mediaImportBusy ? " is-busy" : ""}`,
+      attr: {
+        role: "button",
+        tabindex: this.mediaImportBusy ? "-1" : "0",
+        "aria-disabled": this.mediaImportBusy ? "true" : "false",
+        "aria-label": "拖拽或选择本地音频和视频",
+      },
+    });
+    const icon = dropZone.createSpan("knowgrove-media-drop-icon");
+    setIcon(icon, this.mediaImportBusy ? "loader-circle" : "file-up");
+    dropZone.createEl("strong", { text: this.mediaImportBusy ? "正在导入…" : "拖拽音频或视频到这里" });
+    dropZone.createSpan({ text: "或点击选择文件" });
+    section.createEl("p", {
+      cls: "knowgrove-capture-help knowgrove-media-format-help",
+      text: `支持格式：${LOCAL_MEDIA_IMPORT_FORMAT_LABEL}`,
+    });
+
+    const choose = (): void => {
+      if (!this.mediaImportBusy) input.click();
+    };
+    dropZone.addEventListener("click", choose);
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      choose();
+    });
+    for (const eventName of ["dragenter", "dragover"] as const) {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        if (!this.mediaImportBusy) dropZone.addClass("is-dragover");
+      });
+    }
+    for (const eventName of ["dragleave", "drop"] as const) {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.removeClass("is-dragover");
+      });
+    }
+    dropZone.addEventListener("drop", (event) => {
+      if (this.mediaImportBusy) return;
+      void this.importMediaFiles(Array.from(event.dataTransfer?.files ?? []));
+    });
+    input.addEventListener("change", () => {
+      void this.importMediaFiles(Array.from(input.files ?? []));
+    });
+
+    const results = section.createDiv("knowgrove-media-import-results");
+    for (const result of this.mediaImportResults.values()) {
+      const row = results.createDiv(`knowgrove-media-import-result is-${result.state}`);
+      const stateIcon = row.createSpan("knowgrove-media-import-result-icon");
+      setIcon(
+        stateIcon,
+        result.state === "completed"
+          ? "circle-check"
+          : result.state === "failed"
+            ? "circle-alert"
+            : result.state === "copying"
+              ? "copy"
+              : "loader-circle",
+      );
+      const text = row.createDiv("knowgrove-media-import-result-text");
+      text.createEl("strong", { text: result.title });
+      text.createSpan({ text: result.message });
+      if (result.notePath) {
+        const open = row.createEl("button", {
+          cls: "clickable-icon",
+          attr: { "aria-label": `打开笔记：${result.title}` },
+        });
+        setIcon(open, "arrow-up-right");
+        open.addEventListener("click", () => void this.plugin.openVaultFile(result.notePath!));
+      }
+    }
+  }
+
+  private async importMediaFiles(files: File[]): Promise<void> {
+    if (!files.length || this.mediaImportBusy) return;
+    const supported = files.filter((file) => localMediaImportType(file.name));
+    if (!supported.length) {
+      new Notice(`没有可导入的音视频文件。支持格式：${LOCAL_MEDIA_IMPORT_FORMAT_LABEL}`, 8000);
+      return;
+    }
+    this.mediaImportBusy = true;
+    this.render();
+    try {
+      const result = await this.plugin.importLocalMediaFiles(supported, (progress) => {
+        this.mediaImportResults.set(progress.id, progress);
+        this.render();
+      });
+      new Notice(
+        `已导入 ${result.imported} 个文件并开始后台解析${result.failed ? `，${result.failed} 个失败` : ""}`,
+        result.failed ? 8000 : 5000,
+      );
+    } catch (error) {
+      new Notice(`导入失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+    } finally {
+      this.mediaImportBusy = false;
+      this.render();
     }
   }
 }

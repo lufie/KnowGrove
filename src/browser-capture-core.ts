@@ -1,5 +1,7 @@
 import type { AIProviderId } from "./types";
 
+import type { KnowGroveLocale } from "./i18n";
+
 export type BrowserCapturePageType = "article" | "video" | "audio";
 
 export function selectedCaptureProvider(
@@ -300,7 +302,7 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
     .map((match) => match[0]!.replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
   const uniqueUrls = Array.from(new Set(urls));
   if (uniqueUrls.length === 0) {
-    return detectLocalAudioNoteCandidate(markdown, body, fallbackTitle);
+    return detectLocalMediaNoteCandidate(markdown, body, fallbackTitle);
   }
   if (uniqueUrls.length !== 1) return null;
   const url = uniqueUrls[0]!;
@@ -319,19 +321,22 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   };
 }
 
-function detectLocalAudioNoteCandidate(
+const LOCAL_VIDEO_EXTENSION = /\.(?:mp4|mov|mkv|m4v)$/i;
+const LOCAL_MEDIA_EXTENSION = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm|mp4|mov|mkv|m4v)$/i;
+
+function detectLocalMediaNoteCandidate(
   markdown: string,
   body: string,
   fallbackTitle: string,
 ): LinkNoteCandidate | null {
   const embeddedMedia = Array.from(body.matchAll(/!\[\[([^\]]+)]]/g))
     .map((match) => match[1]!.split("|")[0]!.trim())
-    .filter((path) => /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(path));
-  const frontmatterMedia = frontmatterScalar(markdown, ["audio", "音频", "语音文件"])
+    .filter((path) => LOCAL_MEDIA_EXTENSION.test(path));
+  const frontmatterMedia = frontmatterScalar(markdown, ["audio", "video", "音频", "语音文件", "视频", "视频文件"])
     .replace(/^!?\[\[|\]\]$/g, "")
     .split("|")[0]!
     .trim();
-  if (frontmatterMedia && /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(frontmatterMedia)) {
+  if (frontmatterMedia && LOCAL_MEDIA_EXTENSION.test(frontmatterMedia)) {
     embeddedMedia.push(frontmatterMedia);
   }
   const mediaPaths = Array.from(new Set(embeddedMedia));
@@ -341,7 +346,7 @@ function detectLocalAudioNoteCandidate(
     .replace(/!\[\[[^\]]+]]/g, " ")
     .replace(/^#{1,6}\s+.*$/gm, " ")
     .replace(/^\s*[-*]\s+(?:无|没有|暂无)\s*$/gim, " ")
-    .replace(/^(?:中断记录|整理记录|语音记录)\s*$/gim, " ")
+    .replace(/^(?:中断记录|整理记录|语音记录|视频记录)\s*$/gim, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/\s+/g, "");
   if (withoutTemplate.length > 120 || body.length > 1_500) return null;
@@ -350,7 +355,7 @@ function detectLocalAudioNoteCandidate(
   return {
     url: "",
     title: normalizedLinkNoteTitle(heading || fallbackTitle, ""),
-    pageType: "audio",
+    pageType: LOCAL_VIDEO_EXTENSION.test(mediaPaths[0]!) ? "video" : "audio",
     mediaPath: mediaPaths[0]!,
   };
 }
@@ -373,20 +378,23 @@ function frontmatterScalar(markdown: string, keys: string[]): string {
 
 export function detectInterruptedCapture(markdown: string): InterruptedCaptureCandidate | null {
   if (!/KnowGrove采集状态:\s*["']?(?:处理中|部分完成)["']?/i.test(markdown)) return null;
-  if (/^##\s+内容摘要\s*$/m.test(markdown)) return null;
+  const outputLabels = Object.values(CAPTURE_OUTPUT_LABELS);
+  if (outputLabels.some((labels) => new RegExp(`^##\\s+${escapeRegExp(labels.summary)}\\s*$`, "m").test(markdown))) return null;
   const url = frontmatterScalar(markdown, ["来源", "source_url"]);
-  if (!/^https?:\/\//i.test(url)) return null;
+  const mediaPath = markdown.match(/^!\[\[([^\]]+)]]\s*$/m)?.[1]?.trim();
+  if (!/^https?:\/\//i.test(url) && !mediaPath) return null;
   const contentType = frontmatterScalar(markdown, ["内容类型", "source_type"]);
   const pageType: BrowserCapturePageType = /视频|video/i.test(contentType)
     ? "video"
     : /音频|语音|audio|podcast/i.test(contentType)
       ? "audio"
       : classifyBrowserCaptureUrl(url);
-  const sourceHeading = pageType === "article" ? "原文" : "完整逐字稿";
-  const source = markdown.match(new RegExp(`^##\\s+${sourceHeading}\\s*$\\r?\\n([\\s\\S]+)$`, "m"))?.[1]?.trim() ?? "";
+  const sourceHeadings = outputLabels.map((labels) => pageType === "article" ? labels.originalText : labels.fullTranscript);
+  const source = sourceHeadings.map((heading) => markdown.match(
+    new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$\\r?\\n([\\s\\S]+)$`, "m"),
+  )?.[1]?.trim() ?? "").find(Boolean) ?? "";
   if (source.length < 80) return null;
   const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
-  const mediaPath = markdown.match(/^!\[\[([^\]]+)]]\s*$/m)?.[1]?.trim();
   return {
     url,
     title: normalizedLinkNoteTitle(title, url),
@@ -565,15 +573,73 @@ export function normalizeBrowserCaptureAIResult(
   };
 }
 
+export interface CaptureOutputLabels {
+  languageName: string;
+  summary: string;
+  keyPoints: string;
+  organizedBody: string;
+  dialogue: string;
+  audioBody: string;
+  videoBody: string;
+  originalAudio: string;
+  originalVideo: string;
+  originalText: string;
+  fullTranscript: string;
+}
+
+const CAPTURE_OUTPUT_LABELS: Record<KnowGroveLocale, CaptureOutputLabels> = {
+  "zh-CN": { languageName: "简体中文", summary: "内容摘要", keyPoints: "核心要点", organizedBody: "整理正文", dialogue: "对话记录", audioBody: "音频正文", videoBody: "视频正文", originalAudio: "原始音频", originalVideo: "原始视频", originalText: "原文", fullTranscript: "完整逐字稿" },
+  "zh-TW": { languageName: "繁體中文", summary: "內容摘要", keyPoints: "核心要點", organizedBody: "整理正文", dialogue: "對話記錄", audioBody: "音訊正文", videoBody: "影片正文", originalAudio: "原始音訊", originalVideo: "原始影片", originalText: "原文", fullTranscript: "完整逐字稿" },
+  en: { languageName: "English", summary: "Summary", keyPoints: "Key points", organizedBody: "Organized content", dialogue: "Conversation", audioBody: "Audio notes", videoBody: "Video notes", originalAudio: "Original audio", originalVideo: "Original video", originalText: "Original text", fullTranscript: "Full transcript" },
+  ja: { languageName: "日本語", summary: "要約", keyPoints: "要点", organizedBody: "整理本文", dialogue: "会話記録", audioBody: "音声本文", videoBody: "動画本文", originalAudio: "元の音声", originalVideo: "元の動画", originalText: "原文", fullTranscript: "全文文字起こし" },
+  ko: { languageName: "한국어", summary: "내용 요약", keyPoints: "핵심 요점", organizedBody: "정리 본문", dialogue: "대화 기록", audioBody: "오디오 본문", videoBody: "비디오 본문", originalAudio: "원본 오디오", originalVideo: "원본 비디오", originalText: "원문", fullTranscript: "전체 녹취록" },
+  de: { languageName: "Deutsch", summary: "Zusammenfassung", keyPoints: "Kernaussagen", organizedBody: "Aufbereiteter Inhalt", dialogue: "Gespräch", audioBody: "Audio-Notizen", videoBody: "Video-Notizen", originalAudio: "Originalaudio", originalVideo: "Originalvideo", originalText: "Originaltext", fullTranscript: "Vollständiges Transkript" },
+  fr: { languageName: "Français", summary: "Résumé", keyPoints: "Points clés", organizedBody: "Contenu structuré", dialogue: "Conversation", audioBody: "Notes audio", videoBody: "Notes vidéo", originalAudio: "Audio original", originalVideo: "Vidéo originale", originalText: "Texte original", fullTranscript: "Transcription complète" },
+  es: { languageName: "Español", summary: "Resumen", keyPoints: "Puntos clave", organizedBody: "Contenido organizado", dialogue: "Conversación", audioBody: "Notas de audio", videoBody: "Notas de vídeo", originalAudio: "Audio original", originalVideo: "Vídeo original", originalText: "Texto original", fullTranscript: "Transcripción completa" },
+  "pt-BR": { languageName: "Português (Brasil)", summary: "Resumo", keyPoints: "Pontos principais", organizedBody: "Conteúdo organizado", dialogue: "Conversa", audioBody: "Notas de áudio", videoBody: "Notas de vídeo", originalAudio: "Áudio original", originalVideo: "Vídeo original", originalText: "Texto original", fullTranscript: "Transcrição completa" },
+  ru: { languageName: "Русский", summary: "Краткое содержание", keyPoints: "Ключевые моменты", organizedBody: "Структурированный материал", dialogue: "Диалог", audioBody: "Материал аудио", videoBody: "Материал видео", originalAudio: "Исходное аудио", originalVideo: "Исходное видео", originalText: "Исходный текст", fullTranscript: "Полная расшифровка" },
+};
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function captureOutputLabels(locale: KnowGroveLocale): CaptureOutputLabels {
+  return CAPTURE_OUTPUT_LABELS[locale];
+}
+
+function captureLanguageRequirement(locale: KnowGroveLocale): string {
+  const labels = captureOutputLabels(locale);
+  return [
+    `分析输出语言必须使用${labels.languageName}（${locale}）。`,
+    "summary、key_points、body_markdown 以及其中的分析性小标题全部使用该语言。",
+    "原始材料可能是另一种语言：不要翻译、改写或音译原话；直接引用和说话人原句保持原语言。完整原文或逐字稿会由系统另行原样保存。",
+  ].join("");
+}
+
+function captureJsonExample(locale: KnowGroveLocale, scope: "full" | "chunk" | "synthesis"): string {
+  const language = captureOutputLabels(locale).languageName;
+  return JSON.stringify({
+    summary: `<${scope === "chunk" ? "section " : ""}summary in ${language}>`,
+    key_points: [`<key point in ${language}>`],
+    mode: "article|single-speaker|multi-speaker",
+    body_markdown: scope === "synthesis"
+      ? `<merged body marker in ${language}>`
+      : `### <heading in ${language}>\n\n<content in ${language}>`,
+  });
+}
+
 export function browserCapturePrompt(
   pageType: BrowserCapturePageType,
   title: string,
   source: string,
+  outputLocale: KnowGroveLocale = "zh-CN",
 ): string {
   return [
     "你正在执行 KnowGrove 的浏览器入库 Skill。",
     "只根据提供的材料工作，不补造事实；无法确认的人名、数字和术语标记为 [待核]。",
     "输出必须是一个 JSON 对象，不要使用 Markdown 代码围栏。",
+    captureLanguageRequirement(outputLocale),
     pageType !== "article"
       ? [
         "判断单人讲解或多人对话。mode 使用 single-speaker 或 multi-speaker；正文需去除口语赘词，多人对话使用 **说话人**：格式。",
@@ -586,7 +652,7 @@ export function browserCapturePrompt(
         "原始材料中的 {{KNOWGROVE_IMAGE_数字}} 是已本地化的正文图片占位符，必须逐个原样保留、顺序不变、单独成段；不得改写、遗漏或新增占位符。",
         `不要在 body_markdown 中重复输出文章一级标题“${title}”。`,
       ].join(""),
-    '{"summary":"2-4段摘要","key_points":["要点1","要点2"],"mode":"article|single-speaker|multi-speaker","body_markdown":"### 小标题\\n\\n正文"}',
+    captureJsonExample(outputLocale, "full"),
     `内容类型：${pageType === "video" ? "视频" : pageType === "audio" ? "语音" : "文章"}`,
     `标题：${title}`,
     "原始材料：",
@@ -600,10 +666,12 @@ export function browserCaptureChunkPrompt(
   source: string,
   index: number,
   total: number,
+  outputLocale: KnowGroveLocale = "zh-CN",
 ): string {
   return [
     `这是《${title}》的第 ${index}/${total} 段材料。`,
     "只整理这一段，不推断其他段落。输出必须是一个 JSON 对象。",
+    captureLanguageRequirement(outputLocale),
     pageType !== "article"
       ? [
         "将口语整理成忠于原意、带 ### 小标题的正文；明显多人对话使用 **说话人**：格式。",
@@ -614,7 +682,7 @@ export function browserCaptureChunkPrompt(
         "删除作者栏、编辑栏、阅读器提示、头图、关注引导和纯装饰符号。",
         "所有 {{KNOWGROVE_IMAGE_数字}} 图片占位符必须逐个原样保留、顺序不变、单独成段，不得遗漏或新增。",
       ].join(""),
-    '{"summary":"本段摘要","key_points":["要点1"],"mode":"article|single-speaker|multi-speaker","body_markdown":"### 小标题\\n\\n正文"}',
+    captureJsonExample(outputLocale, "chunk"),
     source,
   ].join("\n\n");
 }
@@ -623,14 +691,16 @@ export function browserCaptureSynthesisPrompt(
   pageType: BrowserCapturePageType,
   title: string,
   partials: BrowserCaptureAIResult[],
+  outputLocale: KnowGroveLocale = "zh-CN",
 ): string {
   return [
     `综合《${title}》各段结果，生成全局摘要和核心要点。不要新增原结果没有的事实。`,
+    captureLanguageRequirement(outputLocale),
     pageType !== "article"
       ? "mode 在 single-speaker 与 multi-speaker 中选择。"
       : "mode 固定为 article。",
     "body_markdown 填写“由分段整理正文合并生成”。输出必须是一个 JSON 对象。",
-    '{"summary":"2-4段全局摘要","key_points":["要点1"],"mode":"article|single-speaker|multi-speaker","body_markdown":"由分段整理正文合并生成"}',
+    captureJsonExample(outputLocale, "synthesis"),
     JSON.stringify(partials.map((item, index) => ({
       part: index + 1,
       summary: item.summary,
@@ -1080,8 +1150,10 @@ export function buildRawCaptureNote(input: {
   statusProperty: string;
   readingStatus: string;
   mediaPath?: string;
+  outputLocale?: KnowGroveLocale;
 }): string {
-  const transcriptHeading = input.pageType === "article" ? "原文" : "完整逐字稿";
+  const labels = captureOutputLabels(input.outputLocale ?? "zh-CN");
+  const transcriptHeading = input.pageType === "article" ? labels.originalText : labels.fullTranscript;
   const contentType = input.pageType === "video"
     ? "视频"
     : input.pageType === "audio"
@@ -1103,7 +1175,7 @@ export function buildRawCaptureNote(input: {
     `# ${input.title}`,
     "",
     ...(input.mediaPath
-      ? ["## 原始音频", "", `![[${input.mediaPath}]]`, ""]
+      ? [`## ${input.pageType === "video" ? labels.originalVideo : labels.originalAudio}`, "", `![[${input.mediaPath}]]`, ""]
       : []),
     `## ${transcriptHeading}`,
     "",
@@ -1152,21 +1224,24 @@ export function buildEnhancedCaptureNote(
   rawNote: string,
   pageType: BrowserCapturePageType,
   result: BrowserCaptureAIResult,
+  outputLocale: KnowGroveLocale = "zh-CN",
 ): string {
+  const labels = captureOutputLabels(outputLocale);
   const frontmatter = rawNote.match(/^---\n[\s\S]*?\n---\n?/)?.[0]?.trim() ?? "";
   const completedFrontmatter = frontmatter
     ? frontmatter.replace(/KnowGrove采集状态:\s*["']?处理中["']?/, "KnowGrove采集状态: \"已完成\"")
     : "";
   const title = rawNote.match(/^#\s+(.+)$/m)?.[1]?.trim() || "未命名内容";
-  const sourceHeading = pageType === "article" ? "原文" : "完整逐字稿";
+  const sourceHeading = pageType === "article" ? labels.originalText : labels.fullTranscript;
   const sourceMatch = rawNote.match(new RegExp(`^##\\s+${sourceHeading}\\s*$([\\s\\S]*)`, "m"));
   const source = sourceMatch?.[1]?.trim() ?? "";
   const bodyHeading = pageType !== "article"
     ? result.mode === "multi-speaker"
-      ? "对话记录"
-      : pageType === "audio" ? "音频正文" : "视频正文"
-    : "整理正文";
-  const mediaHeading = rawNote.match(/^##\s+原始音频\s*$/m);
+      ? labels.dialogue
+      : pageType === "audio" ? labels.audioBody : labels.videoBody
+    : labels.organizedBody;
+  const originalMediaHeading = pageType === "video" ? labels.originalVideo : labels.originalAudio;
+  const mediaHeading = rawNote.match(new RegExp(`^##\\s+${escapeRegExp(originalMediaHeading)}\\s*$`, "m"));
   let mediaSection = "";
   if (mediaHeading?.index !== undefined) {
     const fromHeading = rawNote.slice(mediaHeading.index);
@@ -1181,11 +1256,11 @@ export function buildEnhancedCaptureNote(
     "",
     `# ${title}`,
     "",
-    "## 内容摘要",
+    `## ${labels.summary}`,
     "",
     result.summary,
     "",
-    "## 核心要点",
+    `## ${labels.keyPoints}`,
     "",
     result.keyPoints.map((point) => `- ${point.replace(/^[-*]\s+/, "")}`).join("\n"),
     "",

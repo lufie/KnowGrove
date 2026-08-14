@@ -6,6 +6,9 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  browserCaptureChunkPrompt,
+  browserCapturePrompt,
+  browserCaptureSynthesisPrompt,
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
@@ -215,6 +218,25 @@ test("link-note detection accepts safe desktop webm recording segments", () => {
   });
 });
 
+test("link-note detection sends local video files through the media transcription path", () => {
+  const videoSession = [
+    "---",
+    "video: \"[[Home/📬输入/assets/interview.mov]]\"",
+    "---",
+    "# Product interview",
+    "",
+    "![[Home/📬输入/assets/interview.mov]]",
+    "",
+    "## 视频记录",
+  ].join("\n");
+  assert.deepEqual(detectLinkNoteCandidate(videoSession, "Product interview"), {
+    url: "",
+    title: "Product interview",
+    pageType: "video",
+    mediaPath: "Home/📬输入/assets/interview.mov",
+  });
+});
+
 test("startup link-note scan selects newest Markdown files only inside the configured folder", () => {
   assert.deepEqual(latestLinkNoteScanFiles([
     { path: "Home/📬输入/旧链接.md", mtime: 10 },
@@ -376,6 +398,25 @@ test("browser capture normalizes AI output", () => {
     mode: "multi-speaker",
     bodyMarkdown: "### 对话\n\n正文",
   });
+});
+
+test("media analysis prompts follow the output locale while preserving source-language quotations", () => {
+  for (const prompt of [
+    browserCapturePrompt("audio", "English interview", "We discussed the launch.", "zh-CN"),
+    browserCaptureChunkPrompt("video", "English interview", "We discussed the launch.", 1, 2, "zh-CN"),
+    browserCaptureSynthesisPrompt("audio", "English interview", [{
+      summary: "发布讨论",
+      keyPoints: ["时间安排"],
+      mode: "multi-speaker",
+      bodyMarkdown: "### 发布计划",
+    }], "zh-CN"),
+  ]) {
+    assert.match(prompt, /分析输出语言必须使用简体中文（zh-CN）/);
+    assert.match(prompt, /原话.*保持原语言/);
+  }
+  const englishPrompt = browserCapturePrompt("audio", "中文访谈", "我们讨论了发布计划。", "en");
+  assert.match(englishPrompt, /分析输出语言必须使用English（en）/);
+  assert.match(englishPrompt, /summary in English/);
 });
 
 test("browser capture splits long material and removes VTT metadata", () => {
@@ -553,6 +594,51 @@ test("local audio capture omits a fake source URL and keeps an Obsidian media re
   assert.doesNotMatch(raw, /^来源:/m);
   assert.match(raw, /!\[\[Home\/📬输入\/assets\/语音记录\.m4a]]/);
   assert.doesNotMatch(raw, /file:\/\//);
+});
+
+test("localized media notes keep the transcript language and localize only analysis structure", () => {
+  const raw = buildRawCaptureNote({
+    pageType: "video",
+    title: "English interview",
+    source: "We discussed the launch date and pricing.",
+    mediaPath: "Home/Inbox/interview.mp4",
+    capturedAt: "2026-08-14T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+    outputLocale: "zh-CN",
+  });
+  assert.match(raw, /## 原始视频/);
+  assert.match(raw, /## 完整逐字稿\n\nWe discussed the launch date and pricing\./);
+  const completed = buildEnhancedCaptureNote(raw, "video", {
+    summary: "访谈讨论了发布日期和定价。",
+    keyPoints: ["需要确认发布日期"],
+    mode: "single-speaker",
+    bodyMarkdown: "### 发布计划\n\n需要进一步确认时间。",
+  }, "zh-CN");
+  assert.match(completed, /## 内容摘要\n\n访谈讨论了发布日期和定价。/);
+  assert.match(completed, /## 视频正文/);
+  assert.match(completed, /## 完整逐字稿\n\nWe discussed the launch date and pricing\./);
+
+  const englishRaw = buildRawCaptureNote({
+    pageType: "audio",
+    title: "中文访谈",
+    source: "我们讨论了发布日期。",
+    mediaPath: "Home/Inbox/interview.m4a",
+    capturedAt: "2026-08-14T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+    outputLocale: "en",
+  });
+  const englishCompleted = buildEnhancedCaptureNote(englishRaw, "audio", {
+    summary: "The interview covered the launch date.",
+    keyPoints: ["Confirm the launch date"],
+    mode: "multi-speaker",
+    bodyMarkdown: "### Launch plan\n\nThe date needs confirmation.",
+  }, "en");
+  assert.match(englishCompleted, /## Summary/);
+  assert.match(englishCompleted, /## Key points/);
+  assert.match(englishCompleted, /## Conversation/);
+  assert.match(englishCompleted, /## Full transcript\n\n我们讨论了发布日期。/);
 });
 
 test("browser capture failure note leaves a final retryable state", () => {
