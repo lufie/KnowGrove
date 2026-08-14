@@ -228,7 +228,6 @@ export class DesktopRecorderController {
     this.clearPassiveResumeTimer();
     this.closeLatestInterruption(false);
     this.setState("finalizing");
-    const finalizationStartedAt = Date.now();
     try {
       await this.stopCurrentSegment();
       if (!manifest.segments.length) throw new Error("没有录到可保存的音频内容");
@@ -241,12 +240,6 @@ export class DesktopRecorderController {
       if (notePath) manifest.notePath = notePath;
       manifest.state = "completed";
       await this.persistManifest();
-      console.info("KnowGrove: desktop recording saved", {
-        sessionId: manifest.id,
-        segments: manifest.segments.length,
-        finalizationMode: recordingFinalizationMode(manifest.segments),
-        elapsedMilliseconds: Date.now() - finalizationStartedAt,
-      });
       this.stopTicking();
       this.removeDeviceListener();
       this.emit();

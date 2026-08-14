@@ -1782,7 +1782,6 @@ export default class KnowGrovePlugin extends Plugin {
     }
 
     if (movedRoot || updatedFiles || renamedSidecars) {
-      console.info("KnowGrove: legacy brand migration completed", { movedRoot, updatedFiles, renamedSidecars });
       new Notice(`KnowGrove 迁移完成：${movedRoot ? "工作空间已迁移，" : ""}${updatedFiles} 个文件已升级`);
       this.refreshReadingViews();
       this.refreshPropertyWorkbenches();
