@@ -90,7 +90,8 @@ export function localMediaImportType(fileName: string): LocalMediaImportType | u
 }
 
 export function safeLocalMediaImportFileName(fileName: string): string {
-  const leafName = fileName.trim().split(/[\\/]/).at(-1) ?? "";
+  const pathParts = fileName.trim().split(/[\\/]/);
+  const leafName = pathParts[pathParts.length - 1] ?? "";
   const match = /^(.*?)(\.[^.]+)$/.exec(leafName);
   const extension = match?.[2]?.toLowerCase() ?? "";
   const stem = Array.from((match?.[1] ?? leafName).normalize("NFKC"), (character) => (

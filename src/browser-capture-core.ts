@@ -267,8 +267,9 @@ export function formatYtDlpCaptureError(stderr: string, url: string): string {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !/^WARNING:\s*Your yt-dlp version .*older than 90 days/i.test(line));
-  const detail = cleaned.filter((line) => /^ERROR:/i.test(line)).at(-1)
-    ?? cleaned.at(-1)
+  const errorLines = cleaned.filter((line) => /^ERROR:/i.test(line));
+  const detail = errorLines[errorLines.length - 1]
+    ?? cleaned[cleaned.length - 1]
     ?? "视频音频下载失败";
   if (isBilibiliCaptureUrl(url) && /(?:HTTP Error\s*)?412|Precondition Failed/i.test(stderr)) {
     return "Bilibili 拒绝了当前下载组件的请求（HTTP 412）。KnowGrove 已使用浏览器请求头重试；请在设置 → Read It Later → 自动整理组件配置中点击“自动配置”更新组件后重试。";
@@ -431,7 +432,8 @@ export function latestLinkNoteScanFiles(
 }
 
 export function detectWhisperImplementation(executable: string): WhisperImplementation {
-  const name = executable.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  const pathParts = executable.split(/[\\/]/);
+  const name = pathParts[pathParts.length - 1]?.toLowerCase() ?? "";
   return name.includes("whisper-cli") || name.includes("whisper-cpp")
     ? "whisper-cpp"
     : "openai-whisper";
@@ -1000,7 +1002,7 @@ export function formatTranscriptParagraphs(source: string): string {
     .filter(Boolean);
   const merged: string[] = [];
   for (const fragment of fragments) {
-    const previous = merged.at(-1);
+    const previous = merged[merged.length - 1];
     if (previous === fragment || previous?.startsWith(fragment)) continue;
     if (previous && fragment.startsWith(previous)) {
       merged[merged.length - 1] = fragment;

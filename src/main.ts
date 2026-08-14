@@ -4605,7 +4605,7 @@ export default class KnowGrovePlugin extends Plugin {
     const state = await this.readResearchOutputState(outputPath);
     if (!(file instanceof TFile) || !state) throw new Error("没有找到当前作品或创作状态");
     const content = await this.app.vault.read(file);
-    const latest = state.versions.at(-1);
+    const latest = state.versions[state.versions.length - 1];
     if (latest?.content === content) {
       new Notice("当前内容与最近保存的版本一致");
       return;

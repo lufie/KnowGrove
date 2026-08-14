@@ -474,7 +474,7 @@ function auditDimension(
       const validation = auditPresentValue(snapshot, dimension, value);
       const normalized = dimension.fillStrategy === "file-name"
         ? snapshot.basename
-        : validation.operations.at(-1)?.after ?? value;
+        : validation.operations[validation.operations.length - 1]?.after ?? value;
       issues.push(issue(snapshot, dimension, "legacy-alias", `旧属性“${alias}”可迁移为“${dimension.name}”`, true, value, value));
       if (dimension.fillStrategy === "file-name" && value !== snapshot.basename) {
         issues.push(issue(

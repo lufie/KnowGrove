@@ -10,8 +10,7 @@
   --surface-soft: #f7f3ef;
   --success: #238557;
   font-family:
-    Inter, ui-sans-serif, system-ui, "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+    Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
 }
 
 * {

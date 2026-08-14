@@ -166,6 +166,11 @@ function compact(value: string, maxLength = 260): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
 }
 
+function lastLine(value: string): string {
+  const lines = value.trim().split(/\r?\n/).filter(Boolean);
+  return lines[lines.length - 1] ?? "";
+}
+
 function systemCaptureOutputLocale(): KnowGroveLocale {
   const language = typeof navigator !== "undefined"
     ? navigator.languages?.[0] || navigator.language
@@ -351,7 +356,8 @@ function captureBodyForConflictCheck(content: string): string {
   return stripCaptureFrontmatter(content).replace(
     /!\[\[([^\]|]+)(\|[^\]]+)?\]\]/g,
     (_embed, target, alias = "") => {
-      const baseName = String(target).split("/").at(-1) ?? String(target);
+      const targetParts = String(target).split("/");
+      const baseName = targetParts[targetParts.length - 1] ?? String(target);
       return `![[${baseName}${alias}]]`;
     },
   );
@@ -424,7 +430,8 @@ async function resolveWhisperCppModel(modelSetting: string): Promise<string> {
       ? join(home, raw.slice(2))
       : raw;
   const isPath = expanded.includes("/") || expanded.includes("\\");
-  const fileName = raw.endsWith(".bin") ? raw.split(/[\\/]/).at(-1)! : `ggml-${raw}.bin`;
+  const rawParts = raw.split(/[\\/]/);
+  const fileName = raw.endsWith(".bin") ? rawParts[rawParts.length - 1]! : `ggml-${raw}.bin`;
   const candidates = Array.from(new Set([
     ...(isPath ? [expanded] : []),
     join(home, ".cache", "whisper-models", fileName),
@@ -1416,7 +1423,7 @@ export class BrowserCaptureServer {
         90,
       );
       const title = titleResult.exitCode === 0
-        ? titleResult.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || job.title
+        ? lastLine(titleResult.stdout) || job.title
         : job.title;
       await runLocalCommand(
         downloader,
@@ -1627,7 +1634,7 @@ export class BrowserCaptureServer {
         90,
       );
       const title = titleResult.exitCode === 0
-        ? titleResult.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || job.title
+        ? lastLine(titleResult.stdout) || job.title
         : job.title;
       await runLocalCommand(
         downloader,
