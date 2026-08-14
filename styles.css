@@ -4826,6 +4826,121 @@ button.knowgrove-batch-link-result:focus-visible {
   width: 100%;
 }
 
+.knowgrove-media-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-5);
+  padding-top: var(--size-4-4);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.knowgrove-media-import h4 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  font-weight: 500;
+}
+
+.knowgrove-media-import-input {
+  display: none;
+}
+
+.knowgrove-media-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-1);
+  min-height: 128px;
+  padding: var(--size-4-4);
+  border: 1px dashed var(--background-modifier-border-hover);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.knowgrove-media-drop-zone:hover,
+.knowgrove-media-drop-zone:focus-visible,
+.knowgrove-media-drop-zone.is-dragover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  outline: none;
+}
+
+.knowgrove-media-drop-zone.is-busy {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.knowgrove-media-drop-icon {
+  display: inline-flex;
+  color: var(--interactive-accent);
+}
+
+.knowgrove-media-drop-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.knowgrove-media-format-help {
+  margin-bottom: 0;
+}
+
+.knowgrove-media-import-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.knowgrove-media-import-results:empty {
+  display: none;
+}
+
+.knowgrove-media-import-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.knowgrove-media-import-result-icon {
+  display: inline-flex;
+  color: var(--interactive-accent);
+}
+
+.knowgrove-media-import-result.is-failed .knowgrove-media-import-result-icon {
+  color: var(--text-error);
+}
+
+.knowgrove-media-import-result-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.knowgrove-media-import-result-text strong,
+.knowgrove-media-import-result-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-media-import-result-text strong {
+  font-weight: 500;
+}
+
+.knowgrove-media-import-result-text span {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
 .knowgrove-recording-overlay {
   position: fixed;
   right: var(--size-4-5);

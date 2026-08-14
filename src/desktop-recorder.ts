@@ -4,6 +4,7 @@ import {
   RECORDING_RESUME_DELAYS_MS,
   localRecordingFileStem,
   recordingExtension,
+  recordingFinalizationMessage,
   recordingFinalizationMode,
   recordingMimeType,
   recordingStreamCopyExtension,
@@ -45,14 +46,17 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function stateMessage(state: DesktopRecordingState): string {
+function stateMessage(
+  state: DesktopRecordingState,
+  segments: Pick<DesktopRecordingSegment, "mimeType">[] = [],
+): string {
   switch (state) {
     case "idle": return "准备录音";
     case "requesting": return "正在请求麦克风权限";
     case "recording": return "录音中，内容正在安全分段保存";
     case "interrupted": return "麦克风被占用，已有片段已保存";
     case "resuming": return "正在等待麦克风恢复";
-    case "finalizing": return "正在合并并保存录音";
+    case "finalizing": return recordingFinalizationMessage(segments);
     case "completed": return "录音已安全保存";
     case "needs-attention": return "已有录音片段安全保留，需要继续或保存";
   }
@@ -155,7 +159,7 @@ export class DesktopRecorderController {
       startedAt: manifest?.createdAt,
       recordedMilliseconds,
       interruptionCount: manifest?.interruptions.length ?? 0,
-      message: manifest?.lastError || stateMessage(manifest?.state ?? "idle"),
+      message: manifest?.lastError || stateMessage(manifest?.state ?? "idle", manifest?.segments ?? []),
       outputPath: manifest?.outputPath,
       notePath: manifest?.notePath,
     };
@@ -223,7 +227,7 @@ export class DesktopRecorderController {
     this.clearRotationTimer();
     this.clearPassiveResumeTimer();
     this.closeLatestInterruption(false);
-    this.setState("finalizing", "正在合并并保存录音");
+    this.setState("finalizing");
     try {
       await this.stopCurrentSegment();
       if (!manifest.segments.length) throw new Error("没有录到可保存的音频内容");

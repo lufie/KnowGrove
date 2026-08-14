@@ -6,14 +6,14 @@
 
 KnowGrove (言序 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source version: `2.8.4`
+Current source version: `2.8.8` (community-review fix candidate; latest public release: `2.8.4`)
 
 ## What KnowGrove does
 
 - **Read it later:** collect notes in one inbox, switch between unread and read, and optionally mark a note as read when you reach the end.
 - **Browser and mobile capture:** send articles, videos, links, and lightweight voice notes to your vault.
-- **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, or record audio into crash-recoverable local segments; every saved result includes a direct note shortcut.
-- **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable.
+- **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, record audio into crash-recoverable local segments, or drop existing local audio and video files into the recorder workspace for background transcription and processing; every saved result includes a direct note shortcut.
+- **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable. Audio and video transcripts keep the language actually spoken, while generated summaries and analysis follow the local system language.
 - **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
 - **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
 - **Comments and block references:** comment on selected text and reuse a complete source block through native Obsidian block embeds.

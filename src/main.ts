@@ -1,6 +1,7 @@
 import {
   Editor,
   type EditorPosition,
+  FileSystemAdapter,
   MarkdownRenderChild,
   MarkdownRenderer,
   MarkdownView,
@@ -60,9 +61,14 @@ import {
   batchCaptureFileStem,
   buildBatchLinkNote,
   buildDesktopRecordingNote,
+  buildLocalMediaImportNote,
   extractBatchCaptureUrls,
+  localMediaImportTitle,
+  localMediaImportType,
+  safeLocalMediaImportFileName,
   type DesktopRecordingManifest,
   type DesktopRecordingSnapshot,
+  type LocalMediaImportProgress,
 } from "./capture-center-core";
 import { DesktopRecorderController } from "./desktop-recorder";
 import {
@@ -1776,7 +1782,6 @@ export default class KnowGrovePlugin extends Plugin {
     }
 
     if (movedRoot || updatedFiles || renamedSidecars) {
-      console.info("KnowGrove: legacy brand migration completed", { movedRoot, updatedFiles, renamedSidecars });
       new Notice(`KnowGrove 迁移完成：${movedRoot ? "工作空间已迁移，" : ""}${updatedFiles} 个文件已升级`);
       this.refreshReadingViews();
       this.refreshPropertyWorkbenches();
@@ -1802,6 +1807,13 @@ export default class KnowGrovePlugin extends Plugin {
     const explicit = this.settings.desktopCapture.recordingFolder.trim();
     if (explicit) return normalizePath(explicit).replace(/^\/+|\/+$/g, "");
     return normalizePath(`${this.desktopLinkFolder()}/录音`).replace(/^\/+|\/+$/g, "");
+  }
+
+  private desktopMediaImportFolder(): string {
+    return normalizePath(
+      this.settings.browserCapture.mediaFolder.trim()
+      || `${this.desktopLinkFolder()}/附件/音视频`,
+    ).replace(/^\/+|\/+$/g, "");
   }
 
   getDesktopRecordingSnapshot(): DesktopRecordingSnapshot {
@@ -1894,6 +1906,150 @@ export default class KnowGrovePlugin extends Plugin {
     return { total: urls.length, created, queued, failed, files };
   }
 
+  async importLocalMediaFiles(
+    selectedFiles: readonly File[],
+    onProgress?: (progress: LocalMediaImportProgress) => void,
+  ): Promise<{ total: number; imported: number; failed: number; files: TFile[] }> {
+    if (!Platform.isDesktopApp) throw new Error("本地音视频导入只支持 Obsidian 桌面版");
+    if (!this.browserCaptureServer) throw new Error("内容整理服务尚未初始化");
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error("当前 Vault 不是本地文件系统");
+    const mediaFolder = this.desktopMediaImportFolder();
+    const noteFolder = this.desktopLinkFolder();
+    await this.ensureVaultFolder(mediaFolder.split("/"));
+    await this.ensureVaultFolder(noteFolder.split("/"));
+    const { access, copyFile, stat } = require("node:fs/promises") as typeof import("node:fs/promises");
+    const { basename, isAbsolute, relative, sep } = require("node:path") as typeof import("node:path");
+    const vaultRoot = adapter.getFullPath("");
+    const seenSourcePaths = new Set<string>();
+    const files: TFile[] = [];
+    let imported = 0;
+    let failed = 0;
+
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const selected = selectedFiles[index]!;
+      let sourcePath = "";
+      let title = localMediaImportTitle(selected.name || `本地媒体 ${index + 1}`);
+      const id = `${Date.now()}-${index}-${selected.name}`;
+      try {
+        sourcePath = this.desktopSelectedFilePath(selected);
+        if (!sourcePath) throw new Error("没有取得本地文件路径，请重新选择文件");
+        if (seenSourcePaths.has(sourcePath)) continue;
+        seenSourcePaths.add(sourcePath);
+        const sourceName = selected.name || basename(sourcePath);
+        const mediaType = localMediaImportType(sourceName);
+        if (!mediaType) throw new Error("不支持该文件格式");
+        title = localMediaImportTitle(sourceName);
+        const sourceStat = await stat(sourcePath);
+        if (!sourceStat.isFile()) throw new Error("选择的项目不是文件");
+        onProgress?.({ id, title, state: "copying", message: "正在导入 Vault" });
+
+        const relativeSource = relative(vaultRoot, sourcePath);
+        const sourceAlreadyInVault = relativeSource
+          && relativeSource !== ".."
+          && !relativeSource.startsWith(`..${sep}`)
+          && !isAbsolute(relativeSource);
+        let mediaPath: string;
+        if (sourceAlreadyInVault) {
+          mediaPath = normalizePath(relativeSource);
+        } else {
+          const fileName = safeLocalMediaImportFileName(sourceName);
+          mediaPath = await this.uniqueFileSystemVaultPath(`${mediaFolder}/${fileName}`, adapter, access);
+          await copyFile(sourcePath, adapter.getFullPath(mediaPath));
+        }
+
+        const reconcile = (adapter as FileSystemAdapter & {
+          reconcileInternalFile?: (path: string) => Promise<void>;
+        }).reconcileInternalFile;
+        if (reconcile) await reconcile.call(adapter, mediaPath).catch(() => undefined);
+        const mediaFile = await this.waitForVaultFile(mediaPath, 10_000);
+        if (!(mediaFile instanceof TFile)) throw new Error("文件已复制，但 Obsidian 尚未识别，请稍后重试");
+
+        const notePath = this.uniqueVaultPath(`${noteFolder}/${title}.md`);
+        const note = await this.app.vault.create(
+          notePath,
+          buildLocalMediaImportNote(title, mediaPath, mediaType, new Date()),
+        );
+        this.clearPendingNewNoteInitialization(note.path);
+        this.cancelAutomaticLinkNote(note.path);
+        await this.ensureNewNoteStatus(note, { skipAI: true });
+        const job = await this.browserCaptureServer.enqueueLinkNote(note, "manual");
+        files.push(note);
+        imported += 1;
+        onProgress?.({
+          id,
+          title,
+          notePath: note.path,
+          state: "queued",
+          message: "已导入，正在后台转录和整理",
+        });
+        void this.browserCaptureServer.waitForJob(job.id).then((completed) => {
+          const completedPath = completed.result?.relativePath || note.path;
+          onProgress?.({
+            id,
+            title,
+            notePath: completedPath,
+            state: completed.status === "completed" ? "completed" : "failed",
+            message: completed.status === "completed"
+              ? "解析完成"
+              : `已保留原文件和笔记：${completed.error || completed.message}`,
+          });
+          this.refreshReadingViews();
+        }).catch((error) => {
+          onProgress?.({
+            id,
+            title,
+            notePath: note.path,
+            state: "failed",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+      } catch (error) {
+        failed += 1;
+        console.error(`KnowGrove: failed to import local media ${sourcePath || selected.name}`, error);
+        onProgress?.({
+          id,
+          title,
+          state: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    this.refreshReadingViews();
+    return { total: selectedFiles.length, imported, failed, files };
+  }
+
+  private desktopSelectedFilePath(file: File): string {
+    const legacyPath = (file as File & { path?: string }).path?.trim();
+    if (legacyPath) return legacyPath;
+    try {
+      const electron = require("electron") as {
+        webUtils?: { getPathForFile(value: File): string };
+      };
+      return electron.webUtils?.getPathForFile(file)?.trim() ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  private async uniqueFileSystemVaultPath(
+    requestedPath: string,
+    adapter: FileSystemAdapter,
+    access: typeof import("node:fs/promises").access,
+  ): Promise<string> {
+    const normalized = normalizePath(requestedPath);
+    const extensionMatch = /(\.[^./]+)$/.exec(normalized);
+    const extension = extensionMatch?.[1] ?? "";
+    const base = extension ? normalized.slice(0, -extension.length) : normalized;
+    for (let index = 1; index < 10_000; index += 1) {
+      const candidate = index === 1 ? normalized : `${base} (${index})${extension}`;
+      if (this.app.vault.getAbstractFileByPath(candidate)) continue;
+      const exists = await access(adapter.getFullPath(candidate)).then(() => true).catch(() => false);
+      if (!exists) return candidate;
+    }
+    throw new Error(`无法为导入文件生成唯一名称：${requestedPath}`);
+  }
+
   private async finalizeDesktopRecording(
     manifest: DesktopRecordingManifest,
     audioPath: string,
@@ -1903,13 +2059,27 @@ export default class KnowGrovePlugin extends Plugin {
     const notePath = this.uniqueVaultPath(`${folder}/${manifest.title}.md`);
     const note = await this.app.vault.create(notePath, buildDesktopRecordingNote(manifest, audioPath));
     this.clearPendingNewNoteInitialization(note.path);
-    await this.ensureNewNoteStatus(note);
-    await this.waitForVaultFile(audioPath);
-    if (this.settings.browserCapture.autoProcessLinkNotes) {
-      await this.parseLinkNote(note, "auto");
-    }
+    this.cancelAutomaticLinkNote(note.path);
+    await this.ensureNewNoteStatus(note, { skipAI: true });
+    this.processDesktopRecordingInBackground(note.path, audioPath);
     this.refreshReadingViews();
     return note.path;
+  }
+
+  private processDesktopRecordingInBackground(notePath: string, audioPath: string): void {
+    window.setTimeout(() => {
+      void (async () => {
+        const note = this.app.vault.getAbstractFileByPath(notePath);
+        if (note instanceof TFile) await this.ensureNewNoteStatus(note);
+        await this.waitForVaultFile(audioPath);
+        const current = this.app.vault.getAbstractFileByPath(notePath);
+        if (current instanceof TFile && this.settings.browserCapture.autoProcessLinkNotes) {
+          await this.parseLinkNote(current, "auto");
+        }
+      })().catch((error) => {
+        console.error(`KnowGrove: background recording processing failed for ${notePath}`, error);
+      });
+    }, 0);
   }
 
   private async waitForVaultFile(path: string, timeoutMilliseconds = 5_000): Promise<TFile | undefined> {
@@ -2108,6 +2278,13 @@ export default class KnowGrovePlugin extends Plugin {
       this.automaticLinkNoteTimers.set(file.path, timer);
     };
     attempt(3, 1_500);
+  }
+
+  private cancelAutomaticLinkNote(path: string): void {
+    const timer = this.automaticLinkNoteTimers.get(path);
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    this.automaticLinkNoteTimers.delete(path);
   }
 
   private automaticLinkNoteFolder(): string {
@@ -5983,7 +6160,7 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
-  private async ensureNewNoteStatus(file: TFile): Promise<void> {
+  private async ensureNewNoteStatus(file: TFile, options: { skipAI?: boolean } = {}): Promise<void> {
     if (!shouldInitializeTrackedNote(
       file.path,
       file.extension,
@@ -6015,9 +6192,12 @@ export default class KnowGrovePlugin extends Plugin {
           path: file.path,
           basename: file.basename,
           state: "processing",
-          message: `基础属性已完成，正在使用 ${this.getAIProviderSummary()} 生成 ${Array.from(deferredProperties).join("、")}…`,
+          message: options.skipAI
+            ? "录音已保存，正在后台生成语义属性并整理内容…"
+            : `基础属性已完成，正在使用 ${this.getAIProviderSummary()} 生成 ${Array.from(deferredProperties).join("、")}…`,
           updatedAt: new Date().toISOString(),
         });
+        if (options.skipAI) return;
         try {
           const result = await this.enrichFileWithAI(file, false);
           initializedFrontmatter = result.frontmatter;

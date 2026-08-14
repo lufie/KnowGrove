@@ -7,6 +7,7 @@ import type {
   KnowGroveSettings,
 } from "./types";
 import { runLocalCommand } from "./ai-provider";
+import { normalizeKnowGroveLocale, type KnowGroveLocale } from "./i18n";
 import {
   BROWSER_CAPTURE_SKILLS,
   browserCaptureChunkPrompt,
@@ -153,6 +154,13 @@ function isWebUrl(value: unknown): string {
 function compact(value: string, maxLength = 260): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+}
+
+function systemCaptureOutputLocale(): KnowGroveLocale {
+  const language = typeof navigator !== "undefined"
+    ? navigator.languages?.[0] || navigator.language
+    : Intl.DateTimeFormat().resolvedOptions().locale;
+  return normalizeKnowGroveLocale(language || "en");
 }
 
 async function downloadCaptureImage(url: string, referer: string, redirects = 0): Promise<{
@@ -863,6 +871,7 @@ export class BrowserCaptureServer {
     let noteFile: TFile | undefined;
     let extracted: ExtractedSource | undefined;
     let lastWrittenContent = "";
+    const outputLocale = job.pageType === "article" ? "zh-CN" : systemCaptureOutputLocale();
     try {
       await this.updateJob(id, {
         status: "running",
@@ -928,10 +937,12 @@ export class BrowserCaptureServer {
         lastWrittenContent = await this.host.app.vault.read(noteFile);
       } else {
         extracted = job.pageType === "video"
-          ? this.capturedSources.get(id) ?? await this.extractVideo(job)
+          ? job.mediaPath
+            ? await this.extractLocalMedia(job, noteFile.path)
+            : this.capturedSources.get(id) ?? await this.extractVideo(job)
           : job.pageType === "audio"
             ? job.mediaPath
-              ? await this.extractLocalAudio(job, noteFile.path)
+              ? await this.extractLocalMedia(job, noteFile.path)
               : await this.extractAudio(job, noteFile.path)
             : this.capturedSources.get(id) ?? await this.extractArticle(job);
         this.capturedSources.delete(id);
@@ -963,6 +974,7 @@ export class BrowserCaptureServer {
           statusProperty: this.host.getSettings().statusProperty,
           readingStatus: this.host.getSettings().readingStatus,
           mediaPath: extracted.mediaPath,
+          outputLocale,
         });
         if (job.targetPath) {
           await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter) => {
@@ -997,7 +1009,7 @@ export class BrowserCaptureServer {
         message: "原始内容已经写入 Vault，正在调用 AI 整理",
         result: this.resultFor(job, noteFile, extracted.title, "原始内容已备份"),
       });
-      const ai = await this.runAI(job, extracted.title, extracted.source, async (message, progress) => {
+      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, async (message, progress) => {
         await this.updateJob(id, {
           phase: "organizing",
           phaseLabel: PHASE_LABELS.organizing,
@@ -1020,7 +1032,7 @@ export class BrowserCaptureServer {
       ) {
         throw new Error("处理期间笔记正文被手动修改；原始内容已保留，AI 结果未覆盖");
       }
-      const enhanced = buildEnhancedCaptureNote(lastWrittenContent, job.pageType, ai);
+      const enhanced = buildEnhancedCaptureNote(lastWrittenContent, job.pageType, ai, outputLocale);
       const completedContent = latestContent === lastWrittenContent
         ? enhanced
         : replaceGeneratedFrontmatter(enhanced, latestContent);
@@ -1493,12 +1505,12 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractLocalAudio(
+  private async extractLocalMedia(
     job: BrowserCaptureJob,
     sourceNotePath: string,
   ): Promise<ExtractedSource> {
     const linkPath = job.mediaPath?.trim() ?? "";
-    if (!linkPath) throw new Error("本地语音笔记没有可用的音频引用");
+    if (!linkPath) throw new Error("本地媒体笔记没有可用的音视频引用");
     const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
     const exact = this.host.app.vault.getAbstractFileByPath(normalizePath(linkPath));
     const mediaFile = linked instanceof TFile
@@ -1506,8 +1518,8 @@ export class BrowserCaptureServer {
       : exact instanceof TFile
         ? exact
         : undefined;
-    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm)$/i.test(mediaFile.path)) {
-      throw new Error(`找不到本地语音文件：${linkPath}`);
+    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm|mp4|mov|mkv|m4v)$/i.test(mediaFile.path)) {
+      throw new Error(`找不到本地音视频文件：${linkPath}`);
     }
 
     const settings = this.host.getSettings().browserCapture;
@@ -1528,7 +1540,7 @@ export class BrowserCaptureServer {
       }
       await this.updateJob(job.id, {
         progress: 30,
-        message: "已读取本地语音，正在检测本机 Whisper",
+        message: "已读取本地媒体，正在检测本机 Whisper",
       });
       const whisper = await resolveWhisperExecutable(settings.whisperPath);
       const implementation = detectWhisperImplementation(whisper);
@@ -1542,7 +1554,7 @@ export class BrowserCaptureServer {
         whisperAudioPath = join(directory, "whisper-input.wav");
         await this.updateJob(job.id, {
           progress: 34,
-          message: "正在把本地语音转换为 Whisper 可读取的音频",
+          message: "正在提取 Whisper 可读取的音轨",
         });
         const conversion = await runLocalCommand(ffmpeg, [
           "-y",
@@ -1557,7 +1569,7 @@ export class BrowserCaptureServer {
           whisperAudioPath,
         ], "", 20 * 60);
         if (conversion.exitCode !== 0) {
-          throw new Error(conversion.stderr.trim() || "本地语音格式转换失败");
+          throw new Error(conversion.stderr.trim() || "本地媒体音轨转换失败");
         }
       }
       const invocation = buildWhisperInvocation({
@@ -1570,8 +1582,8 @@ export class BrowserCaptureServer {
       await this.updateJob(job.id, {
         progress: 38,
         message: implementation === "whisper-cpp"
-          ? `正在使用 whisper.cpp ${model} 转录本地语音`
-          : `正在使用 Whisper ${model} 转录本地语音`,
+          ? `正在使用 whisper.cpp ${model} 转录本地媒体`
+          : `正在使用 Whisper ${model} 转录本地媒体`,
       });
       const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
       if (whisperResult.exitCode !== 0) {
@@ -1594,7 +1606,7 @@ export class BrowserCaptureServer {
       const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
       if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
       return {
-        title: job.title || mediaFile.basename || "语音记录",
+        title: job.title || mediaFile.basename || (job.pageType === "video" ? "视频记录" : "语音记录"),
         source: transcript,
         mediaPath: mediaFile.path,
       };
@@ -1715,6 +1727,7 @@ export class BrowserCaptureServer {
     job: BrowserCaptureJob,
     title: string,
     source: string,
+    outputLocale: KnowGroveLocale,
     onProgress: (message: string, progress: number) => Promise<void>,
   ): Promise<BrowserCaptureAIResult> {
     const protectedArticle = job.pageType === "article"
@@ -1730,7 +1743,7 @@ export class BrowserCaptureServer {
       await onProgress("正在生成摘要、要点和整理正文", 72);
       const output = await this.host.runProvider(
         job.providerId,
-        withSkillInstruction(browserCapturePrompt(job.pageType, title, chunks[0]!)),
+        withSkillInstruction(browserCapturePrompt(job.pageType, title, chunks[0]!, outputLocale)),
       );
       const result = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
       return job.pageType === "article"
@@ -1746,7 +1759,7 @@ export class BrowserCaptureServer {
       const output = await this.host.runProvider(
         job.providerId,
         withSkillInstruction(
-          browserCaptureChunkPrompt(job.pageType, title, chunks[index]!, index + 1, chunks.length),
+          browserCaptureChunkPrompt(job.pageType, title, chunks[index]!, index + 1, chunks.length, outputLocale),
         ),
       );
       partials.push(normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType));
@@ -1754,7 +1767,7 @@ export class BrowserCaptureServer {
     await onProgress("正在合并各段摘要与核心要点", 88);
     const output = await this.host.runProvider(
       job.providerId,
-      withSkillInstruction(browserCaptureSynthesisPrompt(job.pageType, title, partials)),
+      withSkillInstruction(browserCaptureSynthesisPrompt(job.pageType, title, partials, outputLocale)),
     );
     const synthesis = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
     const merged = {

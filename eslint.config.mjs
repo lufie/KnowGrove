@@ -2,6 +2,12 @@ import { defineConfig } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
 import tseslint from "typescript-eslint";
 
+const recommendedObsidianRules = Object.fromEntries(
+  Object.entries(
+    Object.assign({}, ...obsidianmd.configs.recommended.map((config) => config.rules ?? {})),
+  ).filter(([ruleName]) => ruleName.startsWith("obsidianmd/")),
+);
+
 export default defineConfig([
   {
     ignores: [
@@ -24,10 +30,7 @@ export default defineConfig([
       parserOptions: { project: "./tsconfig.json" },
     },
     rules: {
-      "obsidianmd/no-plugin-as-component": "error",
-      "obsidianmd/no-unsupported-api": "error",
-      "obsidianmd/settings-tab/no-manual-html-headings": "error",
-      "obsidianmd/settings-tab/no-problematic-settings-headings": "error",
+      ...recommendedObsidianRules,
     },
   },
 ]);

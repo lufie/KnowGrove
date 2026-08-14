@@ -4,9 +4,15 @@ import {
   batchCaptureFileStem,
   buildBatchLinkNote,
   buildDesktopRecordingNote,
+  buildLocalMediaImportNote,
   extractBatchCaptureUrls,
   formatRecordingDuration,
+  LOCAL_MEDIA_IMPORT_ACCEPT,
+  LOCAL_MEDIA_IMPORT_FORMAT_LABEL,
+  localMediaImportTitle,
+  localMediaImportType,
   recordingExtension,
+  recordingFinalizationMessage,
   recordingFinalizationMode,
   recordingMimeType,
   recordingStreamCopyExtension,
@@ -35,6 +41,32 @@ test("capture notes remain sparse and use deterministic local names", () => {
   assert.match(note, /# example\.com\n\nhttps:\/\/example\.com\/a/);
 });
 
+test("local media import accepts the advertised audio and video formats", () => {
+  assert.equal(localMediaImportType("Interview.M4A"), "audio");
+  assert.equal(localMediaImportType("产品演示.MOV"), "video");
+  assert.equal(localMediaImportType("archive.pdf"), undefined);
+  assert.equal(localMediaImportTitle("/Users/example/产品：演示?.MP4"), "产品 演示");
+  assert.match(LOCAL_MEDIA_IMPORT_ACCEPT, /\.mp3/);
+  assert.match(LOCAL_MEDIA_IMPORT_ACCEPT, /\.m4v/);
+  assert.match(LOCAL_MEDIA_IMPORT_FORMAT_LABEL, /音频：MP3/);
+  assert.match(LOCAL_MEDIA_IMPORT_FORMAT_LABEL, /视频：MP4/);
+});
+
+test("local media import notes preserve a native media embed and parsing state", () => {
+  const note = buildLocalMediaImportNote(
+    "English interview",
+    "Home/📬输入/附件/音视频/English interview.mov",
+    "video",
+    new Date("2026-08-14T03:00:00.000Z"),
+  );
+  assert.match(note, /^文件名: "English interview"$/m);
+  assert.match(note, /^内容类型: "视频"$/m);
+  assert.match(note, /^video: "\[\[Home\/📬输入\/附件\/音视频\/English interview\.mov\]\]"$/m);
+  assert.match(note, /!\[\[Home\/📬输入\/附件\/音视频\/English interview\.mov]]/);
+  assert.match(note, /KnowGrove采集状态: "待处理"/);
+  assert.doesNotMatch(note, /file:\/\//);
+});
+
 test("desktop recording chooses supported media formats and formats duration", () => {
   assert.equal(recordingMimeType((type) => type === "audio/mp4"), "audio/mp4");
   assert.equal(recordingMimeType(() => false), "");
@@ -58,6 +90,11 @@ test("desktop recording chooses supported media formats and formats duration", (
     { mimeType: "audio/webm" },
     { mimeType: "audio/mp4" },
   ]), "transcode");
+  assert.equal(recordingFinalizationMessage([{ mimeType: "audio/webm" }]), "正在保存录音");
+  assert.equal(recordingFinalizationMessage([
+    { mimeType: "audio/webm" },
+    { mimeType: "audio/webm" },
+  ]), "正在合并并保存录音");
   assert.equal(formatRecordingDuration(65_500), "01:05");
   assert.equal(formatRecordingDuration(3_665_000), "01:01:05");
 });

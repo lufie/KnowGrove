@@ -53,6 +53,84 @@ export interface DesktopRecordingSnapshot {
   notePath?: string;
 }
 
+export type LocalMediaImportType = "audio" | "video";
+
+export interface LocalMediaImportProgress {
+  id: string;
+  title: string;
+  notePath?: string;
+  state: "copying" | "queued" | "completed" | "failed";
+  message: string;
+}
+
+export const LOCAL_MEDIA_IMPORT_AUDIO_EXTENSIONS = [
+  "mp3", "m4a", "wav", "aac", "flac", "ogg", "opus", "webm",
+] as const;
+
+export const LOCAL_MEDIA_IMPORT_VIDEO_EXTENSIONS = [
+  "mp4", "mov", "mkv", "m4v",
+] as const;
+
+export const LOCAL_MEDIA_IMPORT_ACCEPT = [
+  ...LOCAL_MEDIA_IMPORT_AUDIO_EXTENSIONS,
+  ...LOCAL_MEDIA_IMPORT_VIDEO_EXTENSIONS,
+].map((extension) => `.${extension}`).join(",");
+
+export const LOCAL_MEDIA_IMPORT_FORMAT_LABEL = [
+  `音频：${LOCAL_MEDIA_IMPORT_AUDIO_EXTENSIONS.map((extension) => extension.toUpperCase()).join("、")}`,
+  `视频：${LOCAL_MEDIA_IMPORT_VIDEO_EXTENSIONS.map((extension) => extension.toUpperCase()).join("、")}`,
+].join("；");
+
+export function localMediaImportType(fileName: string): LocalMediaImportType | undefined {
+  const extension = /\.([^.\\/]+)$/.exec(fileName.trim())?.[1]?.toLowerCase();
+  if (!extension) return undefined;
+  if ((LOCAL_MEDIA_IMPORT_AUDIO_EXTENSIONS as readonly string[]).includes(extension)) return "audio";
+  if ((LOCAL_MEDIA_IMPORT_VIDEO_EXTENSIONS as readonly string[]).includes(extension)) return "video";
+  return undefined;
+}
+
+export function safeLocalMediaImportFileName(fileName: string): string {
+  const leafName = fileName.trim().split(/[\\/]/).at(-1) ?? "";
+  const match = /^(.*?)(\.[^.]+)$/.exec(leafName);
+  const extension = match?.[2]?.toLowerCase() ?? "";
+  const stem = (match?.[1] ?? leafName)
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F<>:"/\\|?*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 160) || "本地媒体";
+  return `${stem}${extension}`;
+}
+
+export function localMediaImportTitle(fileName: string): string {
+  return safeLocalMediaImportFileName(fileName).replace(/\.[^.]+$/, "");
+}
+
+export function buildLocalMediaImportNote(
+  title: string,
+  mediaPath: string,
+  mediaType: LocalMediaImportType,
+  importedAt: Date,
+): string {
+  const mediaProperty = mediaType === "video" ? "video" : "audio";
+  const contentType = mediaType === "video" ? "视频" : "语音";
+  return [
+    "---",
+    `文件名: ${JSON.stringify(title)}`,
+    `内容类型: ${JSON.stringify(contentType)}`,
+    `${mediaProperty}: ${JSON.stringify(`[[${mediaPath}]]`)}`,
+    `采集时间: ${JSON.stringify(importedAt.toISOString())}`,
+    "KnowGrove采集状态: \"待处理\"",
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    `![[${mediaPath}]]`,
+    "",
+  ].join("\n");
+}
+
 export const RECORDING_RESUME_DELAYS_MS = [0, 150, 300, 500, 800, 1_000, 2_000, 3_000, 5_000, 8_000] as const;
 
 export function extractBatchCaptureUrls(input: string): string[] {
@@ -106,6 +184,12 @@ export function recordingFinalizationMode(
 ): "direct-copy" | "stream-copy" | "transcode" {
   if (segments.length === 1) return "direct-copy";
   return recordingStreamCopyExtension(segments) ? "stream-copy" : "transcode";
+}
+
+export function recordingFinalizationMessage(
+  segments: Pick<DesktopRecordingSegment, "mimeType">[],
+): string {
+  return segments.length > 1 ? "正在合并并保存录音" : "正在保存录音";
 }
 
 function pad(value: number): string {
