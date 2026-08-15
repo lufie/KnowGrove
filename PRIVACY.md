@@ -11,7 +11,7 @@ KnowGrove may access the network when the user enables or invokes these features
 - sending selected note content to a user-configured CLI or API for AI processing;
 - receiving a capture from the paired KnowGrove browser extension over `127.0.0.1`.
 
-The plugin does not include client-side analytics or telemetry. It does not upload browser cookies, Obsidian secrets, payment information, or unrelated vault content. API keys are stored with Obsidian SecretStorage when supported and are not written to `data.json`.
+The plugin does not include client-side analytics or telemetry. It does not upload browser cookies, Obsidian secrets, payment information, or unrelated vault content to the publisher or a KnowGrove server. For protected media, a user may explicitly grant the extension access to the current site. Only cookies applicable to that current tab, its user agent, referer, and visible player URLs are sent to KnowGrove over `127.0.0.1`; they are written to a mode-`0600` temporary file for one task and deleted afterward. They are never persisted in extension storage, plugin settings, job records, logs, or the vault. API keys are stored with Obsidian SecretStorage when supported and are not written to `data.json`.
 
 Some local CLIs and external APIs have their own privacy terms. Users should review the provider they choose before sending sensitive notes.
 

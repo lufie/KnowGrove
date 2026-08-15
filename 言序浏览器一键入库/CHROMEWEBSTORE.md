@@ -16,11 +16,11 @@
 
 言序（KnowGrove）是 KnowGrove 的浏览器入口。打开一篇文章或视频，点击扩展即可创建入库任务。
 
-KnowGrove 会先把来源链接写入当前 Obsidian Vault。文章优先使用用户点击时浏览器已经显示的正文；Bilibili 优先读取当前登录页的官方字幕，其他视频动态查找公开字幕，没有字幕才转录音频。AI 会把字幕切片整理为自然段，再生成摘要、核心要点和整理正文。弹窗和工具栏角标会显示后台进度。
+KnowGrove 会先把来源链接写入当前 Obsidian Vault。文章优先使用用户点击时浏览器已经显示的正文；Bilibili 优先读取当前登录页的官方字幕，其他视频动态查找公开字幕，没有字幕才转录音频。对于需要登录态的媒体，用户可在完成当前站点登录或验证后，单次授权当前标签页再重试。AI 会把字幕切片整理为自然段，再生成摘要、核心要点和整理正文。弹窗和工具栏角标会显示后台进度。
 
 首次使用需要安装 KnowGrove Obsidian 插件，并在 Obsidian 中确认一次浏览器连接。扩展不要求终端命令，不保存模型 API Key，也不连接言序云端服务器。
 
-扩展不读取 Cookie、表单值或密码，不绕过登录墙、付费内容或 DRM。Obsidian 关闭时不能接收新任务。
+扩展不读取表单值或密码，也不绕过登录墙、验证码、付费内容或 DRM。只有用户点击“使用当前站点登录状态并整理”时，扩展才请求当前站点的可选权限，并把当前 URL 可用的 Cookie 临时交给同一台电脑的 KnowGrove；Cookie 不持久化，单次任务结束后立即删除。Obsidian 关闭时不能接收新任务。
 
 **Category**
 
@@ -60,6 +60,8 @@ Chinese (Simplified)
 | `contextMenus` | permissions | 提供“整理当前页面”和“整理此链接到 Obsidian”。 |
 | `alarms` | permissions | 弹窗关闭后定期读取本机任务状态并更新工具栏角标。 |
 | `http://127.0.0.1:47831/*` | host_permissions | 只连接同一台电脑上运行的 KnowGrove，不访问局域网或言序服务器。 |
+| `cookies` | optional_permissions | 仅在用户主动重试受保护媒体时动态请求，用于读取当前标签页 URL 可用的站点会话；不是安装时权限。 |
+| `http://*/*`, `https://*/*` | optional_host_permissions | 只在用户手势中请求当前标签页的精确 origin，用于当前站点 Cookie；不会静默获得所有站点访问权。 |
 
 ## Privacy & Data Use
 
@@ -73,6 +75,7 @@ Chinese (Simplified)
 | Website title/content reference | Yes | No | 识别和处理当前内容 | No |
 | Website visible content | Yes, only after user action | No | 处理当前已经渲染的文章或登录态页面 | No |
 | Authentication info | Local pairing token only | No | 认证本机 KnowGrove | No |
+| Current-site session Cookie | Optional, only after explicit user permission | No | 让本机下载器读取用户当前已获授权的媒体；任务结束后删除 | No |
 
 - [x] Data is NOT sold to third parties
 - [x] Data is NOT used for unrelated purposes
@@ -106,6 +109,7 @@ Chinese (Simplified)
 
 | Version | Date | Changes | Status |
 | --- | --- | --- | --- |
+| 0.3.8 | 2026-08-15 | 受保护媒体新增当前站点单次权限、临时 Cookie、播放器和页面状态媒体地址兜底；不持久化会话数据 | Local candidate |
 | 0.3.7 | 2026-08-15 | “在 Obsidian 打开”改由本机 KnowGrove 直接校验并打开真实 TFile；旧完成记录的文件不存在时显示失败，同一剪藏占位笔记不再触发第二条自动任务，网页标题优先读取 Open Graph 标题 | Local candidate |
 | 0.3.6 | 2026-08-15 | CLI 或模型配置在任务中切换时由 KnowGrove 接力继续处理；完成页只接受经过 Obsidian 文件回读验证的结果，异常完成显示失败并允许重新处理 | Local candidate |
 | 0.3.5 | 2026-08-15 | 处理进度增加“取消并清理”，可停止本地模型任务、清理本次创建的笔记与附件并立即重新提交；活动任务按来源链接去重 | Local candidate |
@@ -120,4 +124,4 @@ Chinese (Simplified)
 - 创建 128×128 PNG 图标和至少一张商店截图。
 - 发布隐私政策并填写可公开访问的 URL。
 - 填写并验证支持邮箱。
-- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.7.zip` 的取消、CLI 切换接力、真实文件打开与重新处理流程。
+- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.8.zip` 的当前站点单次授权、取消、CLI 切换接力、真实文件打开与重新处理流程。
