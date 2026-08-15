@@ -21,7 +21,6 @@ This message disappears once the first observation lands.
 - Every public plugin feature addition, removal, behavior change, setting change, or release-status change must update the matching capability ID, common contract, Obsidian section, compatibility requirements, and change log in the private total PRD before merge.
 - The handoff must retain prerequisites, ordered flow, state/data semantics, invariants, failure recovery, platform differences, and compatibility/acceptance requirements when they change.
 - Public implementation and release evidence belongs in `README.md`, `docs/`, tests, and GitHub Release notes. Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
-
 # Public Repository Boundary
 
 - This public repository is the reviewed release mirror for the KnowGrove Obsidian Plugin and its public local-bridge contract. Daily development happens in private `KnowGrove-Platform/obsidian-plugin/`.
