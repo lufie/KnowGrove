@@ -32,6 +32,8 @@ export interface ExternalMarkdownOpenerStatus {
 export interface ExternalMarkdownOpenerInstallOptions {
   vaultPath: string;
   destinationFolder: string;
+  enabled: boolean;
+  deleteSourceAfterImport: boolean;
 }
 
 interface OpenerPaths {
@@ -102,6 +104,10 @@ export function buildExternalMarkdownOpenerConfig(
   <string>${escapeXml(resolve(options.vaultPath))}</string>
   <key>destinationFolder</key>
   <string>${escapeXml(destinationFolder)}</string>
+  <key>enabled</key>
+  <${options.enabled ? "true" : "false"}/>
+  <key>deleteSourceAfterImport</key>
+  <${options.deleteSourceAfterImport ? "true" : "false"}/>
   <key>previousHandlerPath</key>
   <string>${escapeXml(previousHandlerPath)}</string>
 </dict>
@@ -162,7 +168,14 @@ esac
 
 vault_path="$($plist_buddy -c 'Print :vaultPath' "$config_path")"
 destination_folder="$($plist_buddy -c 'Print :destinationFolder' "$config_path")"
+enabled="$($plist_buddy -c 'Print :enabled' "$config_path" 2>/dev/null || print true)"
+delete_source_after_import="$($plist_buddy -c 'Print :deleteSourceAfterImport' "$config_path" 2>/dev/null || print true)"
 vault_path="\${vault_path:A}"
+
+if [[ "$enabled" != "true" ]]; then
+  print -u2 "KnowGrove 设置中的 Markdown 默认打开功能已关闭。请恢复原默认应用，或重新开启此功能。"
+  exit 6
+fi
 
 if [[ ! -d "$vault_path" ]]; then
   print -u2 "配置的 Obsidian Vault 不存在，请在 KnowGrove 设置中重新安装打开器。"
@@ -201,7 +214,17 @@ else
 
   if [[ ! -e "$target_path" ]]; then
     /bin/cp -p "$source_path" "$target_path"
+    if ! /usr/bin/cmp -s "$source_path" "$target_path"; then
+      print -u2 "Markdown 已复制但校验失败，原文件保持不变。"
+      exit 7
+    fi
     /usr/bin/xattr -w "$hash_attribute" "$source_hash" "$target_path"
+  fi
+
+  if [[ "$delete_source_after_import" == "true" ]]; then
+    /usr/bin/osascript -l JavaScript \
+      -e 'ObjC.import("Foundation"); function run(argv) { const url = $.NSURL.fileURLWithPath($(argv[0])); const result = Ref(); const error = Ref(); const ok = $.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError(url, result, error); if (!ok) { const detail = error[0] ? ObjC.unwrap(error[0].localizedDescription) : "unknown error"; throw new Error(detail); } }' \
+      "$source_path"
   fi
 fi
 
@@ -312,6 +335,17 @@ async function readConfigValue(configPath: string, key: string): Promise<string>
   return result.exitCode === 0 ? result.stdout : "";
 }
 
+async function writeOpenerConfigAtomically(paths: OpenerPaths, contents: string): Promise<void> {
+  const stagingPath = join(paths.supportRoot, `.external-markdown-opener-${process.pid}-${Date.now()}.plist`);
+  try {
+    await writeFile(stagingPath, contents, { encoding: "utf8", mode: 0o600 });
+    await runChecked("/usr/bin/plutil", ["-lint", stagingPath]);
+    await rename(stagingPath, paths.configPath);
+  } finally {
+    await rm(stagingPath, { force: true }).catch(() => undefined);
+  }
+}
+
 async function assertOwnedApp(path: string): Promise<void> {
   const entry = await lstat(path);
   if (entry.isSymbolicLink() || !entry.isDirectory()) {
@@ -347,6 +381,30 @@ async function compileOpener(stagingPath: string): Promise<void> {
   } finally {
     await rm(scriptPath, { force: true }).catch(() => undefined);
   }
+}
+
+async function replaceProcessorAtomically(processorPath: string): Promise<void> {
+  const stagingPath = join(dirname(processorPath), `.process-markdown-${process.pid}-${Date.now()}.zsh`);
+  try {
+    await writeFile(stagingPath, buildExternalMarkdownProcessorScript(), { encoding: "utf8", mode: 0o700 });
+    await chmod(stagingPath, 0o700);
+    await rename(stagingPath, processorPath);
+  } finally {
+    await rm(stagingPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function deployOpenerApp(paths: OpenerPaths): Promise<void> {
+  const stagingPath = join(paths.appRoot, `.markdown-opener-${process.pid}-${Date.now()}.app`);
+  try {
+    await compileOpener(stagingPath);
+    await replaceOwnedApp(stagingPath, paths.appPath, paths.appRoot);
+  } finally {
+    if (isInsideDirectory(stagingPath, paths.appRoot)) {
+      await rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+  await runChecked(LSREGISTER_PATH, ["-f", paths.appPath]);
 }
 
 async function replaceOwnedApp(stagingPath: string, appPath: string, supportRoot: string): Promise<void> {
@@ -409,22 +467,12 @@ export async function installExternalMarkdownOpener(
   const previousHandlerPath = resolve(currentDefault) === resolve(paths.appPath)
     ? savedPrevious
     : currentDefault;
-  await writeFile(
-    paths.configPath,
+  await writeOpenerConfigAtomically(
+    paths,
     buildExternalMarkdownOpenerConfig(options, previousHandlerPath),
-    { encoding: "utf8", mode: 0o600 },
   );
 
-  const stagingPath = join(paths.appRoot, `.markdown-opener-${process.pid}-${Date.now()}.app`);
-  try {
-    await compileOpener(stagingPath);
-    await replaceOwnedApp(stagingPath, paths.appPath, paths.appRoot);
-  } finally {
-    if (isInsideDirectory(stagingPath, paths.appRoot)) {
-      await rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
-    }
-  }
-  await runChecked(LSREGISTER_PATH, ["-f", paths.appPath]);
+  await deployOpenerApp(paths);
   await setDefaultMarkdownApp(paths.appPath).catch(async () => {
     await revealMarkdownSetupFile(paths);
   });
@@ -439,11 +487,12 @@ export async function updateExternalMarkdownOpenerConfiguration(
   if (!(await pathExists(paths.appPath))) return;
   await assertOwnedApp(paths.appPath);
   const previousHandlerPath = await readConfigValue(paths.configPath, "previousHandlerPath");
-  await writeFile(
-    paths.configPath,
+  await writeOpenerConfigAtomically(
+    paths,
     buildExternalMarkdownOpenerConfig(options, previousHandlerPath),
-    { encoding: "utf8", mode: 0o600 },
   );
+  const processorPath = join(paths.appPath, "Contents", "Resources", PROCESSOR_NAME);
+  await replaceProcessorAtomically(processorPath);
 }
 
 export async function restorePreviousMarkdownHandler(): Promise<ExternalMarkdownOpenerStatus> {

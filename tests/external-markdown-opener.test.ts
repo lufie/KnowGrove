@@ -19,14 +19,18 @@ test("external Markdown opener configuration preserves paths as escaped plist va
   const config = buildExternalMarkdownOpenerConfig({
     vaultPath: "/tmp/Notes & Research",
     destinationFolder: "阅读列表/<外部>",
+    enabled: true,
+    deleteSourceAfterImport: true,
   }, "/Applications/Editor & Preview.app");
   assert.match(config, /<key>vaultPath<\/key>/);
   assert.match(config, /Notes &amp; Research/);
   assert.match(config, /阅读列表\/&lt;外部&gt;/);
   assert.match(config, /Editor &amp; Preview\.app/);
+  assert.match(config, /<key>enabled<\/key>\s*<true\/>/);
+  assert.match(config, /<key>deleteSourceAfterImport<\/key>\s*<true\/>/);
 });
 
-test("generated Mac opener copies external Markdown without overwriting its source", () => {
+test("generated Mac opener verifies imports before optionally moving the source to Trash", () => {
   const appleScript = buildExternalMarkdownAppleScript();
   const processor = buildExternalMarkdownProcessorScript();
   assert.match(appleScript, /on open openedItems/);
@@ -35,11 +39,18 @@ test("generated Mac opener copies external Markdown without overwriting its sour
   assert.match(processor, /\/usr\/bin\/cmp -s/);
   assert.match(processor, /\/usr\/bin\/shasum -a 256/);
   assert.match(processor, /external-markdown-source-hash/);
+  assert.match(processor, /Print :enabled/);
+  assert.match(processor, /Print :deleteSourceAfterImport/);
+  assert.match(processor, /NSFileManager\.defaultManager\.trashItemAtURLResultingItemURLError/);
+  assert.ok(processor.indexOf("/usr/bin/cmp -s") < processor.indexOf("trashItemAtURLResultingItemURLError"));
   assert.match(processor, /obsidian:\/\/open\?path=/);
   assert.doesNotMatch(processor, /\/bin\/mv|\brm\b/);
   assert.equal(MARKDOWN_OPENER_BUNDLE_ID, "app.knowgrove.markdown-opener");
 });
 
 test("external Markdown import follows the inbox until configured", () => {
-  assert.equal(createDefaultSettings().desktopCapture.externalMarkdownFolder, "");
+  const settings = createDefaultSettings().desktopCapture;
+  assert.equal(settings.externalMarkdownOpenerEnabled, true);
+  assert.equal(settings.externalMarkdownDeleteSourceAfterImport, true);
+  assert.equal(settings.externalMarkdownFolder, "");
 });

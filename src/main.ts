@@ -452,6 +452,11 @@ export default class KnowGrovePlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadPluginData();
+    if (Platform.isDesktopApp) {
+      await this.syncExternalMarkdownOpenerConfiguration().catch((error) => {
+        console.error("KnowGrove: failed to refresh Markdown opener configuration", error);
+      });
+    }
     setKnowGroveLanguage(getLanguage());
     this.disposeLocalization = installKnowGroveLocalization(this.app.workspace.containerEl.ownerDocument);
     this.register(() => this.disposeLocalization?.());
@@ -1404,6 +1409,10 @@ export default class KnowGrovePlugin extends Plugin {
       || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
     const legacyBrowserCapture = savedSettings?.browserCapture as unknown as Record<string, unknown> | undefined;
     const needsKeepAudioSourceMigration = legacyBrowserCapture?.keepAudioSource === false;
+    const legacyDesktopCapture = savedDesktopCapture as unknown as Record<string, unknown> | undefined;
+    const needsExternalMarkdownSettingsMigration = !legacyDesktopCapture
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownOpenerEnabled")
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownDeleteSourceAfterImport");
     const savedAIProvider = (savedAIProperties as { provider?: unknown } | undefined)?.provider;
     const normalizedAIProvider = normalizeAIProviderId(savedAIProvider, defaults.aiProperties.provider);
     const savedBrowserProviders = savedBrowserCapture as {
@@ -1535,6 +1544,7 @@ export default class KnowGrovePlugin extends Plugin {
       || needsRuleMigration
       || needsAutoProcessMigration
       || needsKeepAudioSourceMigration
+      || needsExternalMarkdownSettingsMigration
       || needsAIProviderMigration
       || needsFocusSettingsRemoval
     ) {
@@ -1844,6 +1854,8 @@ export default class KnowGrovePlugin extends Plugin {
     return {
       vaultPath: adapter.getFullPath(""),
       destinationFolder: this.externalMarkdownFolder(),
+      enabled: this.settings.desktopCapture.externalMarkdownOpenerEnabled,
+      deleteSourceAfterImport: this.settings.desktopCapture.externalMarkdownDeleteSourceAfterImport,
     };
   }
 

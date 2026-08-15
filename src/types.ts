@@ -161,6 +161,10 @@ export interface DesktopCaptureSettings {
   linkFolder: string;
   /** 留空时使用“收集箱路径/录音”。 */
   recordingFolder: string;
+  /** 是否启用 macOS Markdown 默认打开器。 */
+  externalMarkdownOpenerEnabled: boolean;
+  /** 导入验证成功后，是否把 Vault 外源文件移到系统废纸篓。 */
+  externalMarkdownDeleteSourceAfterImport: boolean;
   /** 留空时沿用阅读列表/收集箱路径。 */
   externalMarkdownFolder: string;
 }
@@ -475,6 +479,8 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   desktopCapture: {
     linkFolder: "",
     recordingFolder: "",
+    externalMarkdownOpenerEnabled: true,
+    externalMarkdownDeleteSourceAfterImport: true,
     externalMarkdownFolder: "",
   },
   aiProperties: {
