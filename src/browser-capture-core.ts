@@ -1112,13 +1112,34 @@ export function parseWebVtt(vtt: string): string {
   return parseSubtitleText(vtt, "subtitle.vtt");
 }
 
+export const CAPTURE_FILE_NAME_MAX_BYTES = 180;
+
+export function truncateUtf8(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  let result = "";
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).length;
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 export function safeCaptureFileName(value: string): string {
-  const normalized = value
+  const withoutControlCharacters = Array.from(value, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 31 || code === 127 ? " " : character;
+  }).join("");
+  const normalized = withoutControlCharacters
     .replace(/[\\/:*?"<>|#^[\]]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 100);
-  return normalized || "未命名内容";
+    .trim();
+  const truncated = truncateUtf8(normalized, CAPTURE_FILE_NAME_MAX_BYTES)
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return truncated || "未命名内容";
 }
 
 export function captureDatePrefix(value: unknown, fallbackTime?: number): string {

@@ -13,6 +13,7 @@ import {
   classifyBrowserCaptureUrl,
   captureDatePrefix,
   captureCancellationPlan,
+  CAPTURE_FILE_NAME_MAX_BYTES,
   cleanArticleMarkdown,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
@@ -589,6 +590,13 @@ test("browser capture builds a completed note while retaining source", () => {
   assert.match(completed, /## 原文\n\n原始正文/);
   assert.match(completed, /## 内容摘要\n\n内容摘要/);
   assert.equal(safeCaptureFileName("a/b:c"), "a b c");
+});
+
+test("capture file names stay below the cross-platform UTF-8 byte limit", () => {
+  const fileName = safeCaptureFileName(`2026-08-15-${"超长中文标题".repeat(40)}.`);
+  assert.ok(new TextEncoder().encode(fileName).length <= CAPTURE_FILE_NAME_MAX_BYTES);
+  assert.doesNotMatch(fileName, /[. ]$/);
+  assert.ok(new TextEncoder().encode(`${fileName} 99.md`).length < 255);
 });
 
 test("article cleanup removes WeChat preamble, cover art, and footer noise", () => {

@@ -1,6 +1,6 @@
 {
   "name": "knowgrove-capture",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "识别浏览器中的文章、AI 对话、视频或音频，通过本地 CLI 整理并保存到 Obsidian。",

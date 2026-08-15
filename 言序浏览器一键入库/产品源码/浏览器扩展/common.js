@@ -161,7 +161,7 @@ export async function capturePageContent(tabId) {
           document.querySelector("audio,meta[property^='og:audio']"),
         ) || /audio|music/.test(ogType);
         return {
-          title: clean(document.title).slice(0, 500),
+          title: (meta(["og:title", "twitter:title"]) || clean(document.title)).slice(0, 500),
           content: text,
           author: meta(["author", "article:author"]),
           publishedAt: meta(["article:published_time", "date", "datePublished"]),

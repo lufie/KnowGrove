@@ -254,14 +254,6 @@ async function cancelCurrentJob() {
   }
 }
 
-async function openExternalUrl(url) {
-  try {
-    await extensionApi.tabs.create({ url });
-  } catch {
-    globalThis.location.href = url;
-  }
-}
-
 async function connectKnowGrove() {
   elements.connect.disabled = true;
   elements.connect.textContent = "等待 Obsidian 确认…";
@@ -350,7 +342,21 @@ elements.cancelJob.addEventListener("click", cancelCurrentJob);
 elements.retry.addEventListener("click", initialize);
 elements.connect.addEventListener("click", connectKnowGrove);
 elements.openObsidian.addEventListener("click", async () => {
-  if (currentResult?.obsidianUri) await openExternalUrl(currentResult.obsidianUri);
+  if (!currentJobId) return;
+  elements.openObsidian.disabled = true;
+  try {
+    await bridgeRequest(currentSettings, `/v1/jobs/${encodeURIComponent(currentJobId)}/open`, {
+      method: "POST",
+    });
+  } catch (error) {
+    currentResult = undefined;
+    showError(error);
+    elements.retry.hidden = false;
+    elements.capture.disabled = false;
+    elements.capture.textContent = "重新整理到 Obsidian";
+  } finally {
+    elements.openObsidian.disabled = false;
+  }
 });
 elements.copyPath.addEventListener("click", async () => {
   if (!currentResult?.relativePath) return;

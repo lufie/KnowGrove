@@ -615,7 +615,12 @@ export class BrowserCaptureServer {
     }
     this.host.suppressNewNoteInitialization(file.path);
     const existing = [...this.jobs.values()].find((job) =>
-      job.targetPath === file.path && !FINISHED_STATUSES.has(job.status),
+      !FINISHED_STATUSES.has(job.status)
+      && (
+        job.targetPath === file.path
+        || job.createdNotePath === file.path
+        || this.currentNotePaths.get(job.id) === file.path
+      ),
     );
     if (existing) return existing;
     const url = candidate?.url ?? interrupted!.url;
@@ -846,6 +851,7 @@ export class BrowserCaptureServer {
       return;
     }
     const jobMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)$/i);
+    const openMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)\/open$/i);
     const cancelMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)\/cancel$/i);
     if (request.method === "POST" && cancelMatch) {
       try {
@@ -856,13 +862,30 @@ export class BrowserCaptureServer {
       }
       return;
     }
+    if (request.method === "POST" && openMatch) {
+      const job = this.jobs.get(openMatch[1]!);
+      if (!job) {
+        sendJson(response, 404, { error: "任务不存在或已过期" }, origin);
+        return;
+      }
+      const current = await this.reconcileStoredJob(job);
+      const path = current.result?.relativePath?.trim() ?? "";
+      const file = path ? this.host.app.vault.getAbstractFileByPath(path) : undefined;
+      if (!(file instanceof TFile)) {
+        sendJson(response, 409, { error: current.error || "保存的笔记已经不存在，请重新处理" }, origin);
+        return;
+      }
+      await this.host.app.workspace.getLeaf(false).openFile(file);
+      sendJson(response, 200, { ok: true, relativePath: file.path }, origin);
+      return;
+    }
     if (request.method === "GET" && jobMatch) {
       const job = this.jobs.get(jobMatch[1]!);
       if (!job) {
         sendJson(response, 404, { error: "任务不存在或已过期" }, origin);
         return;
       }
-      sendJson(response, 200, job, origin);
+      sendJson(response, 200, await this.reconcileStoredJob(job), origin);
       return;
     }
     sendJson(response, 404, { error: "接口不存在" }, origin);
@@ -933,6 +956,42 @@ export class BrowserCaptureServer {
     this.jobs.set(id, next);
     await this.persistJobs();
     return next;
+  }
+
+  private async reconcileStoredJob(job: BrowserCaptureJob): Promise<BrowserCaptureJob> {
+    if (job.status !== "completed" && job.status !== "partial") return job;
+    const path = job.result?.relativePath?.trim() ?? "";
+    const file = path ? this.host.app.vault.getAbstractFileByPath(path) : undefined;
+    const stored = file instanceof TFile
+      ? await this.host.app.vault.read(file).catch(() => "")
+      : "";
+    if (!(file instanceof TFile) || !stored.trim()) {
+      return this.updateJob(job.id, {
+        status: "failed",
+        phase: "failed",
+        phaseLabel: PHASE_LABELS.failed,
+        progress: 100,
+        error: "保存的笔记已经不存在或内容为空，请重新处理",
+        message: "没有找到可打开的 Obsidian 笔记",
+        result: undefined,
+      });
+    }
+    const result = job.result;
+    if (
+      job.status === "completed"
+      && result
+      && !result.storageVerified
+      && /KnowGrove采集状态:\s*["']?已完成["']?/i.test(stored)
+    ) {
+      return this.updateJob(job.id, {
+        result: {
+          ...result,
+          storageVerified: true,
+          verifiedAt: new Date().toISOString(),
+        },
+      });
+    }
+    return job;
   }
 
   private async drainQueue(): Promise<void> {
