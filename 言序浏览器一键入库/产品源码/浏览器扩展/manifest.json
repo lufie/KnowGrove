@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "言序 · KnowGrove 剪藏",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "把当前文章或视频交给本机 KnowGrove 整理，并保存到 Obsidian。",
   "permissions": [
     "tabs",
@@ -27,7 +27,19 @@
   },
   "action": {
     "default_title": "整理当前页面到 Obsidian",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   },
   "options_page": "options.html"
 }

@@ -85,6 +85,12 @@ async function createMenus() {
   });
 }
 
+async function ensureActionAvailable() {
+  await extensionApi.action.enable();
+  await extensionApi.action.setPopup({ popup: "popup.html" });
+  await extensionApi.action.setTitle({ title: "整理当前页面到 Obsidian" });
+}
+
 async function setBadge(text, color) {
   await extensionApi.action.setBadgeText({ text });
   if (color) await extensionApi.action.setBadgeBackgroundColor({ color });
@@ -216,6 +222,7 @@ async function submitFromContextMenu(info, tab) {
 extensionApi.runtime.onInstalled.addListener((details) => {
   (async () => {
     try {
+      await ensureActionAvailable();
       await createMenus();
       await ensureJobAlarm();
       if (details.reason === "install") {
@@ -230,11 +237,16 @@ extensionApi.runtime.onInstalled.addListener((details) => {
 extensionApi.runtime.onStartup.addListener(() => {
   void (async () => {
     try {
+      await ensureActionAvailable();
       await ensureJobAlarm();
     } catch (error) {
       console.error("恢复言序后台任务失败", error);
     }
   })();
+});
+
+void ensureActionAvailable().catch((error) => {
+  console.error("恢复言序工具栏入口失败", error);
 });
 
 extensionApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {

@@ -168,6 +168,14 @@ async function startCapture(options = {}) {
       ? "KnowGrove 将优先读取字幕，必要时下载并转录。"
     : "KnowGrove 将提取正文并先备份到 Vault。";
   try {
+    // Chrome only allows optional host/cookie permission requests while the
+    // original click gesture is still active. Request it before any other await.
+    const session = options.useSession
+      ? await captureBrowserSession(currentTab)
+      : null;
+    if (options.useSession && !session) {
+      throw new Error("没有获得当前站点权限。你可以继续使用公开解析，或再次点击并允许访问当前站点。");
+    }
     const renderedPage = await capturePageContent(currentTab.id);
     const detectedType = renderedPage?.detectedType || currentPageType;
     if (detectedType !== currentPageType) {
@@ -177,12 +185,6 @@ async function startCapture(options = {}) {
     const mediaTranscript = currentPageType === "video"
       ? await captureBilibiliTranscript(currentTab.id)
       : null;
-    const session = options.useSession
-      ? await captureBrowserSession(currentTab)
-      : null;
-    if (options.useSession && !session) {
-      throw new Error("没有获得当前站点权限。你可以继续使用公开解析，或再次点击并允许访问当前站点。");
-    }
     const protectedMedia = isProtectedMediaPage(currentTab.url)
       ? await captureProtectedMediaCandidates(currentTab.id)
       : [];
@@ -399,4 +401,10 @@ elements.copyPath.addEventListener("click", async () => {
   elements.copyPath.textContent = "已复制";
 });
 
-await initialize();
+try {
+  await initialize();
+} catch (error) {
+  setBridgeState("启动异常", "offline");
+  showError(error);
+  elements.retry.hidden = false;
+}

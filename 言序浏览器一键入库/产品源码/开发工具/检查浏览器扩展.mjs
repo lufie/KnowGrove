@@ -47,6 +47,8 @@ const referencedFiles = [
   manifest.background?.service_worker,
   manifest.action?.default_popup,
   manifest.options_page,
+  ...Object.values(manifest.action?.default_icon ?? {}),
+  ...Object.values(manifest.icons ?? {}),
 ].filter(Boolean);
 for (const path of referencedFiles) {
   check(await fileExists(path), `manifest 引用了不存在的文件：${path}`);
@@ -92,6 +94,14 @@ for (const path of javaScriptFiles) {
   if (path === "popup.js") {
     check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");
     check(/storage\.local\.remove\("activeCaptureJob"\)/.test(source), "取消后必须清理浏览器活动任务状态");
+    check(
+      source.indexOf("await captureBrowserSession(currentTab)") < source.indexOf("await capturePageContent(currentTab.id)"),
+      "当前站点权限必须在其他异步操作之前请求，以保留 Chrome 用户手势",
+    );
+  }
+  if (path === manifest.background?.service_worker) {
+    check(/action\.enable\(\)/.test(source), "后台启动时必须恢复工具栏入口");
+    check(/action\.setPopup\(\{ popup: "popup\.html" \}\)/.test(source), "后台启动时必须恢复剪藏弹窗");
   }
 }
 

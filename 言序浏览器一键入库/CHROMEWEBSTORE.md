@@ -109,6 +109,7 @@ Chinese (Simplified)
 
 | Version | Date | Changes | Status |
 | --- | --- | --- | --- |
+| 0.3.9 | 2026-08-15 | 修复工具栏入口变灰且无响应：启动和升级时主动恢复 action、popup 与标题；补齐言序品牌图标；当前站点登录态权限在用户点击后的第一个异步步骤请求，避免 Chrome 丢失用户手势 | Local candidate |
 | 0.3.8 | 2026-08-15 | 受保护媒体新增当前站点单次权限、临时 Cookie、播放器和页面状态媒体地址兜底；不持久化会话数据 | Local candidate |
 | 0.3.7 | 2026-08-15 | “在 Obsidian 打开”改由本机 KnowGrove 直接校验并打开真实 TFile；旧完成记录的文件不存在时显示失败，同一剪藏占位笔记不再触发第二条自动任务，网页标题优先读取 Open Graph 标题 | Local candidate |
 | 0.3.6 | 2026-08-15 | CLI 或模型配置在任务中切换时由 KnowGrove 接力继续处理；完成页只接受经过 Obsidian 文件回读验证的结果，异常完成显示失败并允许重新处理 | Local candidate |
@@ -124,4 +125,4 @@ Chinese (Simplified)
 - 创建 128×128 PNG 图标和至少一张商店截图。
 - 发布隐私政策并填写可公开访问的 URL。
 - 填写并验证支持邮箱。
-- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.8.zip` 的当前站点单次授权、取消、CLI 切换接力、真实文件打开与重新处理流程。
+- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.9.zip` 的工具栏入口、当前站点单次授权、取消、CLI 切换接力、真实文件打开与重新处理流程。
