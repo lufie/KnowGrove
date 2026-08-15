@@ -1,5 +1,6 @@
 import {
   App,
+  ButtonComponent,
   FuzzySuggestModal,
   Modal,
   Notice,
@@ -191,6 +192,9 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           capture.inboxFolder = "";
           capture.watchFolder = "";
           await this.plugin.savePluginData();
+          await this.plugin.syncExternalMarkdownOpenerConfiguration().catch((error) => {
+            console.error("KnowGrove: failed to update Markdown opener configuration", error);
+          });
           this.plugin.refreshReadingViews();
         }));
 
@@ -200,6 +204,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       value: string,
       placeholder: string,
       save: (value: string) => void,
+      afterSave?: () => Promise<void>,
     ): void => {
       let input: HTMLInputElement | undefined;
       new Setting(containerEl)
@@ -213,6 +218,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
             .onChange(async (next) => {
               save(next.trim() ? normalizePath(next.trim()).replace(/^\/+|\/+$/g, "") : "");
               await this.plugin.savePluginData();
+              await afterSave?.();
             });
         })
         .addButton((button) => button
@@ -222,7 +228,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
               const next = normalizePath(folder.path).replace(/^\/+|\/+$/g, "");
               save(next);
               if (input) input.value = next;
-              void this.plugin.savePluginData();
+              void this.plugin.savePluginData().then(() => afterSave?.());
             }).open();
           }));
     };
@@ -241,6 +247,17 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       `${settings.trackedFolder || "阅读列表"}/录音`,
       (value) => { desktopCapture.recordingFolder = value; },
     );
+    addDesktopFolder(
+      "库外 Markdown 导入目录",
+      "双击库外 Markdown 时先复制到这里，再在 Obsidian 中打开；留空时沿用收集箱路径。原文件不会移动或改写。",
+      desktopCapture.externalMarkdownFolder,
+      settings.trackedFolder || "阅读列表",
+      (value) => { desktopCapture.externalMarkdownFolder = value; },
+      async () => {
+        await this.plugin.syncExternalMarkdownOpenerConfiguration();
+      },
+    );
+    this.renderExternalMarkdownOpener(containerEl);
 
     new Setting(containerEl)
       .setName("浏览器授权")
@@ -285,6 +302,79 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
 
+  }
+
+  private renderExternalMarkdownOpener(containerEl: HTMLElement): void {
+    let installButton!: ButtonComponent;
+    let restoreButton!: ButtonComponent;
+    const setting = new Setting(containerEl)
+      .setName("双击用 Obsidian 打开 Markdown")
+      .setDesc("安装 KnowGrove Mac 打开器后，双击 .md 或 .markdown 会把库外文件安全复制到上方目录并立即在当前 Vault 打开；库内文件直接打开，不产生副本。")
+      .addButton((button) => {
+        installButton = button;
+        button
+          .setButtonText("正在检查")
+          .setDisabled(true);
+      });
+    setting.addButton((button) => {
+      restoreButton = button;
+      button
+        .setButtonText("在访达中恢复")
+        .setDisabled(true);
+    });
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const status = await this.plugin.getExternalMarkdownOpenerStatus();
+        if (!status.supported) {
+          setting.setDesc("双击导入 Markdown 当前仅支持 macOS；其他平台不会修改默认打开方式。");
+          installButton.setButtonText("当前平台不可用").setDisabled(true);
+          restoreButton.setDisabled(true);
+          return;
+        }
+        if (status.isDefault) {
+          setting.setDesc("已设为默认：库外 Markdown 会复制到上方目录并在当前 Vault 打开；重复打开相同内容不会生成副本，重名但内容不同会安全编号。原文件保持不变。");
+          installButton.setButtonText("重新配置").setDisabled(false);
+        } else if (status.installed) {
+          setting.setDesc("打开器已安装，但当前不是默认 Markdown 应用。点击后会在访达中选中引导文件；打开文件简介，在“打开方式”选择 KnowGrove 打开器，再点“全部更改”。");
+          installButton.setButtonText("在访达中设置").setDisabled(false);
+        } else {
+          installButton.setButtonText("安装打开器").setDisabled(false);
+        }
+        restoreButton.setDisabled(!status.isDefault || !status.previousHandlerPath);
+      } catch (error) {
+        setting.setDesc(`检查 Mac 打开器失败：${error instanceof Error ? error.message : String(error)}`);
+        installButton.setButtonText("重试安装").setDisabled(false);
+        restoreButton.setDisabled(true);
+      }
+    };
+
+    installButton.onClick(async () => {
+      installButton.setButtonText("安装中…").setDisabled(true);
+      try {
+        const status = await this.plugin.installExternalMarkdownOpener();
+        new Notice(status.isDefault
+          ? "已设为默认。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。"
+          : "打开器已安装。请在已打开的 Finder 中按 Command-I，选择 KnowGrove Markdown Opener，再点“全部更改”。", 9000);
+      } catch (error) {
+        new Notice(`Mac 打开器安装失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+      }
+      await refresh();
+    });
+    restoreButton.onClick(async () => {
+      restoreButton.setDisabled(true);
+      try {
+        const status = await this.plugin.restorePreviousMarkdownHandler();
+        const previousName = status.previousHandlerPath.split("/").filter(Boolean).pop() || "原应用";
+        new Notice(status.isDefault
+          ? `请在 Finder 的“打开方式”中选择 ${previousName} 并点击“全部更改”。`
+          : "已恢复原来的默认 Markdown 应用。KnowGrove 打开器仍保留，可随时重新启用。", 9000);
+      } catch (error) {
+        new Notice(`恢复默认应用失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+      }
+      await refresh();
+    });
+    void refresh();
   }
 
   private addClickableToggleSetting(

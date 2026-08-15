@@ -78,6 +78,14 @@ import {
 } from "./capture-center-core";
 import { DesktopRecorderController } from "./desktop-recorder";
 import {
+  inspectExternalMarkdownOpener,
+  installExternalMarkdownOpener,
+  restorePreviousMarkdownHandler,
+  updateExternalMarkdownOpenerConfiguration,
+  type ExternalMarkdownOpenerInstallOptions,
+  type ExternalMarkdownOpenerStatus,
+} from "./external-markdown-opener";
+import {
   createBlockDragEditorExtension,
   createCommentEditorExtension,
   refreshCommentEditorDecorations,
@@ -1821,6 +1829,39 @@ export default class KnowGrovePlugin extends Plugin {
       this.settings.browserCapture.mediaFolder.trim()
       || `${this.desktopLinkFolder()}/附件/音视频`,
     ).replace(/^\/+|\/+$/g, "");
+  }
+
+  private externalMarkdownFolder(): string {
+    return normalizePath(
+      this.settings.desktopCapture.externalMarkdownFolder.trim()
+      || this.desktopLinkFolder(),
+    ).replace(/^\/+|\/+$/g, "");
+  }
+
+  private externalMarkdownOpenerOptions(): ExternalMarkdownOpenerInstallOptions {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error("当前 Vault 不是本地文件系统");
+    return {
+      vaultPath: adapter.getFullPath(""),
+      destinationFolder: this.externalMarkdownFolder(),
+    };
+  }
+
+  async getExternalMarkdownOpenerStatus(): Promise<ExternalMarkdownOpenerStatus> {
+    return await inspectExternalMarkdownOpener();
+  }
+
+  async installExternalMarkdownOpener(): Promise<ExternalMarkdownOpenerStatus> {
+    return await installExternalMarkdownOpener(this.externalMarkdownOpenerOptions());
+  }
+
+  async syncExternalMarkdownOpenerConfiguration(): Promise<void> {
+    if (process.platform !== "darwin") return;
+    await updateExternalMarkdownOpenerConfiguration(this.externalMarkdownOpenerOptions());
+  }
+
+  async restorePreviousMarkdownHandler(): Promise<ExternalMarkdownOpenerStatus> {
+    return await restorePreviousMarkdownHandler();
   }
 
   getDesktopRecordingSnapshot(): DesktopRecordingSnapshot {
