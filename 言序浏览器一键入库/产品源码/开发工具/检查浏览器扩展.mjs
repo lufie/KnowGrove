@@ -138,6 +138,15 @@ globalThis.chrome = {
 };
 try {
   const common = await import(`${resolve(extensionRoot, "common.js")}?permission-check=${Date.now()}`);
+  check(
+    common.normalizeCaptureUrl("https://www.douyin.com/jingxuan?modal_id=7653682159667989801")
+      === "https://www.douyin.com/video/7653682159667989801",
+    "抖音 jingxuan modal_id 链接必须转换为下载器可识别的标准视频链接",
+  );
+  check(
+    common.normalizeCaptureUrl("https://example.com/article?a=1") === "https://example.com/article?a=1",
+    "非抖音弹层链接不得被改写",
+  );
   let deniedError;
   try {
     await common.captureBrowserSession({ url: "https://www.example.com/article" });

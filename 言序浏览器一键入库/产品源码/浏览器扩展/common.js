@@ -80,6 +80,23 @@ export function isProtectedMediaPage(url) {
   }
 }
 
+export function normalizeCaptureUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const douyinModalId = parsed.searchParams.get("modal_id")?.trim() ?? "";
+    if (
+      (host === "douyin.com" || host.endsWith(".douyin.com"))
+      && /^\d{12,24}$/.test(douyinModalId)
+    ) {
+      return `https://www.douyin.com/video/${douyinModalId}`;
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export async function loadSettings() {
   const { settings = {} } = await extensionApi.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...settings };

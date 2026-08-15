@@ -11,6 +11,7 @@ import {
   isProtectedMediaPage,
   KNOWGROVE_SETTINGS_URL,
   loadSettings,
+  normalizeCaptureUrl,
   pageTypeLabel,
   requestBackgroundPairing,
   resumePendingPairing,
@@ -178,6 +179,7 @@ async function startCapture(options = {}) {
     const session = options.useSession
       ? await captureBrowserSession(currentTab)
       : null;
+    const captureUrl = normalizeCaptureUrl(currentTab.url);
     const renderedPage = await capturePageContent(currentTab.id);
     const detectedType = renderedPage?.detectedType || currentPageType;
     if (detectedType !== currentPageType) {
@@ -197,7 +199,7 @@ async function startCapture(options = {}) {
     const accepted = await bridgeRequest(currentSettings, "/v1/capture", {
       method: "POST",
       body: JSON.stringify({
-        url: currentTab.url,
+        url: captureUrl,
         title: currentTab.title || "",
         source: "popup",
         pageTypeHint: currentPageType,
@@ -241,7 +243,10 @@ async function startCapture(options = {}) {
 
 async function resumeRecentJob() {
   const { activeCaptureJob: job } = await extensionApi.storage.local.get("activeCaptureJob");
-  if (!job?.id || job.url !== currentTab.url) return false;
+  if (
+    !job?.id
+    || normalizeCaptureUrl(job.url) !== normalizeCaptureUrl(currentTab.url)
+  ) return false;
   try {
     const current = await bridgeRequest(currentSettings, `/v1/jobs/${encodeURIComponent(job.id)}`);
     currentJobId = current.id;

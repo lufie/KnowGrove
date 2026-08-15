@@ -8,6 +8,7 @@ import {
   extensionApi,
   loadSettings,
   isProtectedMediaPage,
+  normalizeCaptureUrl,
   pairRequest,
   pairStatus,
   saveSettings,
@@ -169,9 +170,10 @@ async function pollActiveJob() {
 
 async function submitFromContextMenu(info, tab) {
   const settings = await loadSettings();
-  const url = info.linkUrl || info.pageUrl || tab?.url;
-  if (!url) throw new Error("没有找到可整理的网页链接");
-  const pageType = detectPageType(url);
+  const sourceUrl = info.linkUrl || info.pageUrl || tab?.url;
+  if (!sourceUrl) throw new Error("没有找到可整理的网页链接");
+  const url = normalizeCaptureUrl(sourceUrl);
+  const pageType = detectPageType(sourceUrl);
   const renderedPage = info.linkUrl ? null : await capturePageContent(tab?.id);
   const mediaTranscript = info.linkUrl || pageType !== "video"
     ? null
@@ -204,7 +206,7 @@ async function submitFromContextMenu(info, tab) {
       mediaCandidates,
       sessionCookies: session?.cookies || [],
       userAgent: renderedPage?.userAgent || "",
-      referer: session?.referer || url,
+      referer: session?.referer || sourceUrl,
     }),
   });
   await extensionApi.storage.local.set({
