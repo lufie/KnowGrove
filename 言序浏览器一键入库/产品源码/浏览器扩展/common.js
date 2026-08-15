@@ -408,11 +408,27 @@ export async function captureBrowserSession(tab) {
   if (!tab?.url || !extensionApi.permissions || !extensionApi.cookies) return null;
   const parsed = new URL(tab.url);
   const originPattern = `${parsed.protocol}//${parsed.host}/*`;
-  const granted = await extensionApi.permissions.request({
-    permissions: ["cookies"],
-    origins: [originPattern],
-  });
-  if (!granted) return null;
+  let granted = false;
+  try {
+    granted = await extensionApi.permissions.request({
+      permissions: ["cookies"],
+      origins: [originPattern],
+    });
+  } catch (cause) {
+    const error = new Error(
+      "Chrome 未能打开当前站点的授权提示。请在扩展的网站访问权限中允许当前站点，再重试。",
+      { cause },
+    );
+    error.code = "SITE_PERMISSION_REQUIRED";
+    throw error;
+  }
+  if (!granted) {
+    const error = new Error(
+      "Chrome 尚未授权 KnowGrove 读取当前站点。点击「允许当前站点并重试」，然后在 Chrome 提示中选择允许；也可不提供登录态，继续使用公开解析。",
+    );
+    error.code = "SITE_PERMISSION_REQUIRED";
+    throw error;
+  }
   const cookies = await extensionApi.cookies.getAll({ url: tab.url });
   return {
     cookies: cookies.slice(0, 300).map((cookie) => ({

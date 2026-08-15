@@ -44,6 +44,7 @@ const elements = {
   errorMessage: document.querySelector("#error-message"),
   connect: document.querySelector("#connect"),
   browserSession: document.querySelector("#browser-session"),
+  publicCapture: document.querySelector("#public-capture"),
   retry: document.querySelector("#retry"),
   autoRunNote: document.querySelector("#auto-run-note"),
 };
@@ -81,7 +82,8 @@ function showError(error, options = {}) {
   elements.errorMessage.textContent = error instanceof Error ? error.message : String(error);
   elements.connect.hidden = !options.connect;
   elements.browserSession.hidden = !options.browserSession;
-  elements.retry.hidden = Boolean(options.connect);
+  elements.publicCapture.hidden = !options.publicCapture;
+  elements.retry.hidden = Boolean(options.connect || options.browserSession);
   elements.capture.disabled = true;
   isCapturing = false;
 }
@@ -176,9 +178,6 @@ async function startCapture(options = {}) {
     const session = options.useSession
       ? await captureBrowserSession(currentTab)
       : null;
-    if (options.useSession && !session) {
-      throw new Error("没有获得当前站点权限。你可以继续使用公开解析，或再次点击并允许访问当前站点。");
-    }
     const renderedPage = await capturePageContent(currentTab.id);
     const detectedType = renderedPage?.detectedType || currentPageType;
     if (detectedType !== currentPageType) {
@@ -226,9 +225,12 @@ async function startCapture(options = {}) {
     await extensionApi.storage.local.set({ activeCaptureJob: snapshot });
     await pollJob(accepted.jobId);
   } catch (error) {
+    const needsSitePermission = error?.code === "SITE_PERMISSION_REQUIRED";
     showError(error, {
       connect: error?.code === "PAIRING_REQUIRED",
-      browserSession: isProtectedMediaPage(currentTab?.url) && !options.useSession,
+      browserSession: needsSitePermission
+        || (isProtectedMediaPage(currentTab?.url) && !options.useSession),
+      publicCapture: needsSitePermission,
     });
   } finally {
     if (!isCapturing) {
@@ -394,6 +396,9 @@ elements.retry.addEventListener("click", initialize);
 elements.connect.addEventListener("click", connectKnowGrove);
 elements.browserSession.addEventListener("click", async () => {
   await startCapture({ useSession: true });
+});
+elements.publicCapture.addEventListener("click", async () => {
+  await startCapture({ useSession: false });
 });
 elements.openObsidian.addEventListener("click", async () => {
   if (!currentJobId) return;

@@ -61,6 +61,8 @@ for (const path of htmlFiles) {
   check(!/\son[a-z]+\s*=/i.test(html), `${path} 包含内联事件处理器`);
   if (path === manifest.action?.default_popup) {
     check(/id="cancel-job"/.test(html), "任务进度必须提供取消并清理入口");
+    check(/id="browser-session"/.test(html), "站点授权失败后必须提供再次授权入口");
+    check(/id="public-capture"/.test(html), "站点授权失败后必须允许退回公开解析");
   }
 }
 
@@ -100,6 +102,8 @@ for (const path of javaScriptFiles) {
     check(/openConnectionGuide/.test(source), "未连接时必须自动唤起 KnowGrove 连接引导");
     check(/await connectKnowGrove\(\)/.test(source), "本机服务在线但未配对时必须自动发起配对");
     check(/KNOWGROVE_SETTINGS_URL/.test(source), "本机服务离线时必须打开 KnowGrove 浏览器连接设置");
+    check(/SITE_PERMISSION_REQUIRED/.test(source), "当前站点权限失败必须使用独立错误分支");
+    check(/startCapture\(\{ useSession: false \}\)/.test(source), "当前站点授权失败后必须保留公开解析入口");
     check(
       source.indexOf("await captureBrowserSession(currentTab)") < source.indexOf("await capturePageContent(currentTab.id)"),
       "当前站点权限必须在其他异步操作之前请求，以保留 Chrome 用户手势",
@@ -109,6 +113,47 @@ for (const path of javaScriptFiles) {
     check(/action\.enable\(\)/.test(source), "后台启动时必须恢复工具栏入口");
     check(/action\.setPopup\(\{ popup: "popup\.html" \}\)/.test(source), "后台启动时必须恢复剪藏弹窗");
   }
+}
+
+const originalChrome = globalThis.chrome;
+const permissionRequests = [];
+globalThis.chrome = {
+  permissions: {
+    request: async (request) => {
+      permissionRequests.push(request);
+      return permissionRequests.length > 1;
+    },
+  },
+  cookies: {
+    getAll: async () => [{
+      domain: ".example.com",
+      path: "/",
+      name: "session",
+      value: "test-only",
+      secure: true,
+      httpOnly: true,
+      expirationDate: 0,
+    }],
+  },
+};
+try {
+  const common = await import(`${resolve(extensionRoot, "common.js")}?permission-check=${Date.now()}`);
+  let deniedError;
+  try {
+    await common.captureBrowserSession({ url: "https://www.example.com/article" });
+  } catch (error) {
+    deniedError = error;
+  }
+  check(deniedError?.code === "SITE_PERMISSION_REQUIRED", "用户拒绝当前站点权限时必须返回可识别的错误码");
+  const session = await common.captureBrowserSession({ url: "https://www.example.com/article" });
+  check(session?.cookies?.length === 1, "用户允许当前站点权限后必须读取该 URL 的 Cookie");
+  check(
+    permissionRequests.every((request) => request.origins?.[0] === "https://www.example.com/*"),
+    "当前站点授权必须限定到精确 origin",
+  );
+} finally {
+  if (originalChrome === undefined) delete globalThis.chrome;
+  else globalThis.chrome = originalChrome;
 }
 
 if (errors.length) {
