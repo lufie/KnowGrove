@@ -24,8 +24,9 @@ This message disappears once the first observation lands.
 
 # Public Repository Boundary
 
-- This public repository is the source of truth for the KnowGrove Obsidian plugin and its public local-bridge contract.
-- Desktop application, browser extension, cloud service, and private runtime implementation source belong in the private `lufie/KnowGrove-Platform` repository.
+- This public repository is the reviewed release mirror for the KnowGrove Obsidian Plugin and its public local-bridge contract. Daily development happens in private `KnowGrove-Platform/obsidian-plugin/`.
+- Desktop application, browser extension, cloud service, total PRD, and private shared implementation source belong only in the private `lufie/KnowGrove-Platform` repository.
 - Never copy the private repository wholesale into this public repository. Any cross-repository export must use an explicit allow-list and review.
+- Do not develop a divergent feature directly in this mirror. Emergency public fixes must be ported back to the private monorepo before the next release export.
 - Obsidian plugin release tags must match `manifest.json` exactly and must not use a product prefix.
 - Local plugin candidates keep only the latest fully generated and verified version. Delete an older local candidate only after its replacement passes verification; do not automatically delete Git tags or remote published Releases.
