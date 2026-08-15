@@ -12,6 +12,7 @@ import {
   loadSettings,
   pageTypeLabel,
   requestBackgroundPairing,
+  resumePendingPairing,
   saveSettings,
 } from "./common.js";
 
@@ -302,6 +303,7 @@ async function initialize() {
   isCapturing = false;
   currentJobId = undefined;
   currentResult = undefined;
+  await resumePendingPairing();
   currentSettings = await loadSettings();
   elements.autoRunNote.textContent = currentSettings.autoRun ? "打开即执行" : "手动执行";
   const tabs = await extensionApi.tabs.query({ active: true, currentWindow: true });

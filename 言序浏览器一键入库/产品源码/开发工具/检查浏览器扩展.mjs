@@ -90,6 +90,9 @@ for (const path of javaScriptFiles) {
     check(/cookies\.getAll\(\{ url: tab\.url \}\)/.test(source), "只允许读取当前标签页 URL 可用的 Cookie");
     check(!/storage\.(?:local|sync)\.set\([^)]*sessionCookies/s.test(source), "站点 Cookie 不得写入扩展持久存储");
     check(/captureProtectedMediaCandidates/.test(source), "受保护媒体页面必须读取播放器和页面状态中的可见媒体地址");
+    check(/isMissingBackgroundReceiver/.test(source), "配对必须识别后台接收端缺失错误");
+    check(/return requestPopupPairing\(\)/.test(source), "后台接收端缺失时必须由弹窗直接续接配对");
+    check(/resumePendingPairing/.test(source), "配对状态必须支持弹窗重新打开后恢复");
   }
   if (path === "popup.js") {
     check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");

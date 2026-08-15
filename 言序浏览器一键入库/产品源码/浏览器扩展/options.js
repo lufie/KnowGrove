@@ -4,6 +4,7 @@ import {
   KNOWGROVE_SETTINGS_URL,
   loadSettings,
   requestBackgroundPairing,
+  resumePendingPairing,
   saveSettings,
 } from "./common.js";
 
@@ -53,6 +54,7 @@ function renderRoutes(data) {
 }
 
 async function refreshConnection() {
+  await resumePendingPairing();
   settings = await loadSettings();
   elements.autoRun.checked = settings.autoRun;
   let health;

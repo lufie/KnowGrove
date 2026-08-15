@@ -2,6 +2,11 @@
 
 > Last Updated: 2026-08-15
 
+## 0.3.10
+
+- 首次配对增加弹窗直连兜底；后台 Service Worker 不可用时仍可打开 Obsidian 完成确认。
+- 待确认配对写入扩展本地状态，关闭或重新打开弹窗后可继续完成，不再暴露 Chrome 接收端错误。
+
 ## Store Listing
 
 **Extension Name**

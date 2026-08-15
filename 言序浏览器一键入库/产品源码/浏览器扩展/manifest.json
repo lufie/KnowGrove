@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "言序 · KnowGrove 剪藏",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "把当前文章或视频交给本机 KnowGrove 整理，并保存到 Obsidian。",
   "permissions": [
     "tabs",

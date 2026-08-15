@@ -137,8 +137,89 @@ export async function pairStatus(nonce) {
   return bridgeRequest({}, `/v1/pair/status?nonce=${encodeURIComponent(nonce)}`);
 }
 
+const PAIRING_STATE_KEY = "knowGrovePairing";
+
+function delay(milliseconds) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
+}
+
+function isMissingBackgroundReceiver(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /receiving end does not exist|could not establish connection|message port closed/i.test(message);
+}
+
+export async function resumePendingPairing() {
+  const stored = await extensionApi.storage.local.get(PAIRING_STATE_KEY);
+  const pairing = stored[PAIRING_STATE_KEY];
+  if (pairing?.status !== "pending" || !pairing.nonce) return { ok: false, pending: false };
+
+  const startedAt = new Date(pairing.startedAt || 0).getTime();
+  if (!Number.isFinite(startedAt) || Date.now() - startedAt >= 130_000) {
+    await extensionApi.storage.local.set({
+      [PAIRING_STATE_KEY]: {
+        status: "failed",
+        error: "配对请求已过期，请重新连接",
+        completedAt: new Date().toISOString(),
+      },
+    });
+    return { ok: false, pending: false };
+  }
+
+  let status;
+  try {
+    status = await pairStatus(pairing.nonce);
+  } catch (error) {
+    if (error?.code !== "HTTP_404") throw error;
+    await extensionApi.storage.local.set({
+      [PAIRING_STATE_KEY]: {
+        status: "failed",
+        error: "配对请求已失效，请重新连接",
+        completedAt: new Date().toISOString(),
+      },
+    });
+    return { ok: false, pending: false };
+  }
+  if (status.status !== "approved" || !status.token) return { ok: false, pending: true };
+
+  const settings = await loadSettings();
+  await saveSettings({ ...settings, token: status.token });
+  await extensionApi.storage.local.set({
+    [PAIRING_STATE_KEY]: {
+      status: "approved",
+      completedAt: new Date().toISOString(),
+    },
+  });
+  return { ok: true, pending: false };
+}
+
+async function requestPopupPairing() {
+  const pairing = await pairRequest();
+  await extensionApi.storage.local.set({
+    [PAIRING_STATE_KEY]: {
+      status: "pending",
+      nonce: pairing.nonce,
+      startedAt: new Date().toISOString(),
+      mode: "popup-fallback",
+    },
+  });
+  await extensionApi.tabs.create({ url: pairing.deepLink });
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await delay(1_000);
+    const result = await resumePendingPairing();
+    if (result.ok) return result;
+    if (!result.pending) break;
+  }
+  throw new Error("配对请求已过期，请重新连接");
+}
+
 export async function requestBackgroundPairing() {
-  const result = await extensionApi.runtime.sendMessage({ type: "knowgrove:pair" });
+  let result;
+  try {
+    result = await extensionApi.runtime.sendMessage({ type: "knowgrove:pair" });
+  } catch (error) {
+    if (!isMissingBackgroundReceiver(error)) throw error;
+    return requestPopupPairing();
+  }
   if (!result?.ok) {
     const error = new Error(result?.error || "KnowGrove 配对未完成");
     error.code = result?.code || "PAIRING_FAILED";
