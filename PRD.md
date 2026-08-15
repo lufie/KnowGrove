@@ -860,7 +860,7 @@ Runtime 1.0.x 托管：
 - Obsidian 社区插件 ID：`knowgrove`（已收录到官方 `community-plugins.json`；社区目录当前版本为 2.8.11，正式扫描状态 `Completed`，源码 / CSS Warning 与 Error 均为 0；2 条必要行为 Warning 和 2 条能力 Recommendation 继续准确披露，尚未完成人工审核）
 - 最新 GitHub 正式插件版本：`2.8.11`，发布地址：`https://github.com/lufie/KnowGrove/releases/tag/2.8.11`
 - 最新 Obsidian 本地候选安装包：`release/言序-KnowGrove-2.8.17-安装包/knowgrove-2.8.17.zip`，SHA-256 `acc0ccbb6d59ab627f431776d4c0d326b3493fdad9933f530ea262e21eafc07d`
-- 最新浏览器剪藏扩展本地候选包：`release/言序-KnowGrove-2.8.17-安装包/浏览器剪藏扩展/KnowGrove-Capture-0.3.8.zip`，SHA-256 `7665b0277489dfc3fd0b6177b9828e94c0131f73a2b9d3e495e955f24dcc6aeb`
+- 最新浏览器剪藏扩展本地候选包：`release/言序-KnowGrove-2.8.18-安装包/浏览器剪藏扩展/KnowGrove-Capture-0.3.9.zip`，SHA-256 `99921d57b361984c2f2a203fb993b8e24ec3eb547a2c4e9f0745853a87c3e2a7`
 - 本地可分发文件夹：`release/KnowGrove-2.5.0-可分发文件/`
 - 2.5.1 CLI 修复包：`release/KnowGrove-2.5.1-CLI修复包/`
 - 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.1/runtime-manifest.json`
