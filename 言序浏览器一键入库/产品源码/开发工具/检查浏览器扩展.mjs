@@ -29,7 +29,12 @@ check(manifest.permissions?.includes("tabs"), "读取当前页面 URL 和标题�
 check(manifest.permissions?.includes("activeTab"), "读取用户主动提交页面的可见正文需要 activeTab 权限");
 check(manifest.permissions?.includes("scripting"), "按用户操作提取当前页面正文需要 scripting 权限");
 check(manifest.permissions?.includes("alarms"), "后台任务进度恢复需要 alarms 权限");
-check(!manifest.permissions?.includes("cookies"), "扩展不得申请 cookies 权限");
+check(!manifest.permissions?.includes("cookies"), "cookies 不得成为安装时必选权限");
+check(manifest.optional_permissions?.includes("cookies"), "受保护媒体重试需要用户手势触发的可选 cookies 权限");
+check(
+  JSON.stringify([...(manifest.optional_host_permissions ?? [])].sort()) === JSON.stringify(["http://*/*", "https://*/*"]),
+  "动态站点授权只能声明 http/https 可选主机权限",
+);
 check(!manifest.host_permissions?.includes("<all_urls>"), "不得使用 <all_urls> 主机权限");
 for (const host of manifest.host_permissions ?? []) {
   check(
@@ -67,7 +72,9 @@ for (const path of javaScriptFiles) {
   const source = await readFile(resolve(extensionRoot, path), "utf8");
   check(!/\beval\s*\(/.test(source), `${path} 使用了 eval`);
   check(!/\bnew\s+Function\s*\(/.test(source), `${path} 使用了 new Function`);
-  check(!/(?:document|chrome|browser)\.cookies?\b/.test(source), `${path} 不得读取浏览器 Cookie`);
+  if (/(?:document|chrome|browser)\.cookies?\b/.test(source)) {
+    check(path === "common.js", `${path} 不得读取浏览器 Cookie`);
+  }
   check(!/\.then\s*\(/.test(source), `${path} 使用了 .then()，应改为 async/await`);
   check(!/bridge:init|bridge:start|本地助手/.test(source), `${path} 仍引用已删除的独立本地助手`);
   if (path === "common.js") {
@@ -77,6 +84,9 @@ for (const path of javaScriptFiles) {
       /fetch\(subtitleUrl, \{ credentials: "omit" \}\)/.test(source),
       "Bilibili 字幕正文必须避免携带凭据触发跨域失败",
     );
+    check(/permissions\.request\(\{[\s\S]*permissions: \["cookies"\]/.test(source), "Cookie 必须在用户操作时动态授权");
+    check(/cookies\.getAll\(\{ url: tab\.url \}\)/.test(source), "只允许读取当前标签页 URL 可用的 Cookie");
+    check(!/storage\.(?:local|sync)\.set\([^)]*sessionCookies/s.test(source), "站点 Cookie 不得写入扩展持久存储");
   }
   if (path === "popup.js") {
     check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");

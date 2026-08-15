@@ -21,6 +21,12 @@ const VIDEO_HOSTS = [
   "ixigua.com",
   "tiktok.com",
   "weibo.tv",
+  "instagram.com",
+  "vimeo.com",
+  "dailymotion.com",
+  "twitch.tv",
+  "facebook.com",
+  "fb.watch",
 ];
 
 const AUDIO_HOSTS = [
@@ -31,6 +37,18 @@ const AUDIO_HOSTS = [
   "soundcloud.com",
   "ximalaya.com",
   "qingting.fm",
+  "open.spotify.com",
+  "podbean.com",
+];
+
+const PROTECTED_MEDIA_HOSTS = [
+  "douyin.com",
+  "ixigua.com",
+  "tiktok.com",
+  "xiaohongshu.com",
+  "instagram.com",
+  "facebook.com",
+  "weixin.qq.com",
 ];
 
 export function detectPageType(url) {
@@ -38,17 +56,27 @@ export function detectPageType(url) {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     const isWeiboVideo = host.endsWith("weibo.com") && parsed.pathname.startsWith("/tv");
+    const isWeChatChannels = host === "weixin.qq.com" && parsed.pathname.startsWith("/sph/");
     if (
       /\.(?:mp3|m4a|wav|aac|flac|ogg|opus)(?:$|[?#])/i.test(parsed.href)
       || AUDIO_HOSTS.some((candidate) => host === candidate || host.endsWith(`.${candidate}`))
     ) return "audio";
-    return isWeiboVideo || VIDEO_HOSTS.some((candidate) =>
+    return isWeiboVideo || isWeChatChannels || VIDEO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
     ) || /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i.test(parsed.href)
       ? "video"
       : "article";
   } catch {
     return "article";
+  }
+}
+
+export function isProtectedMediaPage(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return PROTECTED_MEDIA_HOSTS.some((candidate) => host === candidate || host.endsWith(`.${candidate}`));
+  } catch {
+    return false;
   }
 }
 
@@ -154,12 +182,40 @@ export async function capturePageContent(tabId) {
           return "";
         };
         const ogType = meta(["og:type", "twitter:card"]).toLowerCase();
-        const hasVideo = Boolean(
-          document.querySelector("video,meta[property^='og:video'],meta[name='twitter:player']"),
-        ) || /video|player/.test(ogType);
-        const hasAudio = Boolean(
-          document.querySelector("audio,meta[property^='og:audio']"),
-        ) || /audio|music/.test(ogType);
+        const hasVideo = /video|player/.test(ogType);
+        const hasAudio = /audio|music/.test(ogType);
+        const imageCandidates = [...(root?.element?.querySelectorAll("img") ?? [])]
+          .flatMap((image) => {
+            const rect = image.getBoundingClientRect();
+            const url = String(image.currentSrc || image.src || image.dataset?.src || image.dataset?.original || "").trim();
+            if (!/^https?:\/\//i.test(url) || /^data:/i.test(url)) return [];
+            if (Math.max(image.naturalWidth || 0, rect.width) < 240 || Math.max(image.naturalHeight || 0, rect.height) < 160) return [];
+            if (image.closest("nav,header,footer,[role='navigation']")) return [];
+            return [{ url, alt: clean(image.alt || image.getAttribute("aria-label") || "图片") }];
+          })
+          .filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index)
+          .slice(0, 80);
+        const mediaCandidates = [];
+        const pushMedia = (rawUrl, pageType, label = "") => {
+          const url = String(rawUrl || "").trim();
+          if (!/^https?:\/\//i.test(url)) return;
+          if (mediaCandidates.some((candidate) => candidate.url === url)) return;
+          mediaCandidates.push({ url, pageType, label: clean(label).slice(0, 160) });
+        };
+        for (const video of document.querySelectorAll("video")) {
+          pushMedia(video.currentSrc || video.src, "video", video.title || video.getAttribute("aria-label") || "");
+        }
+        for (const audio of document.querySelectorAll("audio")) {
+          pushMedia(audio.currentSrc || audio.src, "audio", audio.title || audio.getAttribute("aria-label") || "");
+        }
+        for (const source of document.querySelectorAll("video source,audio source")) {
+          pushMedia(source.src, source.closest("audio") ? "audio" : "video");
+        }
+        for (const entry of performance.getEntriesByType?.("resource") ?? []) {
+          const url = String(entry.name || "");
+          if (/\.(?:m3u8|mpd|mp4|mov|mkv|m4v)(?:$|[?#])/i.test(url)) pushMedia(url, "video");
+          if (/\.(?:mp3|m4a|aac|flac|ogg|opus|wav)(?:$|[?#])/i.test(url)) pushMedia(url, "audio");
+        }
         return {
           title: (meta(["og:title", "twitter:title"]) || clean(document.title)).slice(0, 500),
           content: text,
@@ -167,6 +223,9 @@ export async function capturePageContent(tabId) {
           publishedAt: meta(["article:published_time", "date", "datePublished"]),
           sourceKind: selection.length >= 80 ? "selection" : "rendered-page",
           detectedType: hasVideo ? "video" : hasAudio ? "audio" : "article",
+          images: imageCandidates,
+          mediaCandidates: mediaCandidates.slice(0, 8),
+          userAgent: navigator.userAgent,
         };
       },
     });
@@ -175,6 +234,30 @@ export async function capturePageContent(tabId) {
   } catch {
     return null;
   }
+}
+
+export async function captureBrowserSession(tab) {
+  if (!tab?.url || !extensionApi.permissions || !extensionApi.cookies) return null;
+  const parsed = new URL(tab.url);
+  const originPattern = `${parsed.protocol}//${parsed.host}/*`;
+  const granted = await extensionApi.permissions.request({
+    permissions: ["cookies"],
+    origins: [originPattern],
+  });
+  if (!granted) return null;
+  const cookies = await extensionApi.cookies.getAll({ url: tab.url });
+  return {
+    cookies: cookies.slice(0, 300).map((cookie) => ({
+      domain: cookie.domain,
+      path: cookie.path,
+      name: cookie.name,
+      value: cookie.value,
+      secure: cookie.secure,
+      httpOnly: cookie.httpOnly,
+      expirationDate: cookie.expirationDate || 0,
+    })),
+    referer: tab.url,
+  };
 }
 
 export async function captureBilibiliTranscript(tabId) {

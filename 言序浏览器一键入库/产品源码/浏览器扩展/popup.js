@@ -1,11 +1,13 @@
 import {
   bridgeRequest,
+  captureBrowserSession,
   captureBilibiliTranscript,
   capturePageContent,
   clipText,
   detectPageType,
   extensionApi,
   isSupportedPage,
+  isProtectedMediaPage,
   loadSettings,
   pageTypeLabel,
   requestBackgroundPairing,
@@ -38,6 +40,7 @@ const elements = {
   errorPanel: document.querySelector("#error-panel"),
   errorMessage: document.querySelector("#error-message"),
   connect: document.querySelector("#connect"),
+  browserSession: document.querySelector("#browser-session"),
   retry: document.querySelector("#retry"),
   autoRunNote: document.querySelector("#auto-run-note"),
 };
@@ -73,6 +76,7 @@ function showError(error, options = {}) {
   showOnly(elements.errorPanel);
   elements.errorMessage.textContent = error instanceof Error ? error.message : String(error);
   elements.connect.hidden = !options.connect;
+  elements.browserSession.hidden = !options.browserSession;
   elements.retry.hidden = Boolean(options.connect);
   elements.capture.disabled = true;
   isCapturing = false;
@@ -149,7 +153,7 @@ async function pollJob(jobId) {
   }
 }
 
-async function startCapture() {
+async function startCapture(options = {}) {
   if (isCapturing || !currentTab?.url || !currentSettings?.token) return;
   isCapturing = true;
   currentResult = undefined;
@@ -172,6 +176,12 @@ async function startCapture() {
     const mediaTranscript = currentPageType === "video"
       ? await captureBilibiliTranscript(currentTab.id)
       : null;
+    const session = options.useSession
+      ? await captureBrowserSession(currentTab)
+      : null;
+    if (options.useSession && !session) {
+      throw new Error("没有获得当前站点权限。你可以继续使用公开解析，或再次点击并允许访问当前站点。");
+    }
     const accepted = await bridgeRequest(currentSettings, "/v1/capture", {
       method: "POST",
       body: JSON.stringify({
@@ -185,6 +195,11 @@ async function startCapture() {
         publishedAt: renderedPage?.publishedAt || "",
         sourceKind: renderedPage?.sourceKind || "",
         transcript: mediaTranscript?.transcript || "",
+        images: renderedPage?.images || [],
+        mediaCandidates: renderedPage?.mediaCandidates || [],
+        sessionCookies: session?.cookies || [],
+        userAgent: renderedPage?.userAgent || navigator.userAgent,
+        referer: session?.referer || currentTab.url,
       }),
     });
     const snapshot = {
@@ -198,7 +213,10 @@ async function startCapture() {
     await extensionApi.storage.local.set({ activeCaptureJob: snapshot });
     await pollJob(accepted.jobId);
   } catch (error) {
-    showError(error, { connect: error?.code === "PAIRING_REQUIRED" });
+    showError(error, {
+      connect: error?.code === "PAIRING_REQUIRED",
+      browserSession: isProtectedMediaPage(currentTab?.url) && !options.useSession,
+    });
   } finally {
     if (!isCapturing) {
       elements.capture.textContent = currentResult ? "再次整理" : "一键整理到 Obsidian";
@@ -321,7 +339,11 @@ async function initialize() {
     setBridgeState("KnowGrove 已连接", "online");
     if (!renderConnection(data)) return;
     const resumed = await resumeRecentJob();
-    if (!resumed && currentSettings.autoRun && !elements.capture.disabled) await startCapture();
+    const protectedPage = isProtectedMediaPage(currentTab.url);
+    elements.capture.textContent = protectedPage
+      ? "使用当前站点登录状态并整理"
+      : "一键整理到 Obsidian";
+    if (!resumed && currentSettings.autoRun && !protectedPage && !elements.capture.disabled) await startCapture();
   } catch (error) {
     const needsPairing = error?.code === "PAIRING_REQUIRED";
     if (needsPairing) {
@@ -337,10 +359,15 @@ async function initialize() {
 elements.openOptions.addEventListener("click", async () => {
   await extensionApi.runtime.openOptionsPage();
 });
-elements.capture.addEventListener("click", startCapture);
+elements.capture.addEventListener("click", async () => {
+  await startCapture({ useSession: isProtectedMediaPage(currentTab?.url) });
+});
 elements.cancelJob.addEventListener("click", cancelCurrentJob);
 elements.retry.addEventListener("click", initialize);
 elements.connect.addEventListener("click", connectKnowGrove);
+elements.browserSession.addEventListener("click", async () => {
+  await startCapture({ useSession: true });
+});
 elements.openObsidian.addEventListener("click", async () => {
   if (!currentJobId) return;
   elements.openObsidian.disabled = true;

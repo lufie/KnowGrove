@@ -1,10 +1,12 @@
 import {
   bridgeRequest,
+  captureBrowserSession,
   captureBilibiliTranscript,
   capturePageContent,
   detectPageType,
   extensionApi,
   loadSettings,
+  isProtectedMediaPage,
   pairRequest,
   pairStatus,
   saveSettings,
@@ -162,11 +164,13 @@ async function submitFromContextMenu(info, tab) {
   const url = info.linkUrl || info.pageUrl || tab?.url;
   if (!url) throw new Error("没有找到可整理的网页链接");
   const pageType = detectPageType(url);
-  const pageContent = info.linkUrl
+  const renderedPage = info.linkUrl ? null : await capturePageContent(tab?.id);
+  const mediaTranscript = info.linkUrl || pageType !== "video"
     ? null
-    : pageType === "article"
-      ? await capturePageContent(tab?.id)
-      : await captureBilibiliTranscript(tab?.id);
+    : await captureBilibiliTranscript(tab?.id);
+  const session = !info.linkUrl && isProtectedMediaPage(url)
+    ? await captureBrowserSession(tab).catch(() => null)
+    : null;
   await setBadge("…", "#a46616");
   const accepted = await bridgeRequest(settings, "/v1/capture", {
     method: "POST",
@@ -174,12 +178,18 @@ async function submitFromContextMenu(info, tab) {
       url,
       title: info.linkUrl ? "" : (tab?.title || ""),
       source: "context-menu",
-      content: pageContent?.content || "",
-      contentTitle: pageContent?.title || "",
-      author: pageContent?.author || "",
-      publishedAt: pageContent?.publishedAt || "",
-      sourceKind: pageContent?.sourceKind || "",
-      transcript: pageContent?.transcript || "",
+      pageTypeHint: renderedPage?.detectedType || pageType,
+      content: pageType === "article" ? renderedPage?.content || "" : "",
+      contentTitle: mediaTranscript?.title || renderedPage?.title || "",
+      author: renderedPage?.author || "",
+      publishedAt: renderedPage?.publishedAt || "",
+      sourceKind: renderedPage?.sourceKind || "",
+      transcript: mediaTranscript?.transcript || "",
+      images: renderedPage?.images || [],
+      mediaCandidates: renderedPage?.mediaCandidates || [],
+      sessionCookies: session?.cookies || [],
+      userAgent: renderedPage?.userAgent || "",
+      referer: session?.referer || url,
     }),
   });
   await extensionApi.storage.local.set({

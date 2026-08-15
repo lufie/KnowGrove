@@ -14,6 +14,13 @@
   "host_permissions": [
     "http://127.0.0.1:47831/*"
   ],
+  "optional_permissions": [
+    "cookies"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

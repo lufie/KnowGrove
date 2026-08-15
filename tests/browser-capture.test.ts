@@ -6,6 +6,7 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  buildWhisperPcmConversionArgs,
   browserCaptureChunkPrompt,
   browserCapturePrompt,
   browserCaptureSynthesisPrompt,
@@ -15,17 +16,20 @@ import {
   captureCancellationPlan,
   CAPTURE_FILE_NAME_MAX_BYTES,
   cleanArticleMarkdown,
+  detectCaptureErrorShell,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   datedArticleTitle,
   extractJsonObject,
+  extractEmbeddedMediaCandidates,
   extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
   normalizeBrowserCaptureAIResult,
+  normalizeCaptureSessionCookies,
   parseSubtitleText,
   parseWebVtt,
   protectArticleImages,
@@ -34,6 +38,7 @@ import {
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
+  serializeNetscapeCookies,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
@@ -145,6 +150,45 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+  assert.equal(classifyBrowserCaptureUrl("https://www.instagram.com/reel/example/"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://vimeo.com/56015672"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/sph/example"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/article/example"), "article");
+});
+
+test("articles with incidental embedded media stay articles while media candidates are inventoried", () => {
+  const html = [
+    "<article>",
+    `<p>${"正文内容".repeat(800)}</p>`,
+    '<video controls src="https://cdn.example.com/interview.mp4"></video>',
+    '<audio src="/episode.m4a"></audio>',
+    "</article>",
+  ].join("");
+  assert.equal(classifyBrowserCaptureResource("https://example.com/story", { html }), "article");
+  assert.deepEqual(extractEmbeddedMediaCandidates(html, "https://example.com/story"), [
+    { url: "https://cdn.example.com/interview.mp4", pageType: "video" },
+    { url: "https://example.com/episode.m4a", pageType: "audio" },
+  ]);
+});
+
+test("capture rejects expired login and verification shells", () => {
+  assert.equal(detectCaptureErrorShell({ text: "你访问的页面不见了" }), "页面内容不存在或已经失效");
+  assert.equal(detectCaptureErrorShell({ title: "安全验证", text: "请完成验证码后继续" }), "页面要求完成人机验证");
+  assert.equal(detectCaptureErrorShell({ text: "请先登录后查看这篇内容" }), "页面需要登录后才能读取内容");
+  assert.equal(detectCaptureErrorShell({ text: "这是一篇正常文章，讨论产品登录流程。".repeat(500) }), undefined);
+});
+
+test("browser session cookies are scoped to the current site and serialized ephemerally", () => {
+  const cookies = normalizeCaptureSessionCookies([
+    { domain: ".douyin.com", path: "/", name: "sessionid", value: "safe", secure: true, expirationDate: 2_000_000_000 },
+    { domain: ".example.com", path: "/", name: "secret", value: "blocked" },
+    { domain: ".douyin.com", path: "/", name: "bad", value: "line\nbreak" },
+  ], "https://www.douyin.com/video/1");
+  assert.equal(cookies.length, 1);
+  const serialized = serializeNetscapeCookies(cookies);
+  assert.match(serialized, /^# Netscape HTTP Cookie File/);
+  assert.match(serialized, /\.douyin\.com\tTRUE\t\/\tTRUE\t2000000000\tsessionid\tsafe/);
+  assert.doesNotMatch(serialized, /example|line/);
 });
 
 test("generic capture resolves short links and detects media from response metadata", () => {
@@ -461,6 +505,9 @@ test("video transcription supports both Whisper CLIs", () => {
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.m4a"), true);
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.wav"), false);
   assert.equal(whisperNeedsPcmConversion("openai-whisper", "/tmp/voice.m4a"), false);
+  assert.deepEqual(buildWhisperPcmConversionArgs("/tmp/voice.m4a", "/tmp/voice.wav"), [
+    "-y", "-i", "/tmp/voice.m4a", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "/tmp/voice.wav",
+  ]);
   assert.deepEqual(buildWhisperInvocation({
     implementation: "openai-whisper",
     audioPath: "/tmp/audio.mp3",

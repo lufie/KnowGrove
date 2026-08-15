@@ -22,6 +22,7 @@ import {
   browserCaptureSynthesisPrompt,
   captureCancellationPlan,
   buildWhisperInvocation,
+  buildWhisperPcmConversionArgs,
   buildCaptureFailureNote,
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
@@ -30,11 +31,13 @@ import {
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   detectInterruptedCapture,
+  detectCaptureErrorShell,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   cleanArticleMarkdown,
   extractArticleFromHtml,
+  extractEmbeddedMediaCandidates,
   extractJsonObject,
   formatYtDlpCaptureError,
   formatTranscriptParagraphs,
@@ -46,12 +49,16 @@ import {
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
+  normalizeCaptureSessionCookies,
+  serializeNetscapeCookies,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
   type BrowserCaptureAIResult,
+  type BrowserCaptureMediaCandidate,
   type BrowserCapturePageType,
+  type BrowserCaptureSessionCookie,
 } from "./browser-capture-core";
 
 export type BrowserCaptureJobStatus = "queued" | "running" | "cancelling" | "completed" | "partial" | "failed";
@@ -128,6 +135,14 @@ interface ExtractedSource {
   author?: string;
   publishedAt?: string;
   mediaPath?: string;
+  embeddedMedia?: BrowserCaptureMediaCandidate[];
+}
+
+interface BrowserCaptureSessionContext {
+  cookies: BrowserCaptureSessionCookie[];
+  userAgent: string;
+  referer: string;
+  mediaCandidates: BrowserCaptureMediaCandidate[];
 }
 
 const HOST = "127.0.0.1";
@@ -179,6 +194,47 @@ function isAllowedOrigin(origin: string): boolean {
 
 function stringField(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function captureMediaCandidates(value: unknown, baseUrl: string): BrowserCaptureMediaCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const candidates: BrowserCaptureMediaCandidate[] = [];
+  for (const raw of value.slice(0, 16)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const pageType = stringField(item.pageType);
+    if (pageType !== "video" && pageType !== "audio") continue;
+    try {
+      const url = new URL(stringField(item.url), baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) continue;
+      if (candidates.some((candidate) => sameCaptureResourceUrl(candidate.url, url.toString()))) continue;
+      candidates.push({
+        url: url.toString(),
+        pageType,
+        ...(stringField(item.label).trim() ? { label: stringField(item.label).trim().slice(0, 160) } : {}),
+      });
+    } catch {
+      // Ignore malformed browser hints; the original page still remains usable.
+    }
+  }
+  return candidates.slice(0, 8);
+}
+
+function captureSessionCookies(value: unknown, url: string): BrowserCaptureSessionCookie[] {
+  if (!Array.isArray(value)) return [];
+  return normalizeCaptureSessionCookies(value.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    return [{
+      domain: stringField(item.domain),
+      path: stringField(item.path, "/"),
+      name: stringField(item.name),
+      value: stringField(item.value),
+      secure: Boolean(item.secure),
+      httpOnly: Boolean(item.httpOnly),
+      expirationDate: typeof item.expirationDate === "number" ? item.expirationDate : 0,
+    }];
+  }), url);
 }
 
 function isWebUrl(value: unknown): string {
@@ -489,6 +545,7 @@ export class BrowserCaptureServer {
   };
   private readonly jobs = new Map<string, BrowserCaptureJob>();
   private readonly capturedSources = new Map<string, ExtractedSource>();
+  private readonly captureSessions = new Map<string, BrowserCaptureSessionContext>();
   private readonly pendingPairings = new Map<string, PendingPairing>();
   private readonly queue: string[] = [];
   private readonly jobAbortControllers = new Map<string, AbortController>();
@@ -579,6 +636,7 @@ export class BrowserCaptureServer {
       }
     }
     this.capturedSources.clear();
+    this.captureSessions.clear();
     await this.persistJobs().catch(() => undefined);
     this.status = {
       running: false,
@@ -832,12 +890,60 @@ export class BrowserCaptureServer {
       });
       const browserContent = stringField(body.content).trim().slice(0, MAX_SOURCE_CHARACTERS);
       const browserTranscript = stringField(body.transcript).trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const errorShell = detectCaptureErrorShell({
+        title: stringField(body.contentTitle) || stringField(body.title),
+        text: browserContent,
+      });
+      if (errorShell && pageType === "article") {
+        this.jobs.delete(job.id);
+        await this.persistJobs();
+        sendJson(response, 422, {
+          error: `${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`,
+          code: "PAGE_REQUIRES_BROWSER_SESSION",
+        }, origin);
+        return;
+      }
+      const mediaCandidates = captureMediaCandidates(body.mediaCandidates, url);
+      const cookies = captureSessionCookies(body.sessionCookies, url);
+      const userAgent = stringField(body.userAgent).replace(/[\r\n\0]/g, "").slice(0, 1_000);
+      const referer = stringField(body.referer, url).replace(/[\r\n\0]/g, "").slice(0, 2_000);
+      if (cookies.length || mediaCandidates.length || userAgent) {
+        this.captureSessions.set(job.id, {
+          cookies,
+          userAgent,
+          referer,
+          mediaCandidates,
+        });
+      }
       if (pageType === "article" && browserContent.length >= 80) {
+        const browserImages = Array.isArray(body.images)
+          ? body.images.slice(0, 80).flatMap((raw) => {
+            if (!raw || typeof raw !== "object") return [];
+            const item = raw as Record<string, unknown>;
+            try {
+              const imageUrl = new URL(stringField(item.url), url);
+              if (!["http:", "https:"].includes(imageUrl.protocol)) return [];
+              const alt = stringField(item.alt, "图片")
+                .replaceAll("[", " ")
+                .replaceAll("]", " ")
+                .replace(/[\n\r]/g, " ")
+                .trim()
+                .slice(0, 160) || "图片";
+              return [`![${alt}](${imageUrl.toString()})`];
+            } catch {
+              return [];
+            }
+          })
+          : [];
+        const source = [browserContent, browserImages.length ? `## 页面图片\n\n${browserImages.join("\n\n")}` : ""]
+          .filter(Boolean)
+          .join("\n\n");
         this.capturedSources.set(job.id, {
           title: (stringField(body.contentTitle) || stringField(body.title)).trim().slice(0, 500) || job.title,
-          source: browserContent,
+          source: source.slice(0, MAX_SOURCE_CHARACTERS),
           author: stringField(body.author).trim().slice(0, 500) || undefined,
           publishedAt: stringField(body.publishedAt).trim().slice(0, 200) || undefined,
+          embeddedMedia: mediaCandidates,
         });
       } else if (pageType === "video" && browserTranscript.length >= 20) {
         this.capturedSources.set(job.id, {
@@ -1119,6 +1225,18 @@ export class BrowserCaptureServer {
             this.host.getSettings().browserCapture.prefixArticleTitleWithDate,
           );
           noteFile = await this.renameArticleToTitle(noteFile, extracted.title, id);
+          const embeddedMedia = extracted.embeddedMedia
+            ?? this.captureSessions.get(id)?.mediaCandidates
+            ?? [];
+          if (embeddedMedia.length) {
+            extracted.source = await this.appendEmbeddedMediaTranscripts(
+              job,
+              noteFile.path,
+              extracted.source,
+              embeddedMedia,
+              signal,
+            );
+          }
           extracted.source = await this.localizeArticleImages(
             extracted.source,
             extracted.title,
@@ -1274,6 +1392,7 @@ export class BrowserCaptureServer {
       }
     } finally {
       this.capturedSources.delete(id);
+      this.captureSessions.delete(id);
       this.jobAbortControllers.delete(id);
       this.originalTargetContents.delete(id);
       this.currentNotePaths.delete(id);
@@ -1306,6 +1425,7 @@ export class BrowserCaptureServer {
     }
     this.queue.splice(0, this.queue.length, ...this.queue.filter((queuedId) => queuedId !== id));
     this.capturedSources.delete(id);
+    this.captureSessions.delete(id);
     this.originalTargetContents.delete(id);
     this.currentNotePaths.delete(id);
     this.jobAbortControllers.delete(id);
@@ -1428,6 +1548,25 @@ export class BrowserCaptureServer {
     return renamed instanceof TFile ? renamed : file;
   }
 
+  private async ytDlpSessionArgs(
+    job: BrowserCaptureJob,
+    directory: string,
+    captureUrl: string,
+  ): Promise<string[]> {
+    const session = this.captureSessions.get(job.id);
+    if (!session) return [];
+    const args: string[] = [];
+    if (session.cookies.length) {
+      const cookiePath = join(directory, "session-cookies.txt");
+      await writeFile(cookiePath, serializeNetscapeCookies(session.cookies), { encoding: "utf8", mode: 0o600 });
+      args.push("--cookies", cookiePath);
+    }
+    if (session.userAgent) args.push("--user-agent", session.userAgent);
+    const referer = session.referer || captureUrl;
+    if (referer) args.push("--referer", referer);
+    return args;
+  }
+
   private async probeCaptureTarget(job: BrowserCaptureJob): Promise<void> {
     try {
       const {
@@ -1448,9 +1587,28 @@ export class BrowserCaptureServer {
         job.skillId = browserCaptureSkill(pageType).id;
       }
       if (pageType === "article" && html.length >= 80) {
+        const errorShell = detectCaptureErrorShell({ html });
+        if (errorShell) {
+          const error = new Error(`${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`);
+          error.name = "CaptureContentError";
+          throw error;
+        }
         try {
           const extracted = extractArticleFromHtml(html, job.title, finalUrl);
-          this.capturedSources.set(job.id, extracted);
+          const mediaCandidates = extractEmbeddedMediaCandidates(html, finalUrl);
+          this.capturedSources.set(job.id, { ...extracted, embeddedMedia: mediaCandidates });
+          const existing = this.captureSessions.get(job.id);
+          if (mediaCandidates.length) {
+            this.captureSessions.set(job.id, {
+              cookies: existing?.cookies ?? [],
+              userAgent: existing?.userAgent ?? "",
+              referer: existing?.referer ?? finalUrl,
+              mediaCandidates: Array.from(new Map([
+                ...(existing?.mediaCandidates ?? []),
+                ...mediaCandidates,
+              ].map((candidate) => [candidate.url, candidate])).values()),
+            });
+          }
         } catch {
           // Dynamic and protected pages continue through Defuddle and browser-visible fallbacks.
         }
@@ -1460,7 +1618,8 @@ export class BrowserCaptureServer {
         pageType: job.pageType,
         skillId: job.skillId,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === "CaptureContentError") throw error;
       // Redirect and metadata probing is best-effort; established extractors remain available.
     }
   }
@@ -1616,7 +1775,12 @@ export class BrowserCaptureServer {
       if (response.status < 200 || response.status >= 400) {
         throw new Error(`网页读取失败（HTTP ${response.status}）`);
       }
-      fetched = extractArticleFromHtml(response.text, job.title, captureUrl);
+      const errorShell = detectCaptureErrorShell({ html: response.text });
+      if (errorShell) throw new Error(`${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`);
+      fetched = {
+        ...extractArticleFromHtml(response.text, job.title, captureUrl),
+        embeddedMedia: extractEmbeddedMediaCandidates(response.text, captureUrl),
+      };
     } catch (error) {
       primaryError = error;
     }
@@ -1648,6 +1812,7 @@ export class BrowserCaptureServer {
         title: title || job.title || "未命名网页",
         author,
         source: result.stdout.trim(),
+        embeddedMedia: fetched?.embeddedMedia ?? this.captureSessions.get(job.id)?.mediaCandidates ?? [],
       };
     } catch (error) {
       if (isCaptureAbort(error, signal)) throw error;
@@ -1658,16 +1823,69 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractVideo(job: BrowserCaptureJob, signal?: AbortSignal): Promise<ExtractedSource> {
+  private async appendEmbeddedMediaTranscripts(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+    articleSource: string,
+    candidates: BrowserCaptureMediaCandidate[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const unique = candidates
+      .filter((candidate) => !sameCaptureResourceUrl(candidate.url, job.url))
+      .filter((candidate, index, all) => all.findIndex((item) => sameCaptureResourceUrl(item.url, candidate.url)) === index)
+      .slice(0, 3);
+    if (!unique.length) return articleSource;
+    const sections: string[] = [];
+    for (let index = 0; index < unique.length; index += 1) {
+      throwIfCaptureAborted(signal);
+      const candidate = unique[index]!;
+      await this.updateJob(job.id, {
+        progress: 24 + Math.round(((index + 1) / unique.length) * 18),
+        message: `正在解析文章内嵌媒体 ${index + 1}/${unique.length}`,
+      });
+      try {
+        const result = candidate.pageType === "video"
+          ? await this.extractVideo(job, signal, candidate.url)
+          : await this.extractAudio(job, sourceNotePath, signal, candidate.url, false);
+        sections.push([
+          `### ${result.title || candidate.label || (candidate.pageType === "video" ? "内嵌视频" : "内嵌音频")}`,
+          "",
+          candidate.url,
+          "",
+          result.source,
+        ].join("\n"));
+      } catch (error) {
+        if (isCaptureAbort(error, signal)) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        sections.push([
+          `### ${candidate.label || (candidate.pageType === "video" ? "内嵌视频" : "内嵌音频")}`,
+          "",
+          candidate.url,
+          "",
+          `> 暂未完成转录：${message}`,
+        ].join("\n"));
+      }
+    }
+    return [articleSource.trim(), "## 内嵌媒体", sections.join("\n\n")]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  private async extractVideo(
+    job: BrowserCaptureJob,
+    signal?: AbortSignal,
+    urlOverride?: string,
+  ): Promise<ExtractedSource> {
     throwIfCaptureAborted(signal);
-    const captureUrl = job.resolvedUrl || job.url;
+    const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-video-"));
     try {
+      const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
+        [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
         signal,
@@ -1677,7 +1895,11 @@ export class BrowserCaptureServer {
         : job.title;
       await runLocalCommand(
         downloader,
-        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
+        [
+          ...ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl).slice(0, -1),
+          ...sessionArgs,
+          captureUrl,
+        ],
         "",
         15 * 60,
         signal,
@@ -1696,25 +1918,36 @@ export class BrowserCaptureServer {
         progress: 28,
         message: "没有找到可用字幕，正在下载音频",
       });
-      const audioResult = await runLocalCommand(
-        downloader,
-        [
-          ...ytDlpCaptureArgs(captureUrl),
-          ...ffmpegLocationArgs(settings),
-          "-x",
-          "--audio-format",
-          "mp3",
-          "-o",
-          join(directory, "audio.%(ext)s"),
-          captureUrl,
-        ],
-        "",
-        60 * 60,
-        signal,
-      );
-      if (audioResult.exitCode !== 0) {
+      const downloadUrls = [
+        captureUrl,
+        ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
+          .filter((candidate) => candidate.pageType === "video")
+          .map((candidate) => candidate.url),
+      ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+      let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
+      for (const downloadUrl of downloadUrls) {
+        audioResult = await runLocalCommand(
+          downloader,
+          [
+            ...ytDlpCaptureArgs(downloadUrl),
+            ...sessionArgs,
+            ...ffmpegLocationArgs(settings),
+            "-x",
+            "--audio-format",
+            "mp3",
+            "-o",
+            join(directory, "audio.%(ext)s"),
+            downloadUrl,
+          ],
+          "",
+          60 * 60,
+          signal,
+        );
+        if (audioResult.exitCode === 0) break;
+      }
+      if (!audioResult || audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
-          `${audioResult.stderr}\n${audioResult.stdout}`,
+          `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
           captureUrl,
         ));
       }
@@ -1754,6 +1987,13 @@ export class BrowserCaptureServer {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
       let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
       if (!transcriptPath) {
         const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
@@ -1817,18 +2057,13 @@ export class BrowserCaptureServer {
           progress: 34,
           message: "正在提取 Whisper 可读取的音轨",
         });
-        const conversion = await runLocalCommand(ffmpeg, [
-          "-y",
-          "-i",
-          audioPath,
-          "-ar",
-          "16000",
-          "-ac",
-          "1",
-          "-c:a",
-          "pcm_s16le",
-          whisperAudioPath,
-        ], "", 20 * 60, signal);
+        const conversion = await runLocalCommand(
+          ffmpeg,
+          buildWhisperPcmConversionArgs(audioPath, whisperAudioPath),
+          "",
+          20 * 60,
+          signal,
+        );
         if (conversion.exitCode !== 0) {
           throw new Error(conversion.stderr.trim() || "本地媒体音轨转换失败");
         }
@@ -1876,16 +2111,23 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractAudio(job: BrowserCaptureJob, sourceNotePath: string, signal?: AbortSignal): Promise<ExtractedSource> {
+  private async extractAudio(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+    signal?: AbortSignal,
+    urlOverride?: string,
+    saveOriginal = true,
+  ): Promise<ExtractedSource> {
     throwIfCaptureAborted(signal);
-    const captureUrl = job.resolvedUrl || job.url;
+    const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-audio-"));
     try {
+      const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
+        [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
         signal,
@@ -1895,7 +2137,11 @@ export class BrowserCaptureServer {
         : job.title;
       await runLocalCommand(
         downloader,
-        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
+        [
+          ...ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl).slice(0, -1),
+          ...sessionArgs,
+          captureUrl,
+        ],
         "",
         15 * 60,
         signal,
@@ -1915,38 +2161,51 @@ export class BrowserCaptureServer {
         progress: 28,
         message: "没有找到可用字幕，正在下载音频并转录",
       });
-      const audioResult = await runLocalCommand(
-        downloader,
-        [
-          ...ytDlpCaptureArgs(captureUrl),
-          ...ffmpegLocationArgs(settings),
-          "-x",
-          "--audio-format",
-          "m4a",
-          "-o",
-          join(directory, "audio.%(ext)s"),
-          captureUrl,
-        ],
-        "",
-        60 * 60,
-        signal,
-      );
-      if (audioResult.exitCode !== 0) {
+      const downloadUrls = [
+        captureUrl,
+        ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
+          .filter((candidate) => candidate.pageType === "audio")
+          .map((candidate) => candidate.url),
+      ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+      let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
+      for (const downloadUrl of downloadUrls) {
+        audioResult = await runLocalCommand(
+          downloader,
+          [
+            ...ytDlpCaptureArgs(downloadUrl),
+            ...sessionArgs,
+            ...ffmpegLocationArgs(settings),
+            "-x",
+            "--audio-format",
+            "m4a",
+            "-o",
+            join(directory, "audio.%(ext)s"),
+            downloadUrl,
+          ],
+          "",
+          60 * 60,
+          signal,
+        );
+        if (audioResult.exitCode === 0) break;
+      }
+      if (!audioResult || audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
-          `${audioResult.stderr}\n${audioResult.stdout}`,
+          `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
           captureUrl,
         ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
       if (!audioFile) throw new Error("没有找到已下载的音频文件");
       const audioPath = join(directory, audioFile);
-      const mediaPath = await this.saveMediaFile(
-        audioPath,
-        title || job.title || "未命名音频",
-        extname(audioFile).replace(/^\./, "") || "m4a",
-        sourceNotePath,
-        job.id,
-      );
+      const mediaPath = saveOriginal
+        ? await this.saveMediaFile(
+          audioPath,
+          title || job.title || "未命名音频",
+          extname(audioFile).replace(/^\./, "") || "m4a",
+          sourceNotePath,
+          job.id,
+        )
+        : undefined;
       await this.updateJob(job.id, {
         progress: 34,
         message: "音频已经保存，正在检测本机 Whisper",
@@ -1957,9 +2216,28 @@ export class BrowserCaptureServer {
       const cppModelPath = implementation === "whisper-cpp"
         ? await resolveWhisperCppModel(model)
         : undefined;
+      let whisperAudioPath = audioPath;
+      if (whisperNeedsPcmConversion(implementation, audioPath)) {
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        whisperAudioPath = join(directory, "whisper-input.wav");
+        await this.updateJob(job.id, {
+          progress: 36,
+          message: "正在转换为 Whisper 可读取的音轨",
+        });
+        const conversion = await runLocalCommand(
+          ffmpeg,
+          buildWhisperPcmConversionArgs(audioPath, whisperAudioPath),
+          "",
+          20 * 60,
+          signal,
+        );
+        if (conversion.exitCode !== 0) {
+          throw new Error(conversion.stderr.trim() || "远程音频音轨转换失败");
+        }
+      }
       const invocation = buildWhisperInvocation({
         implementation,
-        audioPath,
+        audioPath: whisperAudioPath,
         outputDirectory: directory,
         model,
         cppModelPath,
@@ -1969,6 +2247,13 @@ export class BrowserCaptureServer {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
       let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
       if (!transcriptPath) {
         const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
@@ -1979,7 +2264,7 @@ export class BrowserCaptureServer {
       return {
         title: title || job.title || "未命名音频",
         source: transcript,
-        mediaPath,
+        ...(mediaPath ? { mediaPath } : {}),
       };
     } finally {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
