@@ -15,13 +15,12 @@ How it works: `/how-it-works`
 This message disappears once the first observation lands.
 </claude-mem-context>
 
-# Product Documentation Policy
+# Product Contract Handoff
 
-- Root `PRD.md` is the public Obsidian plugin delivery contract. The private `KnowGrove-Platform/PRD.md` is the single cross-end product baseline.
-- Every public plugin feature addition, removal, behavior change, setting change, or release-status change must update the corresponding section of this public contract.
-- A change to recording, transcription, task state, Markdown output, privacy, or bridge protocol must also update the matching capability ID and affected clients in the private total PRD; record that cross-repository handoff before merging.
-- Keep this contract compact and current. Detailed evidence belongs in `docs/`, and old chronology belongs in the private archive rather than an indefinitely growing change log.
-- Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
+- This public repository does not store a product PRD or a synchronized copy. The only cross-end product source of truth is the private `lufie/KnowGrove-Platform` root `PRD.md`.
+- Every public plugin feature addition, removal, behavior change, setting change, or release-status change must update the matching capability ID, common contract, Obsidian section, compatibility requirements, and change log in the private total PRD before merge.
+- The handoff must retain prerequisites, ordered flow, state/data semantics, invariants, failure recovery, platform differences, and compatibility/acceptance requirements when they change.
+- Public implementation and release evidence belongs in `README.md`, `docs/`, tests, and GitHub Release notes. Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
 
 # Public Repository Boundary
 
