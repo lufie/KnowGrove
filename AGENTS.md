@@ -21,3 +21,10 @@ This message disappears once the first observation lands.
 - Every user-visible feature addition, removal, behavior change, setting change, or release-status change must update the corresponding section of `PRD.md`.
 - Every such change must also add one entry to the `PRD.md` change log and update its product/PRD version when applicable.
 - Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
+
+# Public Repository Boundary
+
+- This public repository is the source of truth for the KnowGrove Obsidian plugin and its public local-bridge contract.
+- Desktop application, browser extension, cloud service, and private runtime implementation source belong in the private `lufie/KnowGrove-Platform` repository.
+- Never copy the private repository wholesale into this public repository. Any cross-repository export must use an explicit allow-list and review.
+- Obsidian plugin release tags must match `manifest.json` exactly and must not use a product prefix.

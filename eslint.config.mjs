@@ -11,8 +11,6 @@ export default defineConfig([
       "release/**",
       "runtime-dist/**",
       ".runtime-*/**",
-      "cloud/**",
-      "言序浏览器一键入库/**",
     ],
   },
   ...obsidianmd.configs.recommended,

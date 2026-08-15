@@ -67,7 +67,7 @@ Chrome / Safari
   → Obsidian vault
 ```
 
-The local receiver listens only on `127.0.0.1:47831` and requires confirmation in Obsidian before pairing. Browser extension source and setup notes are in [言序浏览器一键入库](言序浏览器一键入库/README.md).
+The local receiver listens only on `127.0.0.1:47831` and requires confirmation in Obsidian before pairing. The companion browser extension is distributed and versioned separately; its closed-source implementation is maintained outside this public Obsidian plugin repository.
 
 ## Privacy and safety
 
@@ -82,6 +82,7 @@ The local receiver listens only on `127.0.0.1:47831` and requires confirmation i
 - Whole-vault enumeration is reserved for explicit property, topic, or attachment checks. Attachment checks do not rebuild the vault index at startup.
 - Clipboard access occurs only after a user clicks a copy action.
 - KnowGrove does not bypass paywalls, login restrictions, DRM, or platform permissions.
+- The separately distributed browser extension and desktop application are closed-source companion products. This public repository contains the complete source for the Obsidian plugin and its local bridge contract, but not those companion implementations.
 - Attachment cleanup moves confirmed candidates to the Obsidian trash; it does not permanently delete them.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete boundaries.
