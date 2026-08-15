@@ -87,6 +87,7 @@ for (const path of javaScriptFiles) {
     check(/permissions\.request\(\{[\s\S]*permissions: \["cookies"\]/.test(source), "Cookie 必须在用户操作时动态授权");
     check(/cookies\.getAll\(\{ url: tab\.url \}\)/.test(source), "只允许读取当前标签页 URL 可用的 Cookie");
     check(!/storage\.(?:local|sync)\.set\([^)]*sessionCookies/s.test(source), "站点 Cookie 不得写入扩展持久存储");
+    check(/captureProtectedMediaCandidates/.test(source), "受保护媒体页面必须读取播放器和页面状态中的可见媒体地址");
   }
   if (path === "popup.js") {
     check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");

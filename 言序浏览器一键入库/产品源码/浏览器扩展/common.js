@@ -236,6 +236,86 @@ export async function capturePageContent(tabId) {
   }
 }
 
+export async function captureProtectedMediaCandidates(tabId) {
+  if (!tabId || !extensionApi.scripting) return [];
+  try {
+    const results = await extensionApi.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        const candidates = [];
+        const seenUrls = new Set();
+        const seenObjects = new WeakSet();
+        const mediaKey = /(?:play|video|audio|stream|download|master|backup|origin|source|src|url)/i;
+        const mediaUrl = /(?:\.(?:m3u8|mpd|mp4|m4v|mov|mkv|mp3|m4a|aac|flac|ogg|opus|wav)(?:$|[?#])|videoplayback|video|play|stream|media|aweme|douyinvod|tiktokcdn|xhscdn|fbcdn|cdninstagram|vimeocdn|wxurl|tos-)/i;
+        const imageUrl = /(?:avatar|profile|image|img|cover|poster|thumbnail|\.jpe?g(?:$|[?#])|\.png(?:$|[?#])|\.webp(?:$|[?#]))/i;
+        const push = (rawUrl, key = "") => {
+          const value = String(rawUrl ?? "")
+            .replaceAll("\\u002F", "/")
+            .replaceAll("\\/", "/")
+            .replaceAll("&amp;", "&")
+            .trim();
+          if (!/^https?:\/\//i.test(value) || value.length > 8_000) return;
+          if (!mediaKey.test(key) || !mediaUrl.test(value) || imageUrl.test(value)) return;
+          let parsed;
+          try {
+            parsed = new URL(value, location.href);
+          } catch {
+            return;
+          }
+          if (!["http:", "https:"].includes(parsed.protocol) || seenUrls.has(parsed.href)) return;
+          seenUrls.add(parsed.href);
+          const pageType = /(?:\.mp3|\.m4a|\.aac|\.flac|\.ogg|\.opus|\.wav)(?:$|[?#])/i.test(parsed.href)
+            ? "audio"
+            : "video";
+          candidates.push({ url: parsed.href, pageType, label: key.slice(0, 120) });
+        };
+        const walk = (value, key = "root", depth = 0) => {
+          if (candidates.length >= 20 || depth > 10 || value == null) return;
+          if (typeof value === "string") {
+            push(value, key);
+            return;
+          }
+          if (typeof value !== "object" || seenObjects.has(value)) return;
+          seenObjects.add(value);
+          if (Array.isArray(value)) {
+            for (const item of value.slice(0, 300)) walk(item, key, depth + 1);
+            return;
+          }
+          for (const [childKey, childValue] of Object.entries(value).slice(0, 600)) {
+            walk(childValue, childKey, depth + 1);
+            if (candidates.length >= 20) break;
+          }
+        };
+        const parseScriptJson = (selector) => {
+          const text = document.querySelector(selector)?.textContent?.trim();
+          if (!text || text.length > 8_000_000) return null;
+          try {
+            return JSON.parse(text);
+          } catch {
+            return null;
+          }
+        };
+        const roots = [
+          globalThis.__INITIAL_STATE__,
+          globalThis.__NEXT_DATA__,
+          globalThis.__UNIVERSAL_DATA_FOR_REHYDRATION__,
+          globalThis.SIGI_STATE,
+          globalThis.__INITIAL_SSR_STATE__,
+          parseScriptJson("#__NEXT_DATA__"),
+          parseScriptJson("#__UNIVERSAL_DATA_FOR_REHYDRATION__"),
+          parseScriptJson("#SIGI_STATE"),
+        ];
+        for (const root of roots) walk(root);
+        return candidates;
+      },
+    });
+    return Array.isArray(results?.[0]?.result) ? results[0].result.slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function captureBrowserSession(tab) {
   if (!tab?.url || !extensionApi.permissions || !extensionApi.cookies) return null;
   const parsed = new URL(tab.url);

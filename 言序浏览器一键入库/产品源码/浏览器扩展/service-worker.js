@@ -3,6 +3,7 @@ import {
   captureBrowserSession,
   captureBilibiliTranscript,
   capturePageContent,
+  captureProtectedMediaCandidates,
   detectPageType,
   extensionApi,
   loadSettings,
@@ -171,6 +172,13 @@ async function submitFromContextMenu(info, tab) {
   const session = !info.linkUrl && isProtectedMediaPage(url)
     ? await captureBrowserSession(tab).catch(() => null)
     : null;
+  const protectedMedia = !info.linkUrl && isProtectedMediaPage(url)
+    ? await captureProtectedMediaCandidates(tab?.id)
+    : [];
+  const mediaCandidates = [
+    ...(renderedPage?.mediaCandidates || []),
+    ...protectedMedia,
+  ].filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index);
   await setBadge("…", "#a46616");
   const accepted = await bridgeRequest(settings, "/v1/capture", {
     method: "POST",
@@ -186,7 +194,7 @@ async function submitFromContextMenu(info, tab) {
       sourceKind: renderedPage?.sourceKind || "",
       transcript: mediaTranscript?.transcript || "",
       images: renderedPage?.images || [],
-      mediaCandidates: renderedPage?.mediaCandidates || [],
+      mediaCandidates,
       sessionCookies: session?.cookies || [],
       userAgent: renderedPage?.userAgent || "",
       referer: session?.referer || url,

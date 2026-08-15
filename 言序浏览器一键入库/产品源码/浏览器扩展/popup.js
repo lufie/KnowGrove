@@ -3,6 +3,7 @@ import {
   captureBrowserSession,
   captureBilibiliTranscript,
   capturePageContent,
+  captureProtectedMediaCandidates,
   clipText,
   detectPageType,
   extensionApi,
@@ -182,6 +183,13 @@ async function startCapture(options = {}) {
     if (options.useSession && !session) {
       throw new Error("没有获得当前站点权限。你可以继续使用公开解析，或再次点击并允许访问当前站点。");
     }
+    const protectedMedia = isProtectedMediaPage(currentTab.url)
+      ? await captureProtectedMediaCandidates(currentTab.id)
+      : [];
+    const mediaCandidates = [
+      ...(renderedPage?.mediaCandidates || []),
+      ...protectedMedia,
+    ].filter((item, index, all) => all.findIndex((candidate) => candidate.url === item.url) === index);
     const accepted = await bridgeRequest(currentSettings, "/v1/capture", {
       method: "POST",
       body: JSON.stringify({
@@ -196,7 +204,7 @@ async function startCapture(options = {}) {
         sourceKind: renderedPage?.sourceKind || "",
         transcript: mediaTranscript?.transcript || "",
         images: renderedPage?.images || [],
-        mediaCandidates: renderedPage?.mediaCandidates || [],
+        mediaCandidates,
         sessionCookies: session?.cookies || [],
         userAgent: renderedPage?.userAgent || navigator.userAgent,
         referer: session?.referer || currentTab.url,
