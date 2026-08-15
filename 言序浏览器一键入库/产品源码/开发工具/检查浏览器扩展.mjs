@@ -97,6 +97,9 @@ for (const path of javaScriptFiles) {
   if (path === "popup.js") {
     check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");
     check(/storage\.local\.remove\("activeCaptureJob"\)/.test(source), "取消后必须清理浏览器活动任务状态");
+    check(/openConnectionGuide/.test(source), "未连接时必须自动唤起 KnowGrove 连接引导");
+    check(/await connectKnowGrove\(\)/.test(source), "本机服务在线但未配对时必须自动发起配对");
+    check(/KNOWGROVE_SETTINGS_URL/.test(source), "本机服务离线时必须打开 KnowGrove 浏览器连接设置");
     check(
       source.indexOf("await captureBrowserSession(currentTab)") < source.indexOf("await capturePageContent(currentTab.id)"),
       "当前站点权限必须在其他异步操作之前请求，以保留 Chrome 用户手势",

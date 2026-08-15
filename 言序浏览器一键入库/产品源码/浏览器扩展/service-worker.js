@@ -27,6 +27,7 @@ async function runPairing() {
       status: "pending",
       nonce: pairing.nonce,
       startedAt: new Date().toISOString(),
+      deepLink: pairing.deepLink,
     },
   });
   await extensionApi.tabs.create({ url: pairing.deepLink });

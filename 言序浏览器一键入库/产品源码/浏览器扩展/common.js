@@ -179,7 +179,13 @@ export async function resumePendingPairing() {
     });
     return { ok: false, pending: false };
   }
-  if (status.status !== "approved" || !status.token) return { ok: false, pending: true };
+  if (status.status !== "approved" || !status.token) {
+    return {
+      ok: false,
+      pending: true,
+      deepLink: pairing.deepLink || `obsidian://knowgrove-browser-pair?nonce=${encodeURIComponent(pairing.nonce)}`,
+    };
+  }
 
   const settings = await loadSettings();
   await saveSettings({ ...settings, token: status.token });
@@ -200,6 +206,7 @@ async function requestPopupPairing() {
       nonce: pairing.nonce,
       startedAt: new Date().toISOString(),
       mode: "popup-fallback",
+      deepLink: pairing.deepLink,
     },
   });
   await extensionApi.tabs.create({ url: pairing.deepLink });

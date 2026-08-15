@@ -9,6 +9,7 @@ import {
   extensionApi,
   isSupportedPage,
   isProtectedMediaPage,
+  KNOWGROVE_SETTINGS_URL,
   loadSettings,
   pageTypeLabel,
   requestBackgroundPairing,
@@ -53,6 +54,7 @@ let currentSettings;
 let currentResult;
 let isCapturing = false;
 let currentJobId;
+let autoConnectionAttempted = false;
 
 function delay(milliseconds) {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
@@ -299,11 +301,17 @@ async function connectKnowGrove() {
   }
 }
 
+async function openConnectionGuide(url = KNOWGROVE_SETTINGS_URL) {
+  if (autoConnectionAttempted) return;
+  autoConnectionAttempted = true;
+  await extensionApi.tabs.create({ url });
+}
+
 async function initialize() {
   isCapturing = false;
   currentJobId = undefined;
   currentResult = undefined;
-  await resumePendingPairing();
+  const pairing = await resumePendingPairing();
   currentSettings = await loadSettings();
   elements.autoRunNote.textContent = currentSettings.autoRun ? "打开即执行" : "手动执行";
   const tabs = await extensionApi.tabs.query({ active: true, currentWindow: true });
@@ -329,6 +337,7 @@ async function initialize() {
     setBridgeState("Obsidian 未连接", "offline");
     showError(error, { connect: false });
     elements.retry.hidden = false;
+    await openConnectionGuide();
     return;
   }
   if (currentSettings.token && !health.authorized) {
@@ -344,6 +353,12 @@ async function initialize() {
     setBridgeState("等待配对", "offline");
     elements.provider.textContent = "尚未连接";
     showError(new Error("请连接已打开的 Obsidian。KnowGrove 会弹出一次确认。"), { connect: true });
+    if (pairing.pending) {
+      await openConnectionGuide(pairing.deepLink);
+    } else if (!autoConnectionAttempted) {
+      autoConnectionAttempted = true;
+      await connectKnowGrove();
+    }
     return;
   }
   try {
