@@ -6,24 +6,30 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  buildWhisperPcmConversionArgs,
   browserCaptureChunkPrompt,
   browserCapturePrompt,
   browserCaptureSynthesisPrompt,
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
+  captureCancellationPlan,
+  CAPTURE_FILE_NAME_MAX_BYTES,
   cleanArticleMarkdown,
+  detectCaptureErrorShell,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   datedArticleTitle,
   extractJsonObject,
+  extractEmbeddedMediaCandidates,
   extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
   normalizeBrowserCaptureAIResult,
+  normalizeCaptureSessionCookies,
   parseSubtitleText,
   parseWebVtt,
   protectArticleImages,
@@ -32,11 +38,112 @@ import {
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
+  serializeNetscapeCookies,
+  selectApplePodcastEpisode,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
 } from "../src/browser-capture-core";
+import { runBrowserProviderWithHandoff } from "../src/browser-provider-handoff";
+import type { AIPropertySettings } from "../src/types";
+
+function providerSettings(
+  provider: AIPropertySettings["provider"],
+  model = "",
+): AIPropertySettings {
+  return {
+    enabled: true,
+    autoEnrichNewNotes: true,
+    provider,
+    model,
+    executablePath: "",
+    endpoint: "",
+    maxContentCharacters: 40_000,
+    timeoutSeconds: 900,
+  };
+}
+
+test("browser capture hands an in-flight prompt to a newly selected CLI", async () => {
+  let current = providerSettings("codex-cli", "gpt-old");
+  const attempts: string[] = [];
+  const resultPromise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (settings, signal) => {
+      attempts.push(`${settings.provider}:${settings.model}`);
+      if (settings.provider === "codebuddy-cli") return "new-provider-output";
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("old provider stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli", "buddy-new");
+  }, 25);
+  const result = await resultPromise;
+  assert.deepEqual(attempts, ["codex-cli:gpt-old", "codebuddy-cli:buddy-new"]);
+  assert.equal(result.output, "new-provider-output");
+  assert.equal(result.providerId, "codebuddy-cli");
+  assert.equal(result.handoffCount, 1);
+});
+
+test("browser capture does not retry a failed provider when configuration is unchanged", async () => {
+  const current = providerSettings("codex-cli", "gpt-same");
+  let attempts = 0;
+  await assert.rejects(
+    runBrowserProviderWithHandoff({
+      requestedProvider: "codex-cli",
+      getSettings: () => current,
+      pollIntervalMilliseconds: 10,
+      scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+      clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+      execute: async () => {
+        attempts += 1;
+        throw new Error("provider failed");
+      },
+    }),
+    /provider failed/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("browser capture cancellation wins over provider handoff", async () => {
+  const controller = new AbortController();
+  let current = providerSettings("codex-cli");
+  let attempts = 0;
+  const promise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    signal: controller.signal,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (_settings, signal) => {
+      attempts += 1;
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli");
+    controller.abort();
+  }, 25);
+  await assert.rejects(promise, (error: unknown) => error instanceof Error && error.name === "AbortError");
+  assert.equal(attempts, 1);
+});
 
 test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://www.youtube.com/watch?v=1"), "video");
@@ -44,6 +151,74 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+  assert.equal(classifyBrowserCaptureUrl("https://www.instagram.com/reel/example/"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://vimeo.com/56015672"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/sph/example"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/article/example"), "article");
+});
+
+test("Apple Podcasts resolves a shared episode or the latest show episode to public audio", () => {
+  const results = [
+    { wrapperType: "track", kind: "podcast", trackId: 1894113824, trackName: "Top Five Tech" },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000783300456,
+      trackName: "Latest episode",
+      episodeUrl: "https://media.example.com/latest.mp3",
+    },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000779262450,
+      trackName: "Shared episode",
+      episodeUrl: "https://media.example.com/shared.mp3",
+    },
+  ];
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824", results),
+    { title: "Latest episode", mediaUrl: "https://media.example.com/latest.mp3" },
+  );
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824?i=1000779262450", results),
+    { title: "Shared episode", mediaUrl: "https://media.example.com/shared.mp3" },
+  );
+  assert.equal(selectApplePodcastEpisode("https://example.com/id1894113824", results), undefined);
+});
+
+test("articles with incidental embedded media stay articles while media candidates are inventoried", () => {
+  const html = [
+    "<article>",
+    `<p>${"正文内容".repeat(800)}</p>`,
+    '<video controls src="https://cdn.example.com/interview.mp4"></video>',
+    '<audio src="/episode.m4a"></audio>',
+    "</article>",
+  ].join("");
+  assert.equal(classifyBrowserCaptureResource("https://example.com/story", { html }), "article");
+  assert.deepEqual(extractEmbeddedMediaCandidates(html, "https://example.com/story"), [
+    { url: "https://cdn.example.com/interview.mp4", pageType: "video" },
+    { url: "https://example.com/episode.m4a", pageType: "audio" },
+  ]);
+});
+
+test("capture rejects expired login and verification shells", () => {
+  assert.equal(detectCaptureErrorShell({ text: "你访问的页面不见了" }), "页面内容不存在或已经失效");
+  assert.equal(detectCaptureErrorShell({ title: "安全验证", text: "请完成验证码后继续" }), "页面要求完成人机验证");
+  assert.equal(detectCaptureErrorShell({ text: "请先登录后查看这篇内容" }), "页面需要登录后才能读取内容");
+  assert.equal(detectCaptureErrorShell({ text: "这是一篇正常文章，讨论产品登录流程。".repeat(500) }), undefined);
+});
+
+test("browser session cookies are scoped to the current site and serialized ephemerally", () => {
+  const cookies = normalizeCaptureSessionCookies([
+    { domain: ".douyin.com", path: "/", name: "sessionid", value: "safe", secure: true, expirationDate: 2_000_000_000 },
+    { domain: ".example.com", path: "/", name: "secret", value: "blocked" },
+    { domain: ".douyin.com", path: "/", name: "bad", value: "line\nbreak" },
+  ], "https://www.douyin.com/video/1");
+  assert.equal(cookies.length, 1);
+  const serialized = serializeNetscapeCookies(cookies);
+  assert.match(serialized, /^# Netscape HTTP Cookie File/);
+  assert.match(serialized, /\.douyin\.com\tTRUE\t\/\tTRUE\t2000000000\tsessionid\tsafe/);
+  assert.doesNotMatch(serialized, /example|line/);
 });
 
 test("generic capture resolves short links and detects media from response metadata", () => {
@@ -83,6 +258,23 @@ test("browser-rendered capture can target only a note with the same source URL",
     ),
     false,
   );
+});
+
+test("capture cancellation deletes only task-owned notes and attachments", () => {
+  assert.deepEqual(captureCancellationPlan({
+    createdNotePath: "Home/输入/任务.md",
+    createdAttachmentPaths: ["Home/输入/assets/a.png", "Home/输入/assets/a.png", "Home/输入/assets/b.m4a"],
+  }), {
+    trashPaths: ["Home/输入/assets/a.png", "Home/输入/assets/b.m4a", "Home/输入/任务.md"],
+    restoreTarget: false,
+  });
+  assert.deepEqual(captureCancellationPlan({
+    targetPath: "Home/输入/用户原有笔记.md",
+    createdAttachmentPaths: ["Home/输入/assets/task.png"],
+  }), {
+    trashPaths: ["Home/输入/assets/task.png"],
+    restoreTarget: true,
+  });
 });
 
 test("dynamic AI share pages recover question and answer text from embedded router data", () => {
@@ -343,6 +535,9 @@ test("video transcription supports both Whisper CLIs", () => {
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.m4a"), true);
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.wav"), false);
   assert.equal(whisperNeedsPcmConversion("openai-whisper", "/tmp/voice.m4a"), false);
+  assert.deepEqual(buildWhisperPcmConversionArgs("/tmp/voice.m4a", "/tmp/voice.wav"), [
+    "-y", "-i", "/tmp/voice.m4a", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "/tmp/voice.wav",
+  ]);
   assert.deepEqual(buildWhisperInvocation({
     implementation: "openai-whisper",
     audioPath: "/tmp/audio.mp3",
@@ -472,6 +667,13 @@ test("browser capture builds a completed note while retaining source", () => {
   assert.match(completed, /## 原文\n\n原始正文/);
   assert.match(completed, /## 内容摘要\n\n内容摘要/);
   assert.equal(safeCaptureFileName("a/b:c"), "a b c");
+});
+
+test("capture file names stay below the cross-platform UTF-8 byte limit", () => {
+  const fileName = safeCaptureFileName(`2026-08-15-${"超长中文标题".repeat(40)}.`);
+  assert.ok(new TextEncoder().encode(fileName).length <= CAPTURE_FILE_NAME_MAX_BYTES);
+  assert.doesNotMatch(fileName, /[. ]$/);
+  assert.ok(new TextEncoder().encode(`${fileName} 99.md`).length < 255);
 });
 
 test("article cleanup removes WeChat preamble, cover art, and footer noise", () => {

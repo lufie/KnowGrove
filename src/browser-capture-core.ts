@@ -54,6 +54,35 @@ export interface BrowserCaptureResourceHints {
   pageTypeHint?: string;
 }
 
+export interface BrowserCaptureMediaCandidate {
+  url: string;
+  pageType: "video" | "audio";
+  label?: string;
+}
+
+export interface BrowserCaptureSessionCookie {
+  domain: string;
+  path: string;
+  name: string;
+  value: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expirationDate?: number;
+}
+
+export interface ApplePodcastLookupItem {
+  wrapperType?: string;
+  kind?: string;
+  trackId?: number;
+  trackName?: string;
+  episodeUrl?: string;
+}
+
+export interface ApplePodcastEpisode {
+  title: string;
+  mediaUrl: string;
+}
+
 export type WhisperImplementation = "openai-whisper" | "whisper-cpp";
 
 export interface WhisperInvocation {
@@ -74,6 +103,12 @@ const VIDEO_HOSTS = [
   "ixigua.com",
   "tiktok.com",
   "weibo.tv",
+  "instagram.com",
+  "vimeo.com",
+  "dailymotion.com",
+  "twitch.tv",
+  "facebook.com",
+  "fb.watch",
 ];
 
 const AUDIO_HOSTS = [
@@ -84,6 +119,8 @@ const AUDIO_HOSTS = [
   "soundcloud.com",
   "ximalaya.com",
   "qingting.fm",
+  "open.spotify.com",
+  "podbean.com",
 ];
 
 const VIDEO_EXTENSIONS = /\.(?:mp4|mov|mkv|m4v)(?:$|[?#])/i;
@@ -119,10 +156,11 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     const isWeiboVideo = host.endsWith("weibo.com") && parsed.pathname.startsWith("/tv");
+    const isWeChatChannels = host === "weixin.qq.com" && parsed.pathname.startsWith("/sph/");
     if (AUDIO_EXTENSIONS.test(parsed.href) || AUDIO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
     )) return "audio";
-    return isWeiboVideo || VIDEO_EXTENSIONS.test(parsed.href) || VIDEO_HOSTS.some((candidate) =>
+    return isWeiboVideo || isWeChatChannels || VIDEO_EXTENSIONS.test(parsed.href) || VIDEO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
     )
       ? "video"
@@ -130,6 +168,34 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
   } catch {
     return "article";
   }
+}
+
+export function selectApplePodcastEpisode(
+  captureUrl: string,
+  items: ApplePodcastLookupItem[],
+): ApplePodcastEpisode | undefined {
+  let requestedEpisode = "";
+  try {
+    const parsed = new URL(captureUrl);
+    if (parsed.hostname.toLowerCase() !== "podcasts.apple.com") return undefined;
+    requestedEpisode = parsed.searchParams.get("i")?.trim() ?? "";
+  } catch {
+    return undefined;
+  }
+  const episodes = items.filter((item) =>
+    item.wrapperType === "podcastEpisode"
+    && item.kind === "podcast-episode"
+    && typeof item.episodeUrl === "string"
+    && /^https?:\/\//i.test(item.episodeUrl),
+  );
+  const selected = requestedEpisode
+    ? episodes.find((item) => String(item.trackId ?? "") === requestedEpisode)
+    : episodes[0];
+  if (!selected?.episodeUrl) return undefined;
+  return {
+    title: selected.trackName?.trim() || "Podcast episode",
+    mediaUrl: selected.episodeUrl,
+  };
 }
 
 export function classifyBrowserCaptureResource(
@@ -155,21 +221,143 @@ export function classifyBrowserCaptureResource(
     const content = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? "";
     return { name, content };
   });
+  const visibleTextLength = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim().length;
   if (
     metaSignals.some(({ name, content }) =>
       ((name === "og:type" || name === "twitter:card") && /video|player/.test(content))
       || /^(?:og:video|twitter:player)(?::|$)/.test(name),
     )
-    || /<(?:video|source)\b[^>]*(?:type=["']video\/|src=["'][^"']+\.(?:mp4|mov|mkv|m4v))/i.test(html)
+    || (visibleTextLength < 2_000
+      && /<(?:video|source)\b[^>]*(?:type=["']video\/|src=["'][^"']+\.(?:mp4|mov|mkv|m4v))/i.test(html))
   ) return "video";
   if (
     metaSignals.some(({ name, content }) =>
       (name === "og:type" && /audio|music/.test(content))
       || /^og:audio(?::|$)/.test(name),
     )
-    || /<(?:audio|source)\b[^>]*(?:type=["']audio\/|src=["'][^"']+\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm))/i.test(html)
+    || (visibleTextLength < 2_000
+      && /<(?:audio|source)\b[^>]*(?:type=["']audio\/|src=["'][^"']+\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm))/i.test(html))
   ) return "audio";
   return "article";
+}
+
+export function detectCaptureErrorShell(input: {
+  title?: string;
+  text?: string;
+  html?: string;
+}): string | undefined {
+  const title = String(input.title ?? "").replace(/\s+/g, " ").trim();
+  const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
+  const html = String(input.html ?? "");
+  const haystack = `${title}\n${text.slice(0, 8_000)}\n${html.slice(0, 20_000)}`;
+  const explicitPatterns: Array<[RegExp, string]> = [
+    [/你访问的页面不见了|当前笔记暂时无法浏览|内容已删除或不可见|该内容无法查看/, "页面内容不存在或已经失效"],
+    [/verify you are human|checking your browser|完成验证以继续|安全验证|滑动验证|验证码/, "页面要求完成人机验证"],
+    [/this page (?:doesn['’]t|does not) exist|page not found|content (?:is )?unavailable/i, "页面内容不存在或已经失效"],
+    [/access denied|request blocked|访问被拒绝|请求被拦截/i, "页面拒绝了当前访问"],
+  ];
+  for (const [pattern, message] of explicitPatterns) {
+    if (pattern.test(haystack)) return message;
+  }
+  if (text.length < 6_000 && /请先登录|登录后查看|扫码登录|sign in to (?:continue|view)/i.test(haystack)) {
+    return "页面需要登录后才能读取内容";
+  }
+  return undefined;
+}
+
+function absoluteCaptureUrl(raw: string, baseUrl: string): string | undefined {
+  const value = raw.trim().replace(/&amp;/g, "&");
+  if (!value || /^(?:blob|data|javascript):/i.test(value)) return undefined;
+  try {
+    const parsed = new URL(value, baseUrl);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function extractEmbeddedMediaCandidates(
+  html: string,
+  baseUrl: string,
+  limit = 8,
+): BrowserCaptureMediaCandidate[] {
+  const candidates: BrowserCaptureMediaCandidate[] = [];
+  const add = (raw: string, pageType?: "video" | "audio", label?: string): void => {
+    const url = absoluteCaptureUrl(raw, baseUrl);
+    if (!url) return;
+    const resolvedType = pageType ?? classifyBrowserCaptureUrl(url);
+    if (resolvedType !== "video" && resolvedType !== "audio") return;
+    if (candidates.some((candidate) => sameCaptureResourceUrl(candidate.url, url))) return;
+    candidates.push({ url, pageType: resolvedType, ...(label ? { label: label.slice(0, 160) } : {}) });
+  };
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    const property = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? "";
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1] ?? "";
+    if (/^(?:og:video|twitter:player)(?::|$)/.test(property)) add(content, "video");
+    if (/^og:audio(?::|$)/.test(property)) add(content, "audio");
+  }
+  for (const match of html.matchAll(/<(video|audio|source|iframe)\b([^>]*)>/gi)) {
+    const tag = match[1]!.toLowerCase();
+    const attributes = match[2] ?? "";
+    const src = attributes.match(/\b(?:src|data-src)\s*=\s*["']([^"']+)["']/i)?.[1] ?? "";
+    const type = attributes.match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase() ?? "";
+    const pageType = tag === "audio" || type.startsWith("audio/")
+      ? "audio"
+      : tag === "video" || type.startsWith("video/")
+        ? "video"
+        : undefined;
+    add(src, pageType);
+  }
+  return candidates.slice(0, Math.max(0, limit));
+}
+
+export function normalizeCaptureSessionCookies(
+  cookies: BrowserCaptureSessionCookie[],
+  captureUrl: string,
+  limit = 300,
+): BrowserCaptureSessionCookie[] {
+  const host = new URL(captureUrl).hostname.toLowerCase();
+  const safeValue = (value: string): boolean => value.length <= 16_384 && !/[\r\n\t\0]/.test(value);
+  return cookies.filter((cookie) => {
+    const domain = String(cookie.domain ?? "").replace(/^\./, "").toLowerCase();
+    return Boolean(
+      domain
+      && (host === domain || host.endsWith(`.${domain}`) || domain.endsWith(`.${host}`))
+      && safeValue(String(cookie.name ?? ""))
+      && safeValue(String(cookie.value ?? ""))
+      && safeValue(String(cookie.path ?? "/")),
+    );
+  }).slice(0, Math.max(0, limit)).map((cookie) => ({
+    domain: cookie.domain.startsWith(".") ? cookie.domain : `.${cookie.domain}`,
+    path: cookie.path || "/",
+    name: cookie.name,
+    value: cookie.value,
+    secure: Boolean(cookie.secure),
+    httpOnly: Boolean(cookie.httpOnly),
+    expirationDate: Number.isFinite(cookie.expirationDate) ? cookie.expirationDate : 0,
+  }));
+}
+
+export function serializeNetscapeCookies(cookies: BrowserCaptureSessionCookie[]): string {
+  return [
+    "# Netscape HTTP Cookie File",
+    "# Generated temporarily by KnowGrove for one local capture task.",
+    ...cookies.map((cookie) => [
+      cookie.domain,
+      cookie.domain.startsWith(".") ? "TRUE" : "FALSE",
+      cookie.path || "/",
+      cookie.secure ? "TRUE" : "FALSE",
+      Math.max(0, Math.floor(cookie.expirationDate ?? 0)),
+      cookie.name,
+      cookie.value,
+    ].join("\t")),
+    "",
+  ].join("\n");
 }
 
 export function sameCaptureResourceUrl(left: string, right: string): boolean {
@@ -183,6 +371,21 @@ export function sameCaptureResourceUrl(left: string, right: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function captureCancellationPlan(input: {
+  targetPath?: string;
+  createdNotePath?: string;
+  createdAttachmentPaths?: string[];
+}): { trashPaths: string[]; restoreTarget: boolean } {
+  const trashPaths = Array.from(new Set([
+    ...(input.createdAttachmentPaths ?? []),
+    ...(input.createdNotePath ? [input.createdNotePath] : []),
+  ].map((path) => path.trim()).filter(Boolean)));
+  return {
+    trashPaths,
+    restoreTarget: Boolean(input.targetPath && !input.createdNotePath),
+  };
 }
 
 export function isBilibiliCaptureUrl(url: string): boolean {
@@ -274,8 +477,11 @@ export function formatYtDlpCaptureError(stderr: string, url: string): string {
   if (isBilibiliCaptureUrl(url) && /(?:HTTP Error\s*)?412|Precondition Failed/i.test(stderr)) {
     return "Bilibili 拒绝了当前下载组件的请求（HTTP 412）。KnowGrove 已使用浏览器请求头重试；请在设置 → Read It Later → 自动整理组件配置中点击“自动配置”更新组件后重试。";
   }
-  if (/(?:HTTP Error\s*)?(?:401|403)|cookies-from-browser|Sign in to confirm|login required/i.test(stderr)) {
-    return "视频站点要求登录或拒绝了公开下载请求。KnowGrove 不会读取浏览器 Cookie；请确认链接可公开访问，或改用你有权访问的公开来源。";
+  if (/(?:HTTP Error\s*)?(?:401|403|429)|cookies-from-browser|fresh cookies|Sign in to confirm|login required|Cloudflare/i.test(stderr)) {
+    return "站点要求登录、验证或拒绝了匿名下载。请先在浏览器中打开该页面并完成登录/验证码，再从言序浏览器扩展点击“使用当前站点登录状态并整理”。登录状态只用于当前本机任务，完成后不会保留。";
+  }
+  if (/Unsupported URL|No video formats found|Unable to extract/i.test(stderr)) {
+    return "当前下载组件没有识别出可用媒体。请先在浏览器中播放一次，再从言序浏览器扩展授权当前站点并重试；扩展会同时转交页面可见的媒体地址。";
   }
   return detail.replace(/^ERROR:\s*/i, "").slice(0, 800);
 }
@@ -445,6 +651,21 @@ export function whisperNeedsPcmConversion(
 ): boolean {
   return implementation === "whisper-cpp"
     && !/\.(?:flac|mp3|ogg|wav)$/i.test(audioPath);
+}
+
+export function buildWhisperPcmConversionArgs(inputPath: string, outputPath: string): string[] {
+  return [
+    "-y",
+    "-i",
+    inputPath,
+    "-ar",
+    "16000",
+    "-ac",
+    "1",
+    "-c:a",
+    "pcm_s16le",
+    outputPath,
+  ];
 }
 
 export function buildWhisperInvocation(input: {
@@ -1097,13 +1318,34 @@ export function parseWebVtt(vtt: string): string {
   return parseSubtitleText(vtt, "subtitle.vtt");
 }
 
+export const CAPTURE_FILE_NAME_MAX_BYTES = 180;
+
+export function truncateUtf8(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  let result = "";
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).length;
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 export function safeCaptureFileName(value: string): string {
-  const normalized = value
+  const withoutControlCharacters = Array.from(value, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 31 || code === 127 ? " " : character;
+  }).join("");
+  const normalized = withoutControlCharacters
     .replace(/[\\/:*?"<>|#^[\]]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 100);
-  return normalized || "未命名内容";
+    .trim();
+  const truncated = truncateUtf8(normalized, CAPTURE_FILE_NAME_MAX_BYTES)
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return truncated || "未命名内容";
 }
 
 export function captureDatePrefix(value: unknown, fallbackTime?: number): string {

@@ -20,7 +20,9 @@ import {
   browserCapturePrompt,
   browserCaptureSkill,
   browserCaptureSynthesisPrompt,
+  captureCancellationPlan,
   buildWhisperInvocation,
+  buildWhisperPcmConversionArgs,
   buildCaptureFailureNote,
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
@@ -29,11 +31,13 @@ import {
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   detectInterruptedCapture,
+  detectCaptureErrorShell,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   cleanArticleMarkdown,
   extractArticleFromHtml,
+  extractEmbeddedMediaCandidates,
   extractJsonObject,
   formatYtDlpCaptureError,
   formatTranscriptParagraphs,
@@ -44,16 +48,22 @@ import {
   safeCaptureFileName,
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
+  selectApplePodcastEpisode,
   selectedCaptureProvider,
+  normalizeCaptureSessionCookies,
+  serializeNetscapeCookies,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
   type BrowserCaptureAIResult,
+  type ApplePodcastEpisode,
+  type BrowserCaptureMediaCandidate,
   type BrowserCapturePageType,
+  type BrowserCaptureSessionCookie,
 } from "./browser-capture-core";
 
-export type BrowserCaptureJobStatus = "queued" | "running" | "completed" | "partial" | "failed";
+export type BrowserCaptureJobStatus = "queued" | "running" | "cancelling" | "completed" | "partial" | "failed";
 
 export interface BrowserCaptureJob {
   id: string;
@@ -83,8 +93,13 @@ export interface BrowserCaptureJob {
     pageType: BrowserCapturePageType;
     skillId: string;
     providerId: AIProviderId;
+    storageVerified?: boolean;
+    verifiedAt?: string;
   };
   resumeFromRaw?: boolean;
+  createdNotePath?: string;
+  createdAttachmentPaths?: string[];
+  cancelRequestedAt?: string;
 }
 
 export interface BrowserCaptureServerStatus {
@@ -105,9 +120,14 @@ interface BrowserCaptureHost {
   getSettings(): KnowGroveSettings;
   saveSettings(): Promise<void>;
   getProviders(force?: boolean): Promise<AIProviderAvailability[]>;
-  runProvider(provider: AIProviderId, prompt: string): Promise<string>;
+  runProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<{
+    output: string;
+    providerId: AIProviderId;
+    handoffCount: number;
+  }>;
   getSkillInstruction(pageType: BrowserCapturePageType): Promise<string>;
   suppressNewNoteInitialization(path: string): void;
+  suppressAutomaticLinkNote(path: string): void;
   enrichCapturedFile(file: TFile): Promise<void>;
 }
 
@@ -117,6 +137,14 @@ interface ExtractedSource {
   author?: string;
   publishedAt?: string;
   mediaPath?: string;
+  embeddedMedia?: BrowserCaptureMediaCandidate[];
+}
+
+interface BrowserCaptureSessionContext {
+  cookies: BrowserCaptureSessionCookie[];
+  userAgent: string;
+  referer: string;
+  mediaCandidates: BrowserCaptureMediaCandidate[];
 }
 
 const HOST = "127.0.0.1";
@@ -136,7 +164,22 @@ const PHASE_LABELS: Record<string, string> = {
   completed: "整理完成",
   partial: "已备份，整理未完成",
   failed: "处理失败",
+  cancelling: "正在取消并清理",
 };
+
+function captureAbortError(): Error {
+  const error = new Error("任务已由用户取消");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfCaptureAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw captureAbortError();
+}
+
+function isCaptureAbort(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted || (error instanceof Error && error.name === "AbortError"));
+}
 
 function randomHex(bytes = 32): string {
   const buffer = new Uint8Array(bytes);
@@ -153,6 +196,47 @@ function isAllowedOrigin(origin: string): boolean {
 
 function stringField(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function captureMediaCandidates(value: unknown, baseUrl: string): BrowserCaptureMediaCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const candidates: BrowserCaptureMediaCandidate[] = [];
+  for (const raw of value.slice(0, 16)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const pageType = stringField(item.pageType);
+    if (pageType !== "video" && pageType !== "audio") continue;
+    try {
+      const url = new URL(stringField(item.url), baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) continue;
+      if (candidates.some((candidate) => sameCaptureResourceUrl(candidate.url, url.toString()))) continue;
+      candidates.push({
+        url: url.toString(),
+        pageType,
+        ...(stringField(item.label).trim() ? { label: stringField(item.label).trim().slice(0, 160) } : {}),
+      });
+    } catch {
+      // Ignore malformed browser hints; the original page still remains usable.
+    }
+  }
+  return candidates.slice(0, 8);
+}
+
+function captureSessionCookies(value: unknown, url: string): BrowserCaptureSessionCookie[] {
+  if (!Array.isArray(value)) return [];
+  return normalizeCaptureSessionCookies(value.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    return [{
+      domain: stringField(item.domain),
+      path: stringField(item.path, "/"),
+      name: stringField(item.name),
+      value: stringField(item.value),
+      secure: Boolean(item.secure),
+      httpOnly: Boolean(item.httpOnly),
+      expirationDate: typeof item.expirationDate === "number" ? item.expirationDate : 0,
+    }];
+  }), url);
 }
 
 function isWebUrl(value: unknown): string {
@@ -463,8 +547,13 @@ export class BrowserCaptureServer {
   };
   private readonly jobs = new Map<string, BrowserCaptureJob>();
   private readonly capturedSources = new Map<string, ExtractedSource>();
+  private readonly captureSessions = new Map<string, BrowserCaptureSessionContext>();
   private readonly pendingPairings = new Map<string, PendingPairing>();
   private readonly queue: string[] = [];
+  private readonly jobAbortControllers = new Map<string, AbortController>();
+  private readonly activeJobRuns = new Map<string, Promise<void>>();
+  private readonly originalTargetContents = new Map<string, { path: string; content: string }>();
+  private readonly currentNotePaths = new Map<string, string>();
   private processing = false;
   private stopping = false;
 
@@ -549,6 +638,7 @@ export class BrowserCaptureServer {
       }
     }
     this.capturedSources.clear();
+    this.captureSessions.clear();
     await this.persistJobs().catch(() => undefined);
     this.status = {
       running: false,
@@ -585,7 +675,12 @@ export class BrowserCaptureServer {
     }
     this.host.suppressNewNoteInitialization(file.path);
     const existing = [...this.jobs.values()].find((job) =>
-      job.targetPath === file.path && !FINISHED_STATUSES.has(job.status),
+      !FINISHED_STATUSES.has(job.status)
+      && (
+        job.targetPath === file.path
+        || job.createdNotePath === file.path
+        || this.currentNotePaths.get(job.id) === file.path
+      ),
     );
     if (existing) return existing;
     const url = candidate?.url ?? interrupted!.url;
@@ -617,6 +712,28 @@ export class BrowserCaptureServer {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 750));
     }
     throw new Error("解析任务仍在后台运行，可稍后查看笔记");
+  }
+
+  async cancelJob(id: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("任务不存在或已经清理");
+    if (FINISHED_STATUSES.has(job.status)) throw new Error("任务已经结束，无需取消");
+
+    this.queue.splice(0, this.queue.length, ...this.queue.filter((queuedId) => queuedId !== id));
+    await this.updateJob(id, {
+      status: "cancelling",
+      phase: "cancelling",
+      phaseLabel: PHASE_LABELS.cancelling,
+      message: "正在停止处理并移除本次任务创建的内容",
+      cancelRequestedAt: new Date().toISOString(),
+    });
+    this.jobAbortControllers.get(id)?.abort();
+    const activeRun = this.activeJobRuns.get(id);
+    if (activeRun) {
+      await activeRun;
+      return;
+    }
+    await this.cleanupCancelledJob(id);
   }
 
   private prunePairings(): void {
@@ -736,6 +853,15 @@ export class BrowserCaptureServer {
         }, origin);
         return;
       }
+      const active = [...this.jobs.values()].find((job) =>
+        !FINISHED_STATUSES.has(job.status)
+        && job.status !== "cancelling"
+        && sameCaptureResourceUrl(job.url, url),
+      );
+      if (active) {
+        sendJson(response, 202, { jobId: active.id, status: active.status, reused: true }, origin);
+        return;
+      }
       let targetFile: TFile | undefined;
       const requestedTargetPath = stringField(body.targetPath).trim();
       if (requestedTargetPath) {
@@ -766,12 +892,60 @@ export class BrowserCaptureServer {
       });
       const browserContent = stringField(body.content).trim().slice(0, MAX_SOURCE_CHARACTERS);
       const browserTranscript = stringField(body.transcript).trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const errorShell = detectCaptureErrorShell({
+        title: stringField(body.contentTitle) || stringField(body.title),
+        text: browserContent,
+      });
+      if (errorShell && pageType === "article") {
+        this.jobs.delete(job.id);
+        await this.persistJobs();
+        sendJson(response, 422, {
+          error: `${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`,
+          code: "PAGE_REQUIRES_BROWSER_SESSION",
+        }, origin);
+        return;
+      }
+      const mediaCandidates = captureMediaCandidates(body.mediaCandidates, url);
+      const cookies = captureSessionCookies(body.sessionCookies, url);
+      const userAgent = stringField(body.userAgent).replace(/[\r\n\0]/g, "").slice(0, 1_000);
+      const referer = stringField(body.referer, url).replace(/[\r\n\0]/g, "").slice(0, 2_000);
+      if (cookies.length || mediaCandidates.length || userAgent) {
+        this.captureSessions.set(job.id, {
+          cookies,
+          userAgent,
+          referer,
+          mediaCandidates,
+        });
+      }
       if (pageType === "article" && browserContent.length >= 80) {
+        const browserImages = Array.isArray(body.images)
+          ? body.images.slice(0, 80).flatMap((raw) => {
+            if (!raw || typeof raw !== "object") return [];
+            const item = raw as Record<string, unknown>;
+            try {
+              const imageUrl = new URL(stringField(item.url), url);
+              if (!["http:", "https:"].includes(imageUrl.protocol)) return [];
+              const alt = stringField(item.alt, "图片")
+                .replaceAll("[", " ")
+                .replaceAll("]", " ")
+                .replace(/[\n\r]/g, " ")
+                .trim()
+                .slice(0, 160) || "图片";
+              return [`![${alt}](${imageUrl.toString()})`];
+            } catch {
+              return [];
+            }
+          })
+          : [];
+        const source = [browserContent, browserImages.length ? `## 页面图片\n\n${browserImages.join("\n\n")}` : ""]
+          .filter(Boolean)
+          .join("\n\n");
         this.capturedSources.set(job.id, {
           title: (stringField(body.contentTitle) || stringField(body.title)).trim().slice(0, 500) || job.title,
-          source: browserContent,
+          source: source.slice(0, MAX_SOURCE_CHARACTERS),
           author: stringField(body.author).trim().slice(0, 500) || undefined,
           publishedAt: stringField(body.publishedAt).trim().slice(0, 200) || undefined,
+          embeddedMedia: mediaCandidates,
         });
       } else if (pageType === "video" && browserTranscript.length >= 20) {
         this.capturedSources.set(job.id, {
@@ -785,13 +959,41 @@ export class BrowserCaptureServer {
       return;
     }
     const jobMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)$/i);
+    const openMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)\/open$/i);
+    const cancelMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)\/cancel$/i);
+    if (request.method === "POST" && cancelMatch) {
+      try {
+        await this.cancelJob(cancelMatch[1]!);
+        sendJson(response, 200, { ok: true, jobId: cancelMatch[1], cleaned: true }, origin);
+      } catch (error) {
+        sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }, origin);
+      }
+      return;
+    }
+    if (request.method === "POST" && openMatch) {
+      const job = this.jobs.get(openMatch[1]!);
+      if (!job) {
+        sendJson(response, 404, { error: "任务不存在或已过期" }, origin);
+        return;
+      }
+      const current = await this.reconcileStoredJob(job);
+      const path = current.result?.relativePath?.trim() ?? "";
+      const file = path ? this.host.app.vault.getAbstractFileByPath(path) : undefined;
+      if (!(file instanceof TFile)) {
+        sendJson(response, 409, { error: current.error || "保存的笔记已经不存在，请重新处理" }, origin);
+        return;
+      }
+      await this.host.app.workspace.getLeaf(false).openFile(file);
+      sendJson(response, 200, { ok: true, relativePath: file.path }, origin);
+      return;
+    }
     if (request.method === "GET" && jobMatch) {
       const job = this.jobs.get(jobMatch[1]!);
       if (!job) {
         sendJson(response, 404, { error: "任务不存在或已过期" }, origin);
         return;
       }
-      sendJson(response, 200, job, origin);
+      sendJson(response, 200, await this.reconcileStoredJob(job), origin);
       return;
     }
     sendJson(response, 404, { error: "接口不存在" }, origin);
@@ -864,13 +1066,57 @@ export class BrowserCaptureServer {
     return next;
   }
 
+  private async reconcileStoredJob(job: BrowserCaptureJob): Promise<BrowserCaptureJob> {
+    if (job.status !== "completed" && job.status !== "partial") return job;
+    const path = job.result?.relativePath?.trim() ?? "";
+    const file = path ? this.host.app.vault.getAbstractFileByPath(path) : undefined;
+    const stored = file instanceof TFile
+      ? await this.host.app.vault.read(file).catch(() => "")
+      : "";
+    if (!(file instanceof TFile) || !stored.trim()) {
+      return this.updateJob(job.id, {
+        status: "failed",
+        phase: "failed",
+        phaseLabel: PHASE_LABELS.failed,
+        progress: 100,
+        error: "保存的笔记已经不存在或内容为空，请重新处理",
+        message: "没有找到可打开的 Obsidian 笔记",
+        result: undefined,
+      });
+    }
+    const result = job.result;
+    if (
+      job.status === "completed"
+      && result
+      && !result.storageVerified
+      && /KnowGrove采集状态:\s*["']?已完成["']?/i.test(stored)
+    ) {
+      return this.updateJob(job.id, {
+        result: {
+          ...result,
+          storageVerified: true,
+          verifiedAt: new Date().toISOString(),
+        },
+      });
+    }
+    return job;
+  }
+
   private async drainQueue(): Promise<void> {
     if (this.processing) return;
     this.processing = true;
     try {
       while (this.queue.length && !this.stopping) {
         const id = this.queue.shift();
-        if (id) await this.processJob(id);
+        if (id) {
+          const run = this.processJob(id);
+          this.activeJobRuns.set(id, run);
+          try {
+            await run;
+          } finally {
+            this.activeJobRuns.delete(id);
+          }
+        }
       }
     } finally {
       this.processing = false;
@@ -880,11 +1126,19 @@ export class BrowserCaptureServer {
   private async processJob(id: string): Promise<void> {
     const job = this.jobs.get(id);
     if (!job) return;
+    if (job.status === "cancelling") {
+      await this.cleanupCancelledJob(id);
+      return;
+    }
+    const controller = new AbortController();
+    this.jobAbortControllers.set(id, controller);
+    const { signal } = controller;
     let noteFile: TFile | undefined;
     let extracted: ExtractedSource | undefined;
     let lastWrittenContent = "";
     const outputLocale = job.pageType === "article" ? "zh-CN" : systemCaptureOutputLocale();
     try {
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         status: "running",
         phase: "backing_up",
@@ -904,9 +1158,12 @@ export class BrowserCaptureServer {
           ? undefined
           : await this.createPlaceholder(job);
       if (!noteFile) throw new Error("待解析的链接笔记已经不存在");
+      this.currentNotePaths.set(id, noteFile.path);
+      throwIfCaptureAborted(signal);
       let interrupted: ReturnType<typeof detectInterruptedCapture> = null;
       if (job.targetPath) {
         const current = await this.host.app.vault.read(noteFile);
+        this.originalTargetContents.set(id, { path: noteFile.path, content: current });
         if (job.resumeFromRaw) {
           interrupted = detectInterruptedCapture(current);
           if (!interrupted || interrupted.url !== job.url) {
@@ -952,13 +1209,14 @@ export class BrowserCaptureServer {
       } else {
         extracted = job.pageType === "video"
           ? job.mediaPath
-            ? await this.extractLocalMedia(job, noteFile.path)
-            : this.capturedSources.get(id) ?? await this.extractVideo(job)
+            ? await this.extractLocalMedia(job, noteFile.path, signal)
+            : this.capturedSources.get(id) ?? await this.extractVideo(job, signal)
           : job.pageType === "audio"
             ? job.mediaPath
-              ? await this.extractLocalMedia(job, noteFile.path)
-              : await this.extractAudio(job, noteFile.path)
-            : this.capturedSources.get(id) ?? await this.extractArticle(job);
+              ? await this.extractLocalMedia(job, noteFile.path, signal)
+              : await this.extractAudio(job, noteFile.path, signal)
+            : this.capturedSources.get(id) ?? await this.extractArticle(job, signal);
+        throwIfCaptureAborted(signal);
         this.capturedSources.delete(id);
         if (job.pageType === "article") {
           const sourceTitle = extracted.title;
@@ -968,12 +1226,26 @@ export class BrowserCaptureServer {
             this.articleDatePrefix(noteFile, extracted.publishedAt),
             this.host.getSettings().browserCapture.prefixArticleTitleWithDate,
           );
-          noteFile = await this.renameArticleToTitle(noteFile, extracted.title);
+          noteFile = await this.renameArticleToTitle(noteFile, extracted.title, id);
+          const embeddedMedia = extracted.embeddedMedia
+            ?? this.captureSessions.get(id)?.mediaCandidates
+            ?? [];
+          if (embeddedMedia.length) {
+            extracted.source = await this.appendEmbeddedMediaTranscripts(
+              job,
+              noteFile.path,
+              extracted.source,
+              embeddedMedia,
+              signal,
+            );
+          }
           extracted.source = await this.localizeArticleImages(
             extracted.source,
             extracted.title,
             job.resolvedUrl || job.url,
             noteFile.path,
+            id,
+            signal,
           );
         }
         const rawNote = buildRawCaptureNote({
@@ -1015,6 +1287,7 @@ export class BrowserCaptureServer {
         }
         await this.host.app.vault.modify(noteFile, lastWrittenContent);
       }
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         title: extracted.title,
         phase: "backed_up",
@@ -1023,7 +1296,7 @@ export class BrowserCaptureServer {
         message: "原始内容已经写入 Vault，正在调用 AI 整理",
         result: this.resultFor(job, noteFile, extracted.title, "原始内容已备份"),
       });
-      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, async (message, progress) => {
+      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, signal, async (message, progress) => {
         await this.updateJob(id, {
           phase: "organizing",
           phaseLabel: PHASE_LABELS.organizing,
@@ -1031,6 +1304,7 @@ export class BrowserCaptureServer {
           message,
         });
       });
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         phase: "saving",
         phaseLabel: PHASE_LABELS.saving,
@@ -1061,7 +1335,10 @@ export class BrowserCaptureServer {
         message: "正在识别内容所属的领域与主题",
       });
       await this.host.enrichCapturedFile(noteFile);
-      noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType);
+      throwIfCaptureAborted(signal);
+      noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType, id);
+      throwIfCaptureAborted(signal);
+      noteFile = await this.verifyCompletedCapture(id, noteFile, completedContent);
       await this.updateJob(id, {
         status: "completed",
         phase: "completed",
@@ -1069,13 +1346,18 @@ export class BrowserCaptureServer {
         progress: 100,
         message: "内容已经整理并写入 Obsidian",
         completedAt: new Date().toISOString(),
-        result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary)),
+        result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary), true),
       });
     } catch (error) {
+      if (isCaptureAbort(error, signal) || this.jobs.get(id)?.status === "cancelling") {
+        await this.cleanupCancelledJob(id);
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
-      if (noteFile) {
+      const liveNoteFile = noteFile ? this.resolveLiveNoteFile(id, noteFile) : undefined;
+      if (liveNoteFile) {
         if (!extracted && !job.targetPath) {
-          await this.host.app.vault.modify(noteFile, buildCaptureFailureNote({
+          await this.host.app.vault.modify(liveNoteFile, buildCaptureFailureNote({
             pageType: job.pageType,
             title: job.title || "待提取内容",
             url: job.url,
@@ -1094,7 +1376,7 @@ export class BrowserCaptureServer {
             : "链接和标题已保存，但正文提取没有完成",
           result: this.resultFor(
             job,
-            noteFile,
+            liveNoteFile,
             extracted?.title || job.title || "待提取内容",
             extracted ? "原始内容已保存，可以稍后重试" : "链接已保存，可以稍后重试",
           ),
@@ -1106,12 +1388,64 @@ export class BrowserCaptureServer {
           phaseLabel: PHASE_LABELS.failed,
           progress: 100,
           error: message,
-          message: "任务没有写入 Vault",
+          message: "任务没有成功写入 Vault，可以重新处理",
+          result: undefined,
         });
       }
     } finally {
       this.capturedSources.delete(id);
+      this.captureSessions.delete(id);
+      this.jobAbortControllers.delete(id);
+      this.originalTargetContents.delete(id);
+      this.currentNotePaths.delete(id);
     }
+  }
+
+  private async cleanupCancelledJob(id: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    const plan = captureCancellationPlan(job);
+    for (const path of plan.trashPaths) {
+      const file = this.host.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) await this.host.app.fileManager.trashFile(file).catch(() => undefined);
+    }
+    if (plan.restoreTarget) {
+      const original = this.originalTargetContents.get(id);
+      if (original) {
+        const currentPath = this.currentNotePaths.get(id) ?? original.path;
+        let file = this.host.app.vault.getAbstractFileByPath(currentPath);
+        if (
+          file instanceof TFile
+          && currentPath !== original.path
+          && !this.host.app.vault.getAbstractFileByPath(original.path)
+        ) {
+          await this.host.app.fileManager.renameFile(file, original.path).catch(() => undefined);
+          file = this.host.app.vault.getAbstractFileByPath(original.path);
+        }
+        if (file instanceof TFile) await this.host.app.vault.modify(file, original.content).catch(() => undefined);
+      }
+    }
+    this.queue.splice(0, this.queue.length, ...this.queue.filter((queuedId) => queuedId !== id));
+    this.capturedSources.delete(id);
+    this.captureSessions.delete(id);
+    this.originalTargetContents.delete(id);
+    this.currentNotePaths.delete(id);
+    this.jobAbortControllers.delete(id);
+    this.jobs.delete(id);
+    await this.persistJobs();
+  }
+
+  private async trackCreatedNote(id: string, path: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    await this.updateJob(id, { createdNotePath: path });
+  }
+
+  private async trackCreatedAttachment(id: string, path: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    const createdAttachmentPaths = Array.from(new Set([...(job.createdAttachmentPaths ?? []), path]));
+    await this.updateJob(id, { createdAttachmentPaths });
   }
 
   private async createPlaceholder(job: BrowserCaptureJob): Promise<TFile> {
@@ -1141,6 +1475,8 @@ export class BrowserCaptureServer {
     ].join("\n");
     const file = await this.host.app.vault.create(path, placeholder);
     this.host.suppressNewNoteInitialization(path);
+    this.host.suppressAutomaticLinkNote(path);
+    await this.trackCreatedNote(job.id, path);
     return file;
   }
 
@@ -1155,7 +1491,7 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async moveToConfiguredOutput(file: TFile, pageType: BrowserCapturePageType): Promise<TFile> {
+  private async moveToConfiguredOutput(file: TFile, pageType: BrowserCapturePageType, jobId: string): Promise<TFile> {
     const settings = this.host.getSettings().browserCapture;
     const configured = pageType === "video"
       ? settings.videoOutputFolder
@@ -1173,11 +1509,31 @@ export class BrowserCaptureServer {
       suffix += 1;
     }
     await this.host.app.fileManager.renameFile(file, path);
+    this.currentNotePaths.set(jobId, path);
+    if (this.jobs.get(jobId)?.createdNotePath) await this.trackCreatedNote(jobId, path);
     const moved = this.host.app.vault.getAbstractFileByPath(path);
-    return moved instanceof TFile ? moved : file;
+    if (!(moved instanceof TFile)) throw new Error("整理结果移动后无法在 Vault 中找到，请重新处理");
+    return moved;
   }
 
-  private async renameArticleToTitle(file: TFile, title: string): Promise<TFile> {
+  private resolveLiveNoteFile(jobId: string, file: TFile): TFile | undefined {
+    const currentPath = this.currentNotePaths.get(jobId) ?? file.path;
+    const current = this.host.app.vault.getAbstractFileByPath(currentPath);
+    return current instanceof TFile ? current : undefined;
+  }
+
+  private async verifyCompletedCapture(jobId: string, file: TFile, expectedContent: string): Promise<TFile> {
+    const current = this.resolveLiveNoteFile(jobId, file);
+    if (!current) throw new Error("整理结果未实际写入 Vault，任务已标记失败，请重新处理");
+    const stored = await this.host.app.vault.read(current);
+    if (!stored.trim()) throw new Error("整理结果文件为空，任务已标记失败，请重新处理");
+    if (captureBodyForConflictCheck(stored) !== captureBodyForConflictCheck(expectedContent)) {
+      throw new Error("整理结果回读校验失败，任务已标记失败，请重新处理");
+    }
+    return current;
+  }
+
+  private async renameArticleToTitle(file: TFile, title: string, jobId: string): Promise<TFile> {
     const baseName = safeCaptureFileName(title);
     if (!baseName || file.basename === baseName) return file;
     const folder = file.parent?.path && file.parent.path !== "/" ? file.parent.path : "";
@@ -1188,8 +1544,29 @@ export class BrowserCaptureServer {
       suffix += 1;
     }
     await this.host.app.fileManager.renameFile(file, path);
+    this.currentNotePaths.set(jobId, path);
+    if (this.jobs.get(jobId)?.createdNotePath) await this.trackCreatedNote(jobId, path);
     const renamed = this.host.app.vault.getAbstractFileByPath(path);
     return renamed instanceof TFile ? renamed : file;
+  }
+
+  private async ytDlpSessionArgs(
+    job: BrowserCaptureJob,
+    directory: string,
+    captureUrl: string,
+  ): Promise<string[]> {
+    const session = this.captureSessions.get(job.id);
+    if (!session) return [];
+    const args: string[] = [];
+    if (session.cookies.length) {
+      const cookiePath = join(directory, "session-cookies.txt");
+      await writeFile(cookiePath, serializeNetscapeCookies(session.cookies), { encoding: "utf8", mode: 0o600 });
+      args.push("--cookies", cookiePath);
+    }
+    if (session.userAgent) args.push("--user-agent", session.userAgent);
+    const referer = session.referer || captureUrl;
+    if (referer) args.push("--referer", referer);
+    return args;
   }
 
   private async probeCaptureTarget(job: BrowserCaptureJob): Promise<void> {
@@ -1212,9 +1589,28 @@ export class BrowserCaptureServer {
         job.skillId = browserCaptureSkill(pageType).id;
       }
       if (pageType === "article" && html.length >= 80) {
+        const errorShell = detectCaptureErrorShell({ html });
+        if (errorShell) {
+          const error = new Error(`${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`);
+          error.name = "CaptureContentError";
+          throw error;
+        }
         try {
           const extracted = extractArticleFromHtml(html, job.title, finalUrl);
-          this.capturedSources.set(job.id, extracted);
+          const mediaCandidates = extractEmbeddedMediaCandidates(html, finalUrl);
+          this.capturedSources.set(job.id, { ...extracted, embeddedMedia: mediaCandidates });
+          const existing = this.captureSessions.get(job.id);
+          if (mediaCandidates.length) {
+            this.captureSessions.set(job.id, {
+              cookies: existing?.cookies ?? [],
+              userAgent: existing?.userAgent ?? "",
+              referer: existing?.referer ?? finalUrl,
+              mediaCandidates: Array.from(new Map([
+                ...(existing?.mediaCandidates ?? []),
+                ...mediaCandidates,
+              ].map((candidate) => [candidate.url, candidate])).values()),
+            });
+          }
         } catch {
           // Dynamic and protected pages continue through Defuddle and browser-visible fallbacks.
         }
@@ -1224,7 +1620,8 @@ export class BrowserCaptureServer {
         pageType: job.pageType,
         skillId: job.skillId,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === "CaptureContentError") throw error;
       // Redirect and metadata probing is best-effort; established extractors remain available.
     }
   }
@@ -1250,11 +1647,14 @@ export class BrowserCaptureServer {
     title: string,
     sourceUrl: string,
     sourceNotePath: string,
+    jobId: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const matches = Array.from(source.matchAll(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi));
     if (!matches.length) return source;
     const localized = new Map<string, string>();
     for (let index = 0; index < matches.length; index += 1) {
+      throwIfCaptureAborted(signal);
       const match = matches[index]!;
       const url = match[2]!;
       if (localized.has(url)) continue;
@@ -1306,9 +1706,11 @@ export class BrowserCaptureServer {
         ));
         await this.ensureFolder(path.split("/").slice(0, -1).join("/"));
         await this.host.app.vault.createBinary(path, data);
+        await this.trackCreatedAttachment(jobId, path);
         const alt = match[1]?.trim();
         localized.set(url, alt && alt !== "图片" ? `![[${path}|${alt}]]` : `![[${path}]]`);
-      } catch {
+      } catch (error) {
+        if (isCaptureAbort(error, signal)) throw error;
         // A single protected image must not make the entire article fail.
       }
     }
@@ -1322,6 +1724,7 @@ export class BrowserCaptureServer {
     title: string,
     extension: string,
     sourceNotePath: string,
+    jobId: string,
   ): Promise<string> {
     const baseName = safeCaptureFileName(title);
     const path = normalizePath(await this.host.app.fileManager.getAvailablePathForAttachment(
@@ -1332,6 +1735,7 @@ export class BrowserCaptureServer {
     const buffer = await readFile(sourcePath);
     const data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     await this.host.app.vault.createBinary(path, data);
+    await this.trackCreatedAttachment(jobId, path);
     return path;
   }
 
@@ -1340,6 +1744,7 @@ export class BrowserCaptureServer {
     file: TFile,
     title: string,
     preview: string,
+    storageVerified = false,
   ): NonNullable<BrowserCaptureJob["result"]> {
     return {
       title,
@@ -1349,10 +1754,13 @@ export class BrowserCaptureServer {
       pageType: job.pageType,
       skillId: job.skillId,
       providerId: job.providerId,
+      storageVerified,
+      ...(storageVerified ? { verifiedAt: new Date().toISOString() } : {}),
     };
   }
 
-  private async extractArticle(job: BrowserCaptureJob): Promise<ExtractedSource> {
+  private async extractArticle(job: BrowserCaptureJob, signal?: AbortSignal): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const captureUrl = job.resolvedUrl || job.url;
     let fetched: ExtractedSource | undefined;
     let primaryError: unknown;
@@ -1369,7 +1777,12 @@ export class BrowserCaptureServer {
       if (response.status < 200 || response.status >= 400) {
         throw new Error(`网页读取失败（HTTP ${response.status}）`);
       }
-      fetched = extractArticleFromHtml(response.text, job.title, captureUrl);
+      const errorShell = detectCaptureErrorShell({ html: response.text });
+      if (errorShell) throw new Error(`${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`);
+      fetched = {
+        ...extractArticleFromHtml(response.text, job.title, captureUrl),
+        embeddedMedia: extractEmbeddedMediaCandidates(response.text, captureUrl),
+      };
     } catch (error) {
       primaryError = error;
     }
@@ -1379,7 +1792,7 @@ export class BrowserCaptureServer {
         "defuddle",
         "Defuddle",
       );
-      const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60);
+      const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60, signal);
       if (result.exitCode !== 0 || result.stdout.trim().length < 80) {
         if (fetched) return fetched;
         const browserCopy = this.capturedSources.get(job.id);
@@ -1388,12 +1801,12 @@ export class BrowserCaptureServer {
       }
       let title = fetched?.title || "";
       if (!title || title === job.title) {
-        const titleResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "title"], "", 90);
+        const titleResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "title"], "", 90, signal);
         if (titleResult.exitCode === 0 && titleResult.stdout.trim()) title = titleResult.stdout.trim();
       }
       let author = fetched?.author;
       if (!author) {
-        const authorResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "author"], "", 90);
+        const authorResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "author"], "", 90, signal);
         if (authorResult.exitCode === 0 && authorResult.stdout.trim()) author = authorResult.stdout.trim();
       }
       return {
@@ -1401,8 +1814,10 @@ export class BrowserCaptureServer {
         title: title || job.title || "未命名网页",
         author,
         source: result.stdout.trim(),
+        embeddedMedia: fetched?.embeddedMedia ?? this.captureSessions.get(job.id)?.mediaCandidates ?? [],
       };
-    } catch {
+    } catch (error) {
+      if (isCaptureAbort(error, signal)) throw error;
       if (fetched) return fetched;
       const browserCopy = this.capturedSources.get(job.id);
       if (browserCopy) return browserCopy;
@@ -1410,26 +1825,86 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractVideo(job: BrowserCaptureJob): Promise<ExtractedSource> {
-    const captureUrl = job.resolvedUrl || job.url;
+  private async appendEmbeddedMediaTranscripts(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+    articleSource: string,
+    candidates: BrowserCaptureMediaCandidate[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const unique = candidates
+      .filter((candidate) => !sameCaptureResourceUrl(candidate.url, job.url))
+      .filter((candidate, index, all) => all.findIndex((item) => sameCaptureResourceUrl(item.url, candidate.url)) === index)
+      .slice(0, 3);
+    if (!unique.length) return articleSource;
+    const sections: string[] = [];
+    for (let index = 0; index < unique.length; index += 1) {
+      throwIfCaptureAborted(signal);
+      const candidate = unique[index]!;
+      await this.updateJob(job.id, {
+        progress: 24 + Math.round(((index + 1) / unique.length) * 18),
+        message: `正在解析文章内嵌媒体 ${index + 1}/${unique.length}`,
+      });
+      try {
+        const result = candidate.pageType === "video"
+          ? await this.extractVideo(job, signal, candidate.url)
+          : await this.extractAudio(job, sourceNotePath, signal, candidate.url, false);
+        sections.push([
+          `### ${result.title || candidate.label || (candidate.pageType === "video" ? "内嵌视频" : "内嵌音频")}`,
+          "",
+          candidate.url,
+          "",
+          result.source,
+        ].join("\n"));
+      } catch (error) {
+        if (isCaptureAbort(error, signal)) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        sections.push([
+          `### ${candidate.label || (candidate.pageType === "video" ? "内嵌视频" : "内嵌音频")}`,
+          "",
+          candidate.url,
+          "",
+          `> 暂未完成转录：${message}`,
+        ].join("\n"));
+      }
+    }
+    return [articleSource.trim(), "## 内嵌媒体", sections.join("\n\n")]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  private async extractVideo(
+    job: BrowserCaptureJob,
+    signal?: AbortSignal,
+    urlOverride?: string,
+  ): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
+    const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-video-"));
     try {
+      const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
+        [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
+        signal,
       );
       const title = titleResult.exitCode === 0
         ? lastLine(titleResult.stdout) || job.title
         : job.title;
       await runLocalCommand(
         downloader,
-        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
+        [
+          ...ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl).slice(0, -1),
+          ...sessionArgs,
+          captureUrl,
+        ],
         "",
         15 * 60,
+        signal,
       );
       const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
       if (subtitleFile) {
@@ -1445,24 +1920,36 @@ export class BrowserCaptureServer {
         progress: 28,
         message: "没有找到可用字幕，正在下载音频",
       });
-      const audioResult = await runLocalCommand(
-        downloader,
-        [
-          ...ytDlpCaptureArgs(captureUrl),
-          ...ffmpegLocationArgs(settings),
-          "-x",
-          "--audio-format",
-          "mp3",
-          "-o",
-          join(directory, "audio.%(ext)s"),
-          captureUrl,
-        ],
-        "",
-        60 * 60,
-      );
-      if (audioResult.exitCode !== 0) {
+      const downloadUrls = [
+        captureUrl,
+        ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
+          .filter((candidate) => candidate.pageType === "video")
+          .map((candidate) => candidate.url),
+      ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+      let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
+      for (const downloadUrl of downloadUrls) {
+        audioResult = await runLocalCommand(
+          downloader,
+          [
+            ...ytDlpCaptureArgs(downloadUrl),
+            ...sessionArgs,
+            ...ffmpegLocationArgs(settings),
+            "-x",
+            "--audio-format",
+            "mp3",
+            "-o",
+            join(directory, "audio.%(ext)s"),
+            downloadUrl,
+          ],
+          "",
+          60 * 60,
+          signal,
+        );
+        if (audioResult.exitCode === 0) break;
+      }
+      if (!audioResult || audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
-          `${audioResult.stderr}\n${audioResult.stdout}`,
+          `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
           captureUrl,
         ));
       }
@@ -1496,11 +1983,19 @@ export class BrowserCaptureServer {
         invocation.args,
         "",
         90 * 60,
+        signal,
       );
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
       let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
       if (!transcriptPath) {
         const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
@@ -1517,7 +2012,9 @@ export class BrowserCaptureServer {
   private async extractLocalMedia(
     job: BrowserCaptureJob,
     sourceNotePath: string,
+    signal?: AbortSignal,
   ): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const linkPath = job.mediaPath?.trim() ?? "";
     if (!linkPath) throw new Error("本地媒体笔记没有可用的音视频引用");
     const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
@@ -1562,18 +2059,13 @@ export class BrowserCaptureServer {
           progress: 34,
           message: "正在提取 Whisper 可读取的音轨",
         });
-        const conversion = await runLocalCommand(ffmpeg, [
-          "-y",
-          "-i",
-          audioPath,
-          "-ar",
-          "16000",
-          "-ac",
-          "1",
-          "-c:a",
-          "pcm_s16le",
-          whisperAudioPath,
-        ], "", 20 * 60);
+        const conversion = await runLocalCommand(
+          ffmpeg,
+          buildWhisperPcmConversionArgs(audioPath, whisperAudioPath),
+          "",
+          20 * 60,
+          signal,
+        );
         if (conversion.exitCode !== 0) {
           throw new Error(conversion.stderr.trim() || "本地媒体音轨转换失败");
         }
@@ -1591,7 +2083,7 @@ export class BrowserCaptureServer {
           ? `正在使用 whisper.cpp ${model} 转录本地媒体`
           : `正在使用 Whisper ${model} 转录本地媒体`,
       });
-      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60, signal);
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
@@ -1621,26 +2113,41 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractAudio(job: BrowserCaptureJob, sourceNotePath: string): Promise<ExtractedSource> {
-    const captureUrl = job.resolvedUrl || job.url;
+  private async extractAudio(
+    job: BrowserCaptureJob,
+    sourceNotePath: string,
+    signal?: AbortSignal,
+    urlOverride?: string,
+    saveOriginal = true,
+  ): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
+    const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-audio-"));
     try {
+      const appleEpisode = await this.resolveApplePodcastEpisode(captureUrl, signal);
+      const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
       const titleResult = await runLocalCommand(
         downloader,
-        [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
+        [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
+        signal,
       );
-      const title = titleResult.exitCode === 0
+      const title = appleEpisode?.title || (titleResult.exitCode === 0
         ? lastLine(titleResult.stdout) || job.title
-        : job.title;
+        : job.title);
       await runLocalCommand(
         downloader,
-        ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
+        [
+          ...ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl).slice(0, -1),
+          ...sessionArgs,
+          captureUrl,
+        ],
         "",
         15 * 60,
+        signal,
       );
       const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
       if (subtitleFile) {
@@ -1657,36 +2164,53 @@ export class BrowserCaptureServer {
         progress: 28,
         message: "没有找到可用字幕，正在下载音频并转录",
       });
-      const audioResult = await runLocalCommand(
-        downloader,
-        [
-          ...ytDlpCaptureArgs(captureUrl),
-          ...ffmpegLocationArgs(settings),
-          "-x",
-          "--audio-format",
-          "m4a",
-          "-o",
-          join(directory, "audio.%(ext)s"),
-          captureUrl,
-        ],
-        "",
-        60 * 60,
-      );
-      if (audioResult.exitCode !== 0) {
+      const downloadUrls = [
+        appleEpisode?.mediaUrl ?? "",
+        captureUrl,
+        ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
+          .filter((candidate) => candidate.pageType === "audio")
+          .map((candidate) => candidate.url),
+      ].filter(Boolean)
+        .filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+      let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
+      for (const downloadUrl of downloadUrls) {
+        audioResult = await runLocalCommand(
+          downloader,
+          [
+            ...ytDlpCaptureArgs(downloadUrl),
+            ...sessionArgs,
+            ...ffmpegLocationArgs(settings),
+            "-x",
+            "--audio-format",
+            "m4a",
+            "-o",
+            join(directory, "audio.%(ext)s"),
+            downloadUrl,
+          ],
+          "",
+          60 * 60,
+          signal,
+        );
+        if (audioResult.exitCode === 0) break;
+      }
+      if (!audioResult || audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
-          `${audioResult.stderr}\n${audioResult.stdout}`,
+          `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
           captureUrl,
         ));
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
       if (!audioFile) throw new Error("没有找到已下载的音频文件");
       const audioPath = join(directory, audioFile);
-      const mediaPath = await this.saveMediaFile(
-        audioPath,
-        title || job.title || "未命名音频",
-        extname(audioFile).replace(/^\./, "") || "m4a",
-        sourceNotePath,
-      );
+      const mediaPath = saveOriginal
+        ? await this.saveMediaFile(
+          audioPath,
+          title || job.title || "未命名音频",
+          extname(audioFile).replace(/^\./, "") || "m4a",
+          sourceNotePath,
+          job.id,
+        )
+        : undefined;
       await this.updateJob(job.id, {
         progress: 34,
         message: "音频已经保存，正在检测本机 Whisper",
@@ -1697,18 +2221,44 @@ export class BrowserCaptureServer {
       const cppModelPath = implementation === "whisper-cpp"
         ? await resolveWhisperCppModel(model)
         : undefined;
+      let whisperAudioPath = audioPath;
+      if (whisperNeedsPcmConversion(implementation, audioPath)) {
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        whisperAudioPath = join(directory, "whisper-input.wav");
+        await this.updateJob(job.id, {
+          progress: 36,
+          message: "正在转换为 Whisper 可读取的音轨",
+        });
+        const conversion = await runLocalCommand(
+          ffmpeg,
+          buildWhisperPcmConversionArgs(audioPath, whisperAudioPath),
+          "",
+          20 * 60,
+          signal,
+        );
+        if (conversion.exitCode !== 0) {
+          throw new Error(conversion.stderr.trim() || "远程音频音轨转换失败");
+        }
+      }
       const invocation = buildWhisperInvocation({
         implementation,
-        audioPath,
+        audioPath: whisperAudioPath,
         outputDirectory: directory,
         model,
         cppModelPath,
       });
-      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60, signal);
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
       let transcriptPath = invocation.transcriptPath;
+      if (transcriptPath) {
+        try {
+          await access(transcriptPath);
+        } catch {
+          transcriptPath = undefined;
+        }
+      }
       if (!transcriptPath) {
         const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
         if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
@@ -1719,10 +2269,55 @@ export class BrowserCaptureServer {
       return {
         title: title || job.title || "未命名音频",
         source: transcript,
-        mediaPath,
+        ...(mediaPath ? { mediaPath } : {}),
       };
     } finally {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async resolveApplePodcastEpisode(
+    captureUrl: string,
+    signal?: AbortSignal,
+  ): Promise<ApplePodcastEpisode | undefined> {
+    let showId = "";
+    try {
+      const parsed = new URL(captureUrl);
+      if (parsed.hostname.toLowerCase() !== "podcasts.apple.com") return undefined;
+      showId = parsed.pathname.match(/\/id(\d+)/i)?.[1] ?? "";
+    } catch {
+      return undefined;
+    }
+    if (!showId) return undefined;
+    throwIfCaptureAborted(signal);
+    try {
+      const response = await requestUrl({
+        url: `https://itunes.apple.com/lookup?id=${encodeURIComponent(showId)}&entity=podcastEpisode&limit=200`,
+        method: "GET",
+        throw: false,
+      });
+      if (response.status < 200 || response.status >= 400) return undefined;
+      const payload = response.json as { results?: unknown[] };
+      const results = Array.isArray(payload.results)
+        ? payload.results.flatMap((raw) => {
+          if (!raw || typeof raw !== "object") return [];
+          const item = raw as Record<string, unknown>;
+          const trackId = typeof item.trackId === "number" ? item.trackId : undefined;
+          return [{
+            wrapperType: stringField(item.wrapperType),
+            kind: stringField(item.kind),
+            trackId,
+            trackName: stringField(item.trackName),
+            episodeUrl: stringField(item.episodeUrl),
+          }];
+        })
+        : [];
+      return selectApplePodcastEpisode(
+        captureUrl,
+        results,
+      );
+    } catch {
+      return undefined;
     }
   }
 
@@ -1731,8 +2326,10 @@ export class BrowserCaptureServer {
     title: string,
     source: string,
     outputLocale: KnowGroveLocale,
+    signal: AbortSignal,
     onProgress: (message: string, progress: number) => Promise<void>,
   ): Promise<BrowserCaptureAIResult> {
+    throwIfCaptureAborted(signal);
     const protectedArticle = job.pageType === "article"
       ? protectArticleImages(source.slice(0, MAX_SOURCE_CHARACTERS))
       : { source: source.slice(0, MAX_SOURCE_CHARACTERS), images: [] };
@@ -1744,9 +2341,10 @@ export class BrowserCaptureServer {
       : prompt;
     if (chunks.length === 1) {
       await onProgress("正在生成摘要、要点和整理正文", 72);
-      const output = await this.host.runProvider(
-        job.providerId,
+      const output = await this.runProviderForJob(
+        job,
         withSkillInstruction(browserCapturePrompt(job.pageType, title, chunks[0]!, outputLocale)),
+        signal,
       );
       const result = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
       return job.pageType === "article"
@@ -1759,18 +2357,20 @@ export class BrowserCaptureServer {
         `长内容分段整理中：${index + 1}/${chunks.length}`,
         55 + Math.round(((index + 1) / chunks.length) * 30),
       );
-      const output = await this.host.runProvider(
-        job.providerId,
+      const output = await this.runProviderForJob(
+        job,
         withSkillInstruction(
           browserCaptureChunkPrompt(job.pageType, title, chunks[index]!, index + 1, chunks.length, outputLocale),
         ),
+        signal,
       );
       partials.push(normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType));
     }
     await onProgress("正在合并各段摘要与核心要点", 88);
-    const output = await this.host.runProvider(
-      job.providerId,
+    const output = await this.runProviderForJob(
+      job,
       withSkillInstruction(browserCaptureSynthesisPrompt(job.pageType, title, partials, outputLocale)),
+      signal,
     );
     const synthesis = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
     const merged = {
@@ -1780,5 +2380,21 @@ export class BrowserCaptureServer {
     return job.pageType === "article"
       ? { ...merged, bodyMarkdown: restoreArticleImages(merged.bodyMarkdown, protectedArticle.images) }
       : merged;
+  }
+
+  private async runProviderForJob(
+    job: BrowserCaptureJob,
+    prompt: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const result = await this.host.runProvider(job.providerId, prompt, signal);
+    if (result.providerId !== job.providerId) {
+      job.providerId = result.providerId;
+      await this.updateJob(job.id, {
+        providerId: result.providerId,
+        message: "已切换到新的处理引擎，正在继续整理",
+      });
+    }
+    return result.output;
   }
 }

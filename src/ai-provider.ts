@@ -28,6 +28,13 @@ export interface LocalCommandResult {
   exitCode: number;
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error("任务已由用户取消");
+  error.name = "AbortError";
+  throw error;
+}
+
 const MAX_PROVIDER_OUTPUT = 2_000_000;
 type CLIProviderId = Extract<AIProviderId,
   "codex-cli" | "claude-cli" | "antigravity-cli" | "qoder-cli" | "kimi-cli" | "minimax-cli" | "glm-cli" | "codebuddy-cli">;
@@ -133,8 +140,10 @@ export async function runLocalCommand(
   args: string[],
   input: string,
   timeoutSeconds: number,
+  signal?: AbortSignal,
 ): Promise<LocalCommandResult> {
   if (!Platform.isDesktopApp) throw new Error("CLI 模型只支持 Obsidian 桌面版");
+  throwIfAborted(signal);
   const workingDirectory = await mkdtemp(join(tmpdir(), "knowgrove-ai-"));
   const loginShellPath = await readLoginShellPath();
   const resolvedExecutable = await resolveLocalExecutable(executable, { loginShellPath }) ?? executable;
@@ -178,12 +187,24 @@ export async function runLocalCommand(
         if (settled) return;
         settled = true;
         window.clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         callback();
+      };
+      const onAbort = (): void => {
+        child.kill("SIGTERM");
+        const error = new Error("任务已由用户取消");
+        error.name = "AbortError";
+        finish(() => reject(error));
       };
       const timer = window.setTimeout(() => {
         child.kill("SIGTERM");
         finish(() => reject(new Error(`${executable} 运行超过 ${timeoutSeconds} 秒，已停止`)));
       }, Math.max(5, timeoutSeconds) * 1_000);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       child.once("error", (error) => finish(() => reject(
         error instanceof Error ? error : new Error(String(error)),
       )));
@@ -543,7 +564,7 @@ function extractCodexMessage(stdout: string): string {
   return messages[messages.length - 1] ?? stdout;
 }
 
-async function runCodex(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runCodex(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "codex";
   const args = [
     "exec",
@@ -558,16 +579,16 @@ async function runCodex(settings: AIPropertySettings, prompt: string, executable
   ];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push("-");
-  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Codex CLI 退出码 ${result.exitCode}`);
   return extractCodexMessage(result.stdout);
 }
 
-async function runClaude(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runClaude(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "claude";
   const args = ["-p", "--output-format", "json"];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Claude Code CLI 退出码 ${result.exitCode}`);
   try {
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -578,10 +599,10 @@ async function runClaude(settings: AIPropertySettings, prompt: string, executabl
   return result.stdout;
 }
 
-async function runAntigravity(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runAntigravity(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "agy";
   const args = buildAntigravityArguments(configuredModel(settings), prompt);
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) {
     throw new Error(formatCLIProviderError("antigravity-cli", `${result.stderr}\n${result.stdout}`, `Antigravity CLI 退出码 ${result.exitCode}`));
   }
@@ -590,12 +611,12 @@ async function runAntigravity(settings: AIPropertySettings, prompt: string, exec
   return output;
 }
 
-async function runQoder(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runQoder(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "qodercli";
   const args = ["--print", "--permission-mode", "dont_ask", "--tools", ""];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push(prompt);
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) {
     throw new Error(formatCLIProviderError("qoder-cli", `${result.stderr}\n${result.stdout}`, `Qoder CLI 退出码 ${result.exitCode}`));
   }
@@ -603,41 +624,41 @@ async function runQoder(settings: AIPropertySettings, prompt: string, executable
   return result.stdout;
 }
 
-async function runKimi(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runKimi(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "kimi";
   const args = ["--plan", "--prompt", prompt];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Kimi Code CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("Kimi Code CLI 没有返回文本结果");
   return result.stdout;
 }
 
-async function runMiniMax(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runMiniMax(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "mmx";
   const args = ["text", "chat", "--message", prompt];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `MiniMax CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("MiniMax CLI 没有返回文本结果");
   return result.stdout;
 }
 
-async function runGLM(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runGLM(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "zai";
   const args = configuredModel(settings) ? ["--model", configuredModel(settings), prompt] : [prompt];
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `GLM CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("GLM CLI 没有返回文本结果");
   return result.stdout;
 }
 
-async function runCodeBuddy(settings: AIPropertySettings, prompt: string, executablePath?: string): Promise<string> {
+async function runCodeBuddy(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "codebuddy";
   const args = ["--print", "--permission-mode", "plan", "--tools", "", "--max-turns", "1"];
   if (configuredModel(settings)) args.push("--model", configuredModel(settings));
   args.push(prompt);
-  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds);
+  const result = await runLocalCommand(executable, args, "", settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `CodeBuddy CLI 退出码 ${result.exitCode}`);
   if (!result.stdout.trim()) throw new Error("CodeBuddy CLI 没有返回文本结果");
   return result.stdout;
@@ -647,7 +668,8 @@ function normalizedEndpoint(value: string, fallback: string): string {
   return (value.trim() || fallback).replace(/\/+$/, "");
 }
 
-async function runAnthropic(settings: AIPropertySettings, prompt: string, apiKey?: string): Promise<string> {
+async function runAnthropic(settings: AIPropertySettings, prompt: string, apiKey?: string, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
   if (!apiKey) throw new Error("尚未保存 Anthropic API Key");
   if (!configuredModel(settings)) throw new Error("请先填写 Anthropic 模型名称");
   const response = await requestUrl({
@@ -664,13 +686,15 @@ async function runAnthropic(settings: AIPropertySettings, prompt: string, apiKey
       messages: [{ role: "user", content: prompt }],
     }),
   });
+  throwIfAborted(signal);
   const blocks = (response.json as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n").trim();
   if (!text) throw new Error("Anthropic API 没有返回文本结果");
   return text;
 }
 
-async function runOpenAICompatible(settings: AIPropertySettings, prompt: string, apiKey?: string): Promise<string> {
+async function runOpenAICompatible(settings: AIPropertySettings, prompt: string, apiKey?: string, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
   if (!configuredModel(settings)) throw new Error("请先填写模型名称");
   const base = normalizedEndpoint(settings.endpoint, "http://127.0.0.1:11434/v1");
   const url = base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
@@ -687,6 +711,7 @@ async function runOpenAICompatible(settings: AIPropertySettings, prompt: string,
       messages: [{ role: "user", content: prompt }],
     }),
   });
+  throwIfAborted(signal);
   const content = (response.json as { choices?: Array<{ message?: { content?: string } }> })
     .choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error("OpenAI 兼容接口没有返回文本结果");
@@ -698,16 +723,17 @@ export async function runAIProvider(
   prompt: string,
   availability: AIProviderAvailability[],
   apiKey?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const detected = availability.find((provider) => provider.id === settings.provider);
-  if (settings.provider === "codex-cli") return runCodex(settings, prompt, detected?.executablePath);
-  if (settings.provider === "claude-cli") return runClaude(settings, prompt, detected?.executablePath);
-  if (settings.provider === "antigravity-cli") return runAntigravity(settings, prompt, detected?.executablePath);
-  if (settings.provider === "qoder-cli") return runQoder(settings, prompt, detected?.executablePath);
-  if (settings.provider === "kimi-cli") return runKimi(settings, prompt, detected?.executablePath);
-  if (settings.provider === "minimax-cli") return runMiniMax(settings, prompt, detected?.executablePath);
-  if (settings.provider === "glm-cli") return runGLM(settings, prompt, detected?.executablePath);
-  if (settings.provider === "codebuddy-cli") return runCodeBuddy(settings, prompt, detected?.executablePath);
-  if (settings.provider === "anthropic-api") return runAnthropic(settings, prompt, apiKey);
-  return runOpenAICompatible(settings, prompt, apiKey);
+  if (settings.provider === "codex-cli") return runCodex(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "claude-cli") return runClaude(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "antigravity-cli") return runAntigravity(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "qoder-cli") return runQoder(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "kimi-cli") return runKimi(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "minimax-cli") return runMiniMax(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "glm-cli") return runGLM(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "codebuddy-cli") return runCodeBuddy(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "anthropic-api") return runAnthropic(settings, prompt, apiKey, signal);
+  return runOpenAICompatible(settings, prompt, apiKey, signal);
 }
