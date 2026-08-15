@@ -70,6 +70,19 @@ export interface BrowserCaptureSessionCookie {
   expirationDate?: number;
 }
 
+export interface ApplePodcastLookupItem {
+  wrapperType?: string;
+  kind?: string;
+  trackId?: number;
+  trackName?: string;
+  episodeUrl?: string;
+}
+
+export interface ApplePodcastEpisode {
+  title: string;
+  mediaUrl: string;
+}
+
 export type WhisperImplementation = "openai-whisper" | "whisper-cpp";
 
 export interface WhisperInvocation {
@@ -155,6 +168,34 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
   } catch {
     return "article";
   }
+}
+
+export function selectApplePodcastEpisode(
+  captureUrl: string,
+  items: ApplePodcastLookupItem[],
+): ApplePodcastEpisode | undefined {
+  let requestedEpisode = "";
+  try {
+    const parsed = new URL(captureUrl);
+    if (parsed.hostname.toLowerCase() !== "podcasts.apple.com") return undefined;
+    requestedEpisode = parsed.searchParams.get("i")?.trim() ?? "";
+  } catch {
+    return undefined;
+  }
+  const episodes = items.filter((item) =>
+    item.wrapperType === "podcastEpisode"
+    && item.kind === "podcast-episode"
+    && typeof item.episodeUrl === "string"
+    && /^https?:\/\//i.test(item.episodeUrl),
+  );
+  const selected = requestedEpisode
+    ? episodes.find((item) => String(item.trackId ?? "") === requestedEpisode)
+    : episodes[0];
+  if (!selected?.episodeUrl) return undefined;
+  return {
+    title: selected.trackName?.trim() || "Podcast episode",
+    mediaUrl: selected.episodeUrl,
+  };
 }
 
 export function classifyBrowserCaptureResource(

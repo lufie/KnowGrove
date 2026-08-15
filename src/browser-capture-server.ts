@@ -48,6 +48,7 @@ import {
   safeCaptureFileName,
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
+  selectApplePodcastEpisode,
   selectedCaptureProvider,
   normalizeCaptureSessionCookies,
   serializeNetscapeCookies,
@@ -56,6 +57,7 @@ import {
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
   type BrowserCaptureAIResult,
+  type ApplePodcastEpisode,
   type BrowserCaptureMediaCandidate,
   type BrowserCapturePageType,
   type BrowserCaptureSessionCookie,
@@ -2124,6 +2126,7 @@ export class BrowserCaptureServer {
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-audio-"));
     try {
+      const appleEpisode = await this.resolveApplePodcastEpisode(captureUrl, signal);
       const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
       const titleResult = await runLocalCommand(
         downloader,
@@ -2132,9 +2135,9 @@ export class BrowserCaptureServer {
         90,
         signal,
       );
-      const title = titleResult.exitCode === 0
+      const title = appleEpisode?.title || (titleResult.exitCode === 0
         ? lastLine(titleResult.stdout) || job.title
-        : job.title;
+        : job.title);
       await runLocalCommand(
         downloader,
         [
@@ -2162,11 +2165,13 @@ export class BrowserCaptureServer {
         message: "没有找到可用字幕，正在下载音频并转录",
       });
       const downloadUrls = [
+        appleEpisode?.mediaUrl ?? "",
         captureUrl,
         ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
           .filter((candidate) => candidate.pageType === "audio")
           .map((candidate) => candidate.url),
-      ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+      ].filter(Boolean)
+        .filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
       let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
       for (const downloadUrl of downloadUrls) {
         audioResult = await runLocalCommand(
@@ -2268,6 +2273,51 @@ export class BrowserCaptureServer {
       };
     } finally {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async resolveApplePodcastEpisode(
+    captureUrl: string,
+    signal?: AbortSignal,
+  ): Promise<ApplePodcastEpisode | undefined> {
+    let showId = "";
+    try {
+      const parsed = new URL(captureUrl);
+      if (parsed.hostname.toLowerCase() !== "podcasts.apple.com") return undefined;
+      showId = parsed.pathname.match(/\/id(\d+)/i)?.[1] ?? "";
+    } catch {
+      return undefined;
+    }
+    if (!showId) return undefined;
+    throwIfCaptureAborted(signal);
+    try {
+      const response = await requestUrl({
+        url: `https://itunes.apple.com/lookup?id=${encodeURIComponent(showId)}&entity=podcastEpisode&limit=200`,
+        method: "GET",
+        throw: false,
+      });
+      if (response.status < 200 || response.status >= 400) return undefined;
+      const payload = response.json as { results?: unknown[] };
+      const results = Array.isArray(payload.results)
+        ? payload.results.flatMap((raw) => {
+          if (!raw || typeof raw !== "object") return [];
+          const item = raw as Record<string, unknown>;
+          const trackId = typeof item.trackId === "number" ? item.trackId : undefined;
+          return [{
+            wrapperType: stringField(item.wrapperType),
+            kind: stringField(item.kind),
+            trackId,
+            trackName: stringField(item.trackName),
+            episodeUrl: stringField(item.episodeUrl),
+          }];
+        })
+        : [];
+      return selectApplePodcastEpisode(
+        captureUrl,
+        results,
+      );
+    } catch {
+      return undefined;
     }
   }
 

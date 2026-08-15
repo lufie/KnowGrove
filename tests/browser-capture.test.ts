@@ -39,6 +39,7 @@ import {
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
   serializeNetscapeCookies,
+  selectApplePodcastEpisode,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
@@ -154,6 +155,35 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://vimeo.com/56015672"), "video");
   assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/sph/example"), "video");
   assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/article/example"), "article");
+});
+
+test("Apple Podcasts resolves a shared episode or the latest show episode to public audio", () => {
+  const results = [
+    { wrapperType: "track", kind: "podcast", trackId: 1894113824, trackName: "Top Five Tech" },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000783300456,
+      trackName: "Latest episode",
+      episodeUrl: "https://media.example.com/latest.mp3",
+    },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000779262450,
+      trackName: "Shared episode",
+      episodeUrl: "https://media.example.com/shared.mp3",
+    },
+  ];
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824", results),
+    { title: "Latest episode", mediaUrl: "https://media.example.com/latest.mp3" },
+  );
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824?i=1000779262450", results),
+    { title: "Shared episode", mediaUrl: "https://media.example.com/shared.mp3" },
+  );
+  assert.equal(selectApplePodcastEpisode("https://example.com/id1894113824", results), undefined);
 });
 
 test("articles with incidental embedded media stay articles while media candidates are inventoried", () => {
