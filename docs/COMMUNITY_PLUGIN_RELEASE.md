@@ -127,4 +127,4 @@ Release 成功后，在干净 Vault 中从该 Release 手动安装一次，并�
 
 - 使用语义化版本。
 - 每次发布附英文变更说明。
-- 任何联网、账号、Credit、支付、模型提供方或数据发送范围变化，都同步更新 `README.md`、`PRIVACY.md` 和 `PRD.md`。
+- 任何联网、账号、Credit、支付、模型提供方或数据发送范围变化，都同步更新本仓 `README.md`、`PRIVACY.md`，并在合并前把完整功能契约交接到私有 `KnowGrove-Platform/PRD.md`；本公开仓不保存 PRD 副本。
