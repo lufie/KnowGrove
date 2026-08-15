@@ -15,9 +15,9 @@ How it works: `/how-it-works`
 This message disappears once the first observation lands.
 </claude-mem-context>
 
-# Product Documentation Policy
+# Product Contract Handoff
 
-- `PRD.md` in the repository root is the product baseline and source of truth.
-- Every user-visible feature addition, removal, behavior change, setting change, or release-status change must update the corresponding section of `PRD.md`.
-- Every such change must also add one entry to the `PRD.md` change log and update its product/PRD version when applicable.
-- Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
+- This public repository does not store a product PRD or a synchronized copy. The only cross-end product source of truth is the private `lufie/KnowGrove-Platform` root `PRD.md`.
+- Every public plugin feature addition, removal, behavior change, setting change, or release-status change must update the matching capability ID, common contract, Obsidian section, compatibility requirements, and change log in the private total PRD before merge.
+- The handoff must retain prerequisites, ordered flow, state/data semantics, invariants, failure recovery, platform differences, and compatibility/acceptance requirements when they change.
+- Public implementation and release evidence belongs in `README.md`, `docs/`, tests, and GitHub Release notes. Do not describe a capability as published until its distribution address and clean-machine acceptance evidence are available.
