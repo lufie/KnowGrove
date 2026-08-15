@@ -161,6 +161,8 @@ export interface DesktopCaptureSettings {
   linkFolder: string;
   /** 留空时使用“收集箱路径/录音”。 */
   recordingFolder: string;
+  /** 留空时沿用阅读列表/收集箱路径。 */
+  externalMarkdownFolder: string;
 }
 
 export interface KnowGroveSettings {
@@ -473,6 +475,7 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   desktopCapture: {
     linkFolder: "",
     recordingFolder: "",
+    externalMarkdownFolder: "",
   },
   aiProperties: {
     enabled: false,

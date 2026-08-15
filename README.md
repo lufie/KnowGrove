@@ -13,6 +13,7 @@ Current source, GitHub release, and Obsidian community release: `2.8.11`.
 - **Read it later:** collect notes in one inbox, switch between unread and read, and optionally mark a note as read when you reach the end.
 - **Browser and mobile capture:** send articles, videos, links, and lightweight voice notes to your vault.
 - **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, record audio into crash-recoverable local segments, or drop existing local audio and video files into the recorder workspace for background transcription and processing; every saved result includes a direct note shortcut.
+- **Open external Markdown on Mac:** install the optional KnowGrove Markdown opener from Read it later settings, then complete macOS's one-time **Get Info → Open with → Change All** confirmation. Double-clicking `.md` or `.markdown` then copies files outside the vault into the configured inbox and opens the imported note in Obsidian; source files are never moved or overwritten, and the previous default app can be restored through the same system flow.
 - **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable. Audio and video transcripts keep the language actually spoken, while generated summaries and analysis follow the local system language.
 - **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
 - **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
@@ -77,7 +78,7 @@ The local receiver listens only on `127.0.0.1:47831` and requires confirmation i
 - API keys use Obsidian SecretStorage when available.
 - Local CLIs run without a shell and in isolated temporary directories.
 - Local process execution is limited to the provider or media tools selected by the user; executable arguments are passed directly rather than through a command shell.
-- Direct filesystem access is limited to user-selected external media and KnowGrove runtime files outside the vault. Normal note writes use Obsidian's Vault APIs.
+- Direct filesystem access is limited to user-selected external media, external Markdown explicitly opened with the optional Mac opener, and KnowGrove runtime files outside the vault. Normal note writes use Obsidian's Vault APIs.
 - Whole-vault enumeration is reserved for explicit property, topic, or attachment checks. Attachment checks do not rebuild the vault index at startup.
 - Clipboard access occurs only after a user clicks a copy action.
 - KnowGrove does not bypass paywalls, login restrictions, DRM, or platform permissions.
