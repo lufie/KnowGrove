@@ -102,6 +102,14 @@ function renderJob(job) {
   elements.progressBar.style.width = `${progress}%`;
   elements.progressTrack.setAttribute("aria-valuenow", String(progress));
   elements.progressValue.textContent = `${progress}%`;
+  if (job.status === "completed" && (!job.result?.storageVerified || !job.result?.relativePath)) {
+    currentResult = undefined;
+    showError(new Error("整理结果没有通过 Obsidian 文件回读校验，请重新处理"));
+    elements.retry.hidden = false;
+    elements.capture.disabled = false;
+    elements.capture.textContent = "重新整理到 Obsidian";
+    return;
+  }
   if (job.status === "completed" || job.status === "partial") {
     currentResult = job.result;
     showOnly(elements.resultPanel);

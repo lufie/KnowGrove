@@ -38,6 +38,105 @@ import {
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
 } from "../src/browser-capture-core";
+import { runBrowserProviderWithHandoff } from "../src/browser-provider-handoff";
+import type { AIPropertySettings } from "../src/types";
+
+function providerSettings(
+  provider: AIPropertySettings["provider"],
+  model = "",
+): AIPropertySettings {
+  return {
+    enabled: true,
+    autoEnrichNewNotes: true,
+    provider,
+    model,
+    executablePath: "",
+    endpoint: "",
+    maxContentCharacters: 40_000,
+    timeoutSeconds: 900,
+  };
+}
+
+test("browser capture hands an in-flight prompt to a newly selected CLI", async () => {
+  let current = providerSettings("codex-cli", "gpt-old");
+  const attempts: string[] = [];
+  const resultPromise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (settings, signal) => {
+      attempts.push(`${settings.provider}:${settings.model}`);
+      if (settings.provider === "codebuddy-cli") return "new-provider-output";
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("old provider stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli", "buddy-new");
+  }, 25);
+  const result = await resultPromise;
+  assert.deepEqual(attempts, ["codex-cli:gpt-old", "codebuddy-cli:buddy-new"]);
+  assert.equal(result.output, "new-provider-output");
+  assert.equal(result.providerId, "codebuddy-cli");
+  assert.equal(result.handoffCount, 1);
+});
+
+test("browser capture does not retry a failed provider when configuration is unchanged", async () => {
+  const current = providerSettings("codex-cli", "gpt-same");
+  let attempts = 0;
+  await assert.rejects(
+    runBrowserProviderWithHandoff({
+      requestedProvider: "codex-cli",
+      getSettings: () => current,
+      pollIntervalMilliseconds: 10,
+      scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+      clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+      execute: async () => {
+        attempts += 1;
+        throw new Error("provider failed");
+      },
+    }),
+    /provider failed/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("browser capture cancellation wins over provider handoff", async () => {
+  const controller = new AbortController();
+  let current = providerSettings("codex-cli");
+  let attempts = 0;
+  const promise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    signal: controller.signal,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (_settings, signal) => {
+      attempts += 1;
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli");
+    controller.abort();
+  }, 25);
+  await assert.rejects(promise, (error: unknown) => error instanceof Error && error.name === "AbortError");
+  assert.equal(attempts, 1);
+});
 
 test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://www.youtube.com/watch?v=1"), "video");

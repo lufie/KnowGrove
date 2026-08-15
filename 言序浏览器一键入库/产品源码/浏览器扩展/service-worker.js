@@ -111,6 +111,10 @@ async function ensureJobAlarm() {
 
 async function renderJobBadge(job) {
   if (job.status === "completed") {
+    if (!job.result?.storageVerified || !job.result?.relativePath) {
+      await setBadge("!", "#9b3b3b");
+      return;
+    }
     await setBadge("✓", "#f24b3f");
     return;
   }

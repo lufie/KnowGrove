@@ -52,6 +52,10 @@ import {
   type BrowserCaptureServerStatus,
 } from "./browser-capture-server";
 import {
+  runBrowserProviderWithHandoff,
+  type BrowserProviderRunResult,
+} from "./browser-provider-handoff";
+import {
   DESKTOP_RECORDER_VIEW_TYPE,
   DesktopRecorderView,
   DesktopRecordingOverlay,
@@ -2378,20 +2382,33 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
-  private async runBrowserCaptureProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<string> {
-    const availability = await this.getAIProviders();
-    const selected = availability.find((item) => item.id === provider);
-    if (!selected?.available) throw new Error(selected?.detail || `${providerName(provider)} 当前不可用`);
-    const base = this.settings.aiProperties;
-    const useSharedConfiguration = base.provider === provider;
-    return runAIProvider({
-      ...base,
-      provider,
-      model: useSharedConfiguration ? base.model : "",
-      executablePath: useSharedConfiguration ? base.executablePath : "",
-      endpoint: useSharedConfiguration ? base.endpoint : "",
-      timeoutSeconds: Math.max(900, base.timeoutSeconds),
-    }, prompt, availability, this.getAISecret(provider), signal);
+  private async runBrowserCaptureProvider(
+    provider: AIProviderId,
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<BrowserProviderRunResult> {
+    try {
+      return await runBrowserProviderWithHandoff({
+        requestedProvider: provider,
+        getSettings: () => ({ ...this.settings.aiProperties }),
+        signal,
+        execute: async (configuration, runSignal, attempt) => {
+          const availability = await this.getAIProviders(attempt > 0);
+          const selected = availability.find((item) => item.id === configuration.provider);
+          if (!selected?.available) {
+            throw new Error(selected?.detail || `${providerName(configuration.provider)} 当前不可用`);
+          }
+          return runAIProvider({
+            ...configuration,
+            timeoutSeconds: Math.max(900, configuration.timeoutSeconds),
+          }, prompt, availability, this.getAISecret(configuration.provider), runSignal);
+        },
+      });
+    } catch (error) {
+      if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message}；整理未完成，请重新处理`);
+    }
   }
 
   supportsAISecretStorage(): boolean {

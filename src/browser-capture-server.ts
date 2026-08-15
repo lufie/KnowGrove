@@ -84,6 +84,8 @@ export interface BrowserCaptureJob {
     pageType: BrowserCapturePageType;
     skillId: string;
     providerId: AIProviderId;
+    storageVerified?: boolean;
+    verifiedAt?: string;
   };
   resumeFromRaw?: boolean;
   createdNotePath?: string;
@@ -109,7 +111,11 @@ interface BrowserCaptureHost {
   getSettings(): KnowGroveSettings;
   saveSettings(): Promise<void>;
   getProviders(force?: boolean): Promise<AIProviderAvailability[]>;
-  runProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<string>;
+  runProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<{
+    output: string;
+    providerId: AIProviderId;
+    handoffCount: number;
+  }>;
   getSkillInstruction(pageType: BrowserCapturePageType): Promise<string>;
   suppressNewNoteInitialization(path: string): void;
   suppressAutomaticLinkNote(path: string): void;
@@ -1153,6 +1159,7 @@ export class BrowserCaptureServer {
       throwIfCaptureAborted(signal);
       noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType, id);
       throwIfCaptureAborted(signal);
+      noteFile = await this.verifyCompletedCapture(id, noteFile, completedContent);
       await this.updateJob(id, {
         status: "completed",
         phase: "completed",
@@ -1160,7 +1167,7 @@ export class BrowserCaptureServer {
         progress: 100,
         message: "内容已经整理并写入 Obsidian",
         completedAt: new Date().toISOString(),
-        result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary)),
+        result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary), true),
       });
     } catch (error) {
       if (isCaptureAbort(error, signal) || this.jobs.get(id)?.status === "cancelling") {
@@ -1168,9 +1175,10 @@ export class BrowserCaptureServer {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      if (noteFile) {
+      const liveNoteFile = noteFile ? this.resolveLiveNoteFile(id, noteFile) : undefined;
+      if (liveNoteFile) {
         if (!extracted && !job.targetPath) {
-          await this.host.app.vault.modify(noteFile, buildCaptureFailureNote({
+          await this.host.app.vault.modify(liveNoteFile, buildCaptureFailureNote({
             pageType: job.pageType,
             title: job.title || "待提取内容",
             url: job.url,
@@ -1189,7 +1197,7 @@ export class BrowserCaptureServer {
             : "链接和标题已保存，但正文提取没有完成",
           result: this.resultFor(
             job,
-            noteFile,
+            liveNoteFile,
             extracted?.title || job.title || "待提取内容",
             extracted ? "原始内容已保存，可以稍后重试" : "链接已保存，可以稍后重试",
           ),
@@ -1201,7 +1209,8 @@ export class BrowserCaptureServer {
           phaseLabel: PHASE_LABELS.failed,
           progress: 100,
           error: message,
-          message: "任务没有写入 Vault",
+          message: "任务没有成功写入 Vault，可以重新处理",
+          result: undefined,
         });
       }
     } finally {
@@ -1322,7 +1331,25 @@ export class BrowserCaptureServer {
     this.currentNotePaths.set(jobId, path);
     if (this.jobs.get(jobId)?.createdNotePath) await this.trackCreatedNote(jobId, path);
     const moved = this.host.app.vault.getAbstractFileByPath(path);
-    return moved instanceof TFile ? moved : file;
+    if (!(moved instanceof TFile)) throw new Error("整理结果移动后无法在 Vault 中找到，请重新处理");
+    return moved;
+  }
+
+  private resolveLiveNoteFile(jobId: string, file: TFile): TFile | undefined {
+    const currentPath = this.currentNotePaths.get(jobId) ?? file.path;
+    const current = this.host.app.vault.getAbstractFileByPath(currentPath);
+    return current instanceof TFile ? current : undefined;
+  }
+
+  private async verifyCompletedCapture(jobId: string, file: TFile, expectedContent: string): Promise<TFile> {
+    const current = this.resolveLiveNoteFile(jobId, file);
+    if (!current) throw new Error("整理结果未实际写入 Vault，任务已标记失败，请重新处理");
+    const stored = await this.host.app.vault.read(current);
+    if (!stored.trim()) throw new Error("整理结果文件为空，任务已标记失败，请重新处理");
+    if (captureBodyForConflictCheck(stored) !== captureBodyForConflictCheck(expectedContent)) {
+      throw new Error("整理结果回读校验失败，任务已标记失败，请重新处理");
+    }
+    return current;
   }
 
   private async renameArticleToTitle(file: TFile, title: string, jobId: string): Promise<TFile> {
@@ -1497,6 +1524,7 @@ export class BrowserCaptureServer {
     file: TFile,
     title: string,
     preview: string,
+    storageVerified = false,
   ): NonNullable<BrowserCaptureJob["result"]> {
     return {
       title,
@@ -1506,6 +1534,8 @@ export class BrowserCaptureServer {
       pageType: job.pageType,
       skillId: job.skillId,
       providerId: job.providerId,
+      storageVerified,
+      ...(storageVerified ? { verifiedAt: new Date().toISOString() } : {}),
     };
   }
 
@@ -1917,8 +1947,8 @@ export class BrowserCaptureServer {
       : prompt;
     if (chunks.length === 1) {
       await onProgress("正在生成摘要、要点和整理正文", 72);
-      const output = await this.host.runProvider(
-        job.providerId,
+      const output = await this.runProviderForJob(
+        job,
         withSkillInstruction(browserCapturePrompt(job.pageType, title, chunks[0]!, outputLocale)),
         signal,
       );
@@ -1933,8 +1963,8 @@ export class BrowserCaptureServer {
         `长内容分段整理中：${index + 1}/${chunks.length}`,
         55 + Math.round(((index + 1) / chunks.length) * 30),
       );
-      const output = await this.host.runProvider(
-        job.providerId,
+      const output = await this.runProviderForJob(
+        job,
         withSkillInstruction(
           browserCaptureChunkPrompt(job.pageType, title, chunks[index]!, index + 1, chunks.length, outputLocale),
         ),
@@ -1943,8 +1973,8 @@ export class BrowserCaptureServer {
       partials.push(normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType));
     }
     await onProgress("正在合并各段摘要与核心要点", 88);
-    const output = await this.host.runProvider(
-      job.providerId,
+    const output = await this.runProviderForJob(
+      job,
       withSkillInstruction(browserCaptureSynthesisPrompt(job.pageType, title, partials, outputLocale)),
       signal,
     );
@@ -1956,5 +1986,21 @@ export class BrowserCaptureServer {
     return job.pageType === "article"
       ? { ...merged, bodyMarkdown: restoreArticleImages(merged.bodyMarkdown, protectedArticle.images) }
       : merged;
+  }
+
+  private async runProviderForJob(
+    job: BrowserCaptureJob,
+    prompt: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const result = await this.host.runProvider(job.providerId, prompt, signal);
+    if (result.providerId !== job.providerId) {
+      job.providerId = result.providerId;
+      await this.updateJob(job.id, {
+        providerId: result.providerId,
+        message: "已切换到新的处理引擎，正在继续整理",
+      });
+    }
+    return result.output;
   }
 }

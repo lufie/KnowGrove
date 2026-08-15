@@ -106,6 +106,7 @@ Chinese (Simplified)
 
 | Version | Date | Changes | Status |
 | --- | --- | --- | --- |
+| 0.3.6 | 2026-08-15 | CLI 或模型配置在任务中切换时由 KnowGrove 接力继续处理；完成页只接受经过 Obsidian 文件回读验证的结果，异常完成显示失败并允许重新处理 | Local candidate |
 | 0.3.5 | 2026-08-15 | 处理进度增加“取消并清理”，可停止本地模型任务、清理本次创建的笔记与附件并立即重新提交；活动任务按来源链接去重 | Local candidate |
 | 0.3.4 | 2026-07-30 | 支持短链最终地址识别、陌生站点媒体检测、豆包等动态 AI 对话页可见内容提取，以及文章、视频和音频统一整理 | Draft |
 | 0.3.3 | 2026-07-29 | 中文品牌统一为“言序”、英文品牌统一为“KnowGrove”，主题色同步言序 App 的暖朱红 `#F24B3F` | Draft |
@@ -118,4 +119,4 @@ Chinese (Simplified)
 - 创建 128×128 PNG 图标和至少一张商店截图。
 - 发布隐私政策并填写可公开访问的 URL。
 - 填写并验证支持邮箱。
-- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.5.zip` 的取消与重新处理流程。
+- 用 Chrome Web Store 账号上传并实测 `KnowGrove-Capture-0.3.6.zip` 的取消、CLI 切换接力与重新处理流程。
