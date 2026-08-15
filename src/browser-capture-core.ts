@@ -185,6 +185,21 @@ export function sameCaptureResourceUrl(left: string, right: string): boolean {
   }
 }
 
+export function captureCancellationPlan(input: {
+  targetPath?: string;
+  createdNotePath?: string;
+  createdAttachmentPaths?: string[];
+}): { trashPaths: string[]; restoreTarget: boolean } {
+  const trashPaths = Array.from(new Set([
+    ...(input.createdAttachmentPaths ?? []),
+    ...(input.createdNotePath ? [input.createdNotePath] : []),
+  ].map((path) => path.trim()).filter(Boolean)));
+  return {
+    trashPaths,
+    restoreTarget: Boolean(input.targetPath && !input.createdNotePath),
+  };
+}
+
 export function isBilibiliCaptureUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();

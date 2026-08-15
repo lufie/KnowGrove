@@ -27,6 +27,7 @@ const elements = {
   progressTrack: document.querySelector("#progress-track"),
   progressBar: document.querySelector("#progress-bar"),
   progressValue: document.querySelector("#progress-value"),
+  cancelJob: document.querySelector("#cancel-job"),
   resultPanel: document.querySelector("#result-panel"),
   resultLabel: document.querySelector("#result-label"),
   resultTitle: document.querySelector("#result-title"),
@@ -46,6 +47,7 @@ let currentPageType = "article";
 let currentSettings;
 let currentResult;
 let isCapturing = false;
+let currentJobId;
 
 function delay(milliseconds) {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
@@ -95,6 +97,7 @@ function renderConnection(data) {
 }
 
 function renderJob(job) {
+  currentJobId = job.id || currentJobId;
   const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
   elements.progressBar.style.width = `${progress}%`;
   elements.progressTrack.setAttribute("aria-valuenow", String(progress));
@@ -124,6 +127,8 @@ function renderJob(job) {
   showOnly(elements.progressPanel);
   elements.progressTitle.textContent = job.phaseLabel || "正在整理";
   elements.progressMessage.textContent = job.message || "KnowGrove 正在处理当前内容。";
+  elements.cancelJob.disabled = job.status === "cancelling";
+  elements.cancelJob.textContent = job.status === "cancelling" ? "正在取消并清理…" : "取消并清理";
 }
 
 async function pollJob(jobId) {
@@ -181,6 +186,7 @@ async function startCapture() {
       progress: 0,
       createdAt: new Date().toISOString(),
     };
+    currentJobId = accepted.jobId;
     await extensionApi.storage.local.set({ activeCaptureJob: snapshot });
     await pollJob(accepted.jobId);
   } catch (error) {
@@ -197,6 +203,7 @@ async function resumeRecentJob() {
   if (!job?.id || job.url !== currentTab.url) return false;
   try {
     const current = await bridgeRequest(currentSettings, `/v1/jobs/${encodeURIComponent(job.id)}`);
+    currentJobId = current.id;
     renderJob(current);
     if (current.status === "queued" || current.status === "running") {
       isCapturing = true;
@@ -206,6 +213,36 @@ async function resumeRecentJob() {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function cancelCurrentJob() {
+  if (!currentJobId || elements.cancelJob.disabled) return;
+  const confirmed = globalThis.confirm("取消当前整理？本次任务新建的笔记和附件会移入 Obsidian 回收站，之后可以重新处理。");
+  if (!confirmed) return;
+  const jobId = currentJobId;
+  isCapturing = false;
+  elements.cancelJob.disabled = true;
+  elements.cancelJob.textContent = "正在取消并清理…";
+  elements.progressTitle.textContent = "正在取消并清理";
+  elements.progressMessage.textContent = "正在停止模型任务并移除本次创建的内容。";
+  try {
+    await bridgeRequest(currentSettings, `/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST",
+    });
+    await extensionApi.storage.local.remove("activeCaptureJob");
+    await extensionApi.action.setBadgeText({ text: "" });
+    currentJobId = undefined;
+    currentResult = undefined;
+    showOnly(null);
+    elements.capture.disabled = false;
+    elements.capture.textContent = "重新整理到 Obsidian";
+  } catch (error) {
+    showError(error);
+    elements.retry.hidden = false;
+  } finally {
+    elements.cancelJob.disabled = false;
+    elements.cancelJob.textContent = "取消并清理";
   }
 }
 
@@ -235,6 +272,7 @@ async function connectKnowGrove() {
 
 async function initialize() {
   isCapturing = false;
+  currentJobId = undefined;
   currentResult = undefined;
   currentSettings = await loadSettings();
   elements.autoRunNote.textContent = currentSettings.autoRun ? "打开即执行" : "手动执行";
@@ -300,6 +338,7 @@ elements.openOptions.addEventListener("click", async () => {
   await extensionApi.runtime.openOptionsPage();
 });
 elements.capture.addEventListener("click", startCapture);
+elements.cancelJob.addEventListener("click", cancelCurrentJob);
 elements.retry.addEventListener("click", initialize);
 elements.connect.addEventListener("click", connectKnowGrove);
 elements.openObsidian.addEventListener("click", async () => {

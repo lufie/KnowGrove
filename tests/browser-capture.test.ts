@@ -12,6 +12,7 @@ import {
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
+  captureCancellationPlan,
   cleanArticleMarkdown,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
@@ -83,6 +84,23 @@ test("browser-rendered capture can target only a note with the same source URL",
     ),
     false,
   );
+});
+
+test("capture cancellation deletes only task-owned notes and attachments", () => {
+  assert.deepEqual(captureCancellationPlan({
+    createdNotePath: "Home/输入/任务.md",
+    createdAttachmentPaths: ["Home/输入/assets/a.png", "Home/输入/assets/a.png", "Home/输入/assets/b.m4a"],
+  }), {
+    trashPaths: ["Home/输入/assets/a.png", "Home/输入/assets/b.m4a", "Home/输入/任务.md"],
+    restoreTarget: false,
+  });
+  assert.deepEqual(captureCancellationPlan({
+    targetPath: "Home/输入/用户原有笔记.md",
+    createdAttachmentPaths: ["Home/输入/assets/task.png"],
+  }), {
+    trashPaths: ["Home/输入/assets/task.png"],
+    restoreTarget: true,
+  });
 });
 
 test("dynamic AI share pages recover question and answer text from embedded router data", () => {

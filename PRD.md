@@ -9,11 +9,11 @@
 | 产品名称 | KnowGrove |
 | 中文名称 | 言序 |
 | 产品形态 | Obsidian 桌面端插件 + 浏览器剪藏扩展 |
-| 当前产品版本 | 2.8.11（GitHub 正式发布，官方标签预扫描已完成） |
-| 本轮目标版本 | 2.8.11 已同步至 Obsidian 社区目录并完成正式扫描 |
-| PRD 版本 | 1.8.5 |
+| 当前产品版本 | 2.8.12（本地验证候选） |
+| 本轮目标版本 | 浏览器整理任务支持取消、清理和无重复重试 |
+| PRD 版本 | 1.8.6 |
 | 基线日期 | 2026-07-31 |
-| 文档状态 | 2.8.11 已正式发布并同步至 Obsidian 社区目录，正式扫描状态 `Completed`：源码 Warning 0、CSS Warning 0、Error 0；仍有 2 条必要桌面行为 Warning（文件系统、本地进程）和 2 条能力 Recommendation（显式全库枚举、用户点击复制），属于准确能力披露而非源码质量问题。Obsidian 员工人工审核仍待完成 |
+| 文档状态 | 2.8.12 已完成代码实现与本地自动化验证，待当前 Vault 部署、浏览器扩展实机取消验收与正式发布；2.8.11 仍是当前公开版本 |
 | 源代码仓库 | `https://github.com/lufie/KnowGrove`（公开） |
 
 ## 2. 产品愿景
@@ -340,6 +340,8 @@ KnowGrove 将 Obsidian 从被动保存文件的笔记工具，升级为本地优
 - 首次连接必须由用户在 Obsidian 中确认配对。
 - 扩展只负责页面识别、提交和进度展示。
 - 下载、解析、AI 调用和 Vault 写入全部由 KnowGrove 完成。
+- 任务处理期间始终提供“取消并清理”：取消会停止当前本地 CLI 子进程、移除排队任务，并将本次任务新建的 Markdown 与附件移入 Obsidian 回收站。若目标是用户原有轻量笔记，则不删除原笔记，而是恢复任务开始前的正文。
+- 取消完成后删除活动任务记录和浏览器角标，当前页面立即恢复为可重新整理状态；同一链接的活动任务只复用一个任务，插件占位笔记不会再次触发自动整理形成重复队列。
 - 用户可以撤销当前电脑上的浏览器授权。
 
 #### 6.2.6 手机端剪藏
@@ -830,8 +832,8 @@ Runtime 1.0.x 托管：
 - 源代码仓库：`https://github.com/lufie/KnowGrove`
 - Obsidian 社区插件 ID：`knowgrove`（已收录到官方 `community-plugins.json`；社区目录当前版本为 2.8.11，正式扫描状态 `Completed`，源码 / CSS Warning 与 Error 均为 0；2 条必要行为 Warning 和 2 条能力 Recommendation 继续准确披露，尚未完成人工审核）
 - 最新 GitHub 正式插件版本：`2.8.11`，发布地址：`https://github.com/lufie/KnowGrove/releases/tag/2.8.11`
-- 最新 Obsidian 本地安装包：`release/言序-KnowGrove-2.5.17-安装包/knowgrove-2.5.17.zip`，SHA-256 `1f64e80ae92efcd9b3e969f63aa7a7bc794405eb60204c6c45c2e94069faa4b6`
-- 最新浏览器剪藏扩展本地安装包：`release/言序-KnowGrove-2.5.4-安装包/浏览器剪藏扩展/KnowGrove-Capture-0.3.3.zip`，SHA-256 `02424304d772f1bfd6725c7a10844295dd967e19d5a8d91e380dec7adc9a12fd`
+- 最新 Obsidian 本地候选安装包：`release/言序-KnowGrove-2.8.12-安装包/knowgrove-2.8.12.zip`，SHA-256 `d0aea140d214bd5978f2abef7ed77d156fb721eb87b6f5ef9301697a058d501c`
+- 最新浏览器剪藏扩展本地候选包：`release/言序-KnowGrove-2.8.12-安装包/浏览器剪藏扩展/KnowGrove-Capture-0.3.5.zip`，SHA-256 `36236c05ac53b7058f7fb960cd496a851314ced0afec691238cb6fc95201ae65`
 - 本地可分发文件夹：`release/KnowGrove-2.5.0-可分发文件/`
 - 2.5.1 CLI 修复包：`release/KnowGrove-2.5.1-CLI修复包/`
 - 远程运行包主清单：`https://cnb.cool/lufie-knowgrove/knowgrove-runtime/-/releases/download/runtime-v1.0.1/runtime-manifest.json`
@@ -970,6 +972,7 @@ Runtime 1.0.x 托管：
 
 | 日期 | 产品版本 | PRD 版本 | 变更类型 | 变更内容 | 验收状态 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-15 | 2.8.12（本地验证候选） | 1.8.6 | 修复 / 浏览器任务取消与回滚 | 浏览器剪藏进度面板新增“取消并清理”：取消信号贯穿插件队列、本地 CLI、视频下载、Whisper 与 AI 整理；插件仅跟踪并回收本次任务创建的笔记和附件，用户原有轻量笔记恢复为任务开始前内容及路径；取消后删除活动任务、清除扩展角标并允许重新处理；同一来源活动任务复用，插件创建的占位笔记不再触发重复自动队列 | 扩展安全检查、类型检查、lint、236 项单元测试与生产构建通过；2.8.12 已覆盖当前 Vault 并重载，4 条评论/引用、29 项设置和 646 条附件历史保留，插件与控制台错误为 0；真实运行时替身让任务停在 AI 阶段后取消，验证自建笔记、任务附件和任务记录全部清理；用户原有轻量笔记在处理中被重命名和改写后，取消可同时恢复原路径与逐字正文；两个本地候选包结构、版本与 SHA-256 已验证，尚未公开发布，浏览器实际点按仍待用户安装 0.3.5 后验收 |
 | 2026-08-15 | 2.8.11（GitHub 与社区目录正式发布，正式扫描完成） | 1.8.5 | 修复 / CSS 兼容性警告治理 / 发布 | 根据 2.8.10 官方分支预扫描的唯一剩余警告，将评论文本的 `text-decoration-*` 下划线实现替换为兼容的内阴影，保留原有标记视觉与交互；版本映射同步更新至 2.8.11 | PR #15 通过 CI 后合并；GitHub Release、三个标准资产和来源证明已发布；官方正式扫描状态 `Completed`，源码 Warning 0、CSS Warning 0、Error 0，发布资产、网络、依赖与可复现构建均通过；2 条文件系统 / 本地进程行为 Warning 和 2 条全库枚举 / 剪贴板 Recommendation 属于产品核心桌面能力披露；当前 Vault 已覆盖安装并重载，`data.json` 哈希不变，插件错误和控制台错误为 0；社区目录当前版本已更新为 2.8.11，Obsidian 员工人工审核仍待完成 |
 | 2026-08-15 | 2.8.10（GitHub 正式发布，官方标签预扫描完成） | 1.8.4 | 修复 / 社区源码警告治理 / 发布 | 根据 2.8.9 已完成的社区扫描报告逐项治理 6 类 TypeScript 类型安全源码 Warning 和 2 条 CSS 兼容性 Warning：显式声明 Node 类型环境，将 `no-unsafe-member-access`、`no-unsafe-assignment`、`no-unsafe-call`、`no-unsafe-argument`、`no-unsafe-return` 与 `prefer-promise-reject-errors` 固化为本地 Error 门禁；移除扫描器无法安全推断的 `Array.prototype.at()` 用法并规范子进程错误；拆分文本装饰简写，移除扩展系统字体关键字 | 本地完整门禁、PR #14、GitHub Release、标准资产和来源证明均完成；官方标签预扫描确认 6 类 TypeScript 源码 Warning 全部清零，仅剩 `text-decoration-*` CSS 兼容性 Warning，随后由 2.8.11 清理。文件系统访问与受控本地进程属于媒体导入、录音恢复、Runtime 和用户选择 CLI 的核心能力，显式全库检查与剪贴板操作均由用户动作触发，继续作为准确能力披露保留 |
 | 2026-08-15 | 2.8.9（GitHub 正式发布，社区扫描完成） | 1.8.3 | 修复 / 社区警告治理 / 发布 | 启用 `eslint-plugin-obsidianmd` 完整推荐规则与 TypeScript 类型规则并把警告视为失败；移除不安全未知值转换、遗留 `require`、跨窗口 `instanceof`、异步事件误用、硬编码配置目录、废弃 Workspace / Slider API 和浏览器 `localStorage`；设置页迁移到 Obsidian 1.13 可搜索声明式 API，最低版本调整为 1.13.0；清理插件、浏览器扩展和云端样式中的 `!important`、扩展系统字体与过时文本装饰写法；补充文件系统、本地进程、全库枚举和剪贴板的主动触发边界；新增 PR 与 `main` 推送自动验证工作流，并将 GitHub Actions 升级到 Node 24 运行版本 | 官方规则 lint 达到 0 错误 / 0 警告，类型检查、235 项测试、生产构建与差异检查全部通过；PR #11 合并并发布 2.8.9，标准资产与来源证明齐全；当前 Vault 已覆盖安装并重载，`data.json` 哈希保持不变，插件及控制台错误为 0；PR #12 完成 CI Actions 升级且流水线通过；社区后台已完成 2.8.9 / `3b897a5` 扫描，发布资产、网络、依赖和可复现构建均通过，0 个阻断 Error；报告中的源码与 CSS 警告转入 2.8.10 修复 |

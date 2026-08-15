@@ -20,6 +20,7 @@ import {
   browserCapturePrompt,
   browserCaptureSkill,
   browserCaptureSynthesisPrompt,
+  captureCancellationPlan,
   buildWhisperInvocation,
   buildCaptureFailureNote,
   buildEnhancedCaptureNote,
@@ -53,7 +54,7 @@ import {
   type BrowserCapturePageType,
 } from "./browser-capture-core";
 
-export type BrowserCaptureJobStatus = "queued" | "running" | "completed" | "partial" | "failed";
+export type BrowserCaptureJobStatus = "queued" | "running" | "cancelling" | "completed" | "partial" | "failed";
 
 export interface BrowserCaptureJob {
   id: string;
@@ -85,6 +86,9 @@ export interface BrowserCaptureJob {
     providerId: AIProviderId;
   };
   resumeFromRaw?: boolean;
+  createdNotePath?: string;
+  createdAttachmentPaths?: string[];
+  cancelRequestedAt?: string;
 }
 
 export interface BrowserCaptureServerStatus {
@@ -105,9 +109,10 @@ interface BrowserCaptureHost {
   getSettings(): KnowGroveSettings;
   saveSettings(): Promise<void>;
   getProviders(force?: boolean): Promise<AIProviderAvailability[]>;
-  runProvider(provider: AIProviderId, prompt: string): Promise<string>;
+  runProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<string>;
   getSkillInstruction(pageType: BrowserCapturePageType): Promise<string>;
   suppressNewNoteInitialization(path: string): void;
+  suppressAutomaticLinkNote(path: string): void;
   enrichCapturedFile(file: TFile): Promise<void>;
 }
 
@@ -136,7 +141,22 @@ const PHASE_LABELS: Record<string, string> = {
   completed: "整理完成",
   partial: "已备份，整理未完成",
   failed: "处理失败",
+  cancelling: "正在取消并清理",
 };
+
+function captureAbortError(): Error {
+  const error = new Error("任务已由用户取消");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfCaptureAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw captureAbortError();
+}
+
+function isCaptureAbort(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted || (error instanceof Error && error.name === "AbortError"));
+}
 
 function randomHex(bytes = 32): string {
   const buffer = new Uint8Array(bytes);
@@ -465,6 +485,10 @@ export class BrowserCaptureServer {
   private readonly capturedSources = new Map<string, ExtractedSource>();
   private readonly pendingPairings = new Map<string, PendingPairing>();
   private readonly queue: string[] = [];
+  private readonly jobAbortControllers = new Map<string, AbortController>();
+  private readonly activeJobRuns = new Map<string, Promise<void>>();
+  private readonly originalTargetContents = new Map<string, { path: string; content: string }>();
+  private readonly currentNotePaths = new Map<string, string>();
   private processing = false;
   private stopping = false;
 
@@ -619,6 +643,28 @@ export class BrowserCaptureServer {
     throw new Error("解析任务仍在后台运行，可稍后查看笔记");
   }
 
+  async cancelJob(id: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("任务不存在或已经清理");
+    if (FINISHED_STATUSES.has(job.status)) throw new Error("任务已经结束，无需取消");
+
+    this.queue.splice(0, this.queue.length, ...this.queue.filter((queuedId) => queuedId !== id));
+    await this.updateJob(id, {
+      status: "cancelling",
+      phase: "cancelling",
+      phaseLabel: PHASE_LABELS.cancelling,
+      message: "正在停止处理并移除本次任务创建的内容",
+      cancelRequestedAt: new Date().toISOString(),
+    });
+    this.jobAbortControllers.get(id)?.abort();
+    const activeRun = this.activeJobRuns.get(id);
+    if (activeRun) {
+      await activeRun;
+      return;
+    }
+    await this.cleanupCancelledJob(id);
+  }
+
   private prunePairings(): void {
     const threshold = Date.now() - PAIRING_LIFETIME_MS;
     for (const [nonce, pairing] of this.pendingPairings) {
@@ -736,6 +782,15 @@ export class BrowserCaptureServer {
         }, origin);
         return;
       }
+      const active = [...this.jobs.values()].find((job) =>
+        !FINISHED_STATUSES.has(job.status)
+        && job.status !== "cancelling"
+        && sameCaptureResourceUrl(job.url, url),
+      );
+      if (active) {
+        sendJson(response, 202, { jobId: active.id, status: active.status, reused: true }, origin);
+        return;
+      }
       let targetFile: TFile | undefined;
       const requestedTargetPath = stringField(body.targetPath).trim();
       if (requestedTargetPath) {
@@ -785,6 +840,16 @@ export class BrowserCaptureServer {
       return;
     }
     const jobMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)$/i);
+    const cancelMatch = requestUrl.pathname.match(/^\/v1\/jobs\/([a-f0-9-]+)\/cancel$/i);
+    if (request.method === "POST" && cancelMatch) {
+      try {
+        await this.cancelJob(cancelMatch[1]!);
+        sendJson(response, 200, { ok: true, jobId: cancelMatch[1], cleaned: true }, origin);
+      } catch (error) {
+        sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }, origin);
+      }
+      return;
+    }
     if (request.method === "GET" && jobMatch) {
       const job = this.jobs.get(jobMatch[1]!);
       if (!job) {
@@ -870,7 +935,15 @@ export class BrowserCaptureServer {
     try {
       while (this.queue.length && !this.stopping) {
         const id = this.queue.shift();
-        if (id) await this.processJob(id);
+        if (id) {
+          const run = this.processJob(id);
+          this.activeJobRuns.set(id, run);
+          try {
+            await run;
+          } finally {
+            this.activeJobRuns.delete(id);
+          }
+        }
       }
     } finally {
       this.processing = false;
@@ -880,11 +953,19 @@ export class BrowserCaptureServer {
   private async processJob(id: string): Promise<void> {
     const job = this.jobs.get(id);
     if (!job) return;
+    if (job.status === "cancelling") {
+      await this.cleanupCancelledJob(id);
+      return;
+    }
+    const controller = new AbortController();
+    this.jobAbortControllers.set(id, controller);
+    const { signal } = controller;
     let noteFile: TFile | undefined;
     let extracted: ExtractedSource | undefined;
     let lastWrittenContent = "";
     const outputLocale = job.pageType === "article" ? "zh-CN" : systemCaptureOutputLocale();
     try {
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         status: "running",
         phase: "backing_up",
@@ -904,9 +985,12 @@ export class BrowserCaptureServer {
           ? undefined
           : await this.createPlaceholder(job);
       if (!noteFile) throw new Error("待解析的链接笔记已经不存在");
+      this.currentNotePaths.set(id, noteFile.path);
+      throwIfCaptureAborted(signal);
       let interrupted: ReturnType<typeof detectInterruptedCapture> = null;
       if (job.targetPath) {
         const current = await this.host.app.vault.read(noteFile);
+        this.originalTargetContents.set(id, { path: noteFile.path, content: current });
         if (job.resumeFromRaw) {
           interrupted = detectInterruptedCapture(current);
           if (!interrupted || interrupted.url !== job.url) {
@@ -952,13 +1036,14 @@ export class BrowserCaptureServer {
       } else {
         extracted = job.pageType === "video"
           ? job.mediaPath
-            ? await this.extractLocalMedia(job, noteFile.path)
-            : this.capturedSources.get(id) ?? await this.extractVideo(job)
+            ? await this.extractLocalMedia(job, noteFile.path, signal)
+            : this.capturedSources.get(id) ?? await this.extractVideo(job, signal)
           : job.pageType === "audio"
             ? job.mediaPath
-              ? await this.extractLocalMedia(job, noteFile.path)
-              : await this.extractAudio(job, noteFile.path)
-            : this.capturedSources.get(id) ?? await this.extractArticle(job);
+              ? await this.extractLocalMedia(job, noteFile.path, signal)
+              : await this.extractAudio(job, noteFile.path, signal)
+            : this.capturedSources.get(id) ?? await this.extractArticle(job, signal);
+        throwIfCaptureAborted(signal);
         this.capturedSources.delete(id);
         if (job.pageType === "article") {
           const sourceTitle = extracted.title;
@@ -968,12 +1053,14 @@ export class BrowserCaptureServer {
             this.articleDatePrefix(noteFile, extracted.publishedAt),
             this.host.getSettings().browserCapture.prefixArticleTitleWithDate,
           );
-          noteFile = await this.renameArticleToTitle(noteFile, extracted.title);
+          noteFile = await this.renameArticleToTitle(noteFile, extracted.title, id);
           extracted.source = await this.localizeArticleImages(
             extracted.source,
             extracted.title,
             job.resolvedUrl || job.url,
             noteFile.path,
+            id,
+            signal,
           );
         }
         const rawNote = buildRawCaptureNote({
@@ -1015,6 +1102,7 @@ export class BrowserCaptureServer {
         }
         await this.host.app.vault.modify(noteFile, lastWrittenContent);
       }
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         title: extracted.title,
         phase: "backed_up",
@@ -1023,7 +1111,7 @@ export class BrowserCaptureServer {
         message: "原始内容已经写入 Vault，正在调用 AI 整理",
         result: this.resultFor(job, noteFile, extracted.title, "原始内容已备份"),
       });
-      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, async (message, progress) => {
+      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, signal, async (message, progress) => {
         await this.updateJob(id, {
           phase: "organizing",
           phaseLabel: PHASE_LABELS.organizing,
@@ -1031,6 +1119,7 @@ export class BrowserCaptureServer {
           message,
         });
       });
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         phase: "saving",
         phaseLabel: PHASE_LABELS.saving,
@@ -1061,7 +1150,9 @@ export class BrowserCaptureServer {
         message: "正在识别内容所属的领域与主题",
       });
       await this.host.enrichCapturedFile(noteFile);
-      noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType);
+      throwIfCaptureAborted(signal);
+      noteFile = await this.moveToConfiguredOutput(noteFile, job.pageType, id);
+      throwIfCaptureAborted(signal);
       await this.updateJob(id, {
         status: "completed",
         phase: "completed",
@@ -1072,6 +1163,10 @@ export class BrowserCaptureServer {
         result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary)),
       });
     } catch (error) {
+      if (isCaptureAbort(error, signal) || this.jobs.get(id)?.status === "cancelling") {
+        await this.cleanupCancelledJob(id);
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       if (noteFile) {
         if (!extracted && !job.targetPath) {
@@ -1111,7 +1206,56 @@ export class BrowserCaptureServer {
       }
     } finally {
       this.capturedSources.delete(id);
+      this.jobAbortControllers.delete(id);
+      this.originalTargetContents.delete(id);
+      this.currentNotePaths.delete(id);
     }
+  }
+
+  private async cleanupCancelledJob(id: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    const plan = captureCancellationPlan(job);
+    for (const path of plan.trashPaths) {
+      const file = this.host.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) await this.host.app.fileManager.trashFile(file).catch(() => undefined);
+    }
+    if (plan.restoreTarget) {
+      const original = this.originalTargetContents.get(id);
+      if (original) {
+        const currentPath = this.currentNotePaths.get(id) ?? original.path;
+        let file = this.host.app.vault.getAbstractFileByPath(currentPath);
+        if (
+          file instanceof TFile
+          && currentPath !== original.path
+          && !this.host.app.vault.getAbstractFileByPath(original.path)
+        ) {
+          await this.host.app.fileManager.renameFile(file, original.path).catch(() => undefined);
+          file = this.host.app.vault.getAbstractFileByPath(original.path);
+        }
+        if (file instanceof TFile) await this.host.app.vault.modify(file, original.content).catch(() => undefined);
+      }
+    }
+    this.queue.splice(0, this.queue.length, ...this.queue.filter((queuedId) => queuedId !== id));
+    this.capturedSources.delete(id);
+    this.originalTargetContents.delete(id);
+    this.currentNotePaths.delete(id);
+    this.jobAbortControllers.delete(id);
+    this.jobs.delete(id);
+    await this.persistJobs();
+  }
+
+  private async trackCreatedNote(id: string, path: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    await this.updateJob(id, { createdNotePath: path });
+  }
+
+  private async trackCreatedAttachment(id: string, path: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job) return;
+    const createdAttachmentPaths = Array.from(new Set([...(job.createdAttachmentPaths ?? []), path]));
+    await this.updateJob(id, { createdAttachmentPaths });
   }
 
   private async createPlaceholder(job: BrowserCaptureJob): Promise<TFile> {
@@ -1141,6 +1285,8 @@ export class BrowserCaptureServer {
     ].join("\n");
     const file = await this.host.app.vault.create(path, placeholder);
     this.host.suppressNewNoteInitialization(path);
+    this.host.suppressAutomaticLinkNote(path);
+    await this.trackCreatedNote(job.id, path);
     return file;
   }
 
@@ -1155,7 +1301,7 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async moveToConfiguredOutput(file: TFile, pageType: BrowserCapturePageType): Promise<TFile> {
+  private async moveToConfiguredOutput(file: TFile, pageType: BrowserCapturePageType, jobId: string): Promise<TFile> {
     const settings = this.host.getSettings().browserCapture;
     const configured = pageType === "video"
       ? settings.videoOutputFolder
@@ -1173,11 +1319,13 @@ export class BrowserCaptureServer {
       suffix += 1;
     }
     await this.host.app.fileManager.renameFile(file, path);
+    this.currentNotePaths.set(jobId, path);
+    if (this.jobs.get(jobId)?.createdNotePath) await this.trackCreatedNote(jobId, path);
     const moved = this.host.app.vault.getAbstractFileByPath(path);
     return moved instanceof TFile ? moved : file;
   }
 
-  private async renameArticleToTitle(file: TFile, title: string): Promise<TFile> {
+  private async renameArticleToTitle(file: TFile, title: string, jobId: string): Promise<TFile> {
     const baseName = safeCaptureFileName(title);
     if (!baseName || file.basename === baseName) return file;
     const folder = file.parent?.path && file.parent.path !== "/" ? file.parent.path : "";
@@ -1188,6 +1336,8 @@ export class BrowserCaptureServer {
       suffix += 1;
     }
     await this.host.app.fileManager.renameFile(file, path);
+    this.currentNotePaths.set(jobId, path);
+    if (this.jobs.get(jobId)?.createdNotePath) await this.trackCreatedNote(jobId, path);
     const renamed = this.host.app.vault.getAbstractFileByPath(path);
     return renamed instanceof TFile ? renamed : file;
   }
@@ -1250,11 +1400,14 @@ export class BrowserCaptureServer {
     title: string,
     sourceUrl: string,
     sourceNotePath: string,
+    jobId: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const matches = Array.from(source.matchAll(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi));
     if (!matches.length) return source;
     const localized = new Map<string, string>();
     for (let index = 0; index < matches.length; index += 1) {
+      throwIfCaptureAborted(signal);
       const match = matches[index]!;
       const url = match[2]!;
       if (localized.has(url)) continue;
@@ -1306,9 +1459,11 @@ export class BrowserCaptureServer {
         ));
         await this.ensureFolder(path.split("/").slice(0, -1).join("/"));
         await this.host.app.vault.createBinary(path, data);
+        await this.trackCreatedAttachment(jobId, path);
         const alt = match[1]?.trim();
         localized.set(url, alt && alt !== "图片" ? `![[${path}|${alt}]]` : `![[${path}]]`);
-      } catch {
+      } catch (error) {
+        if (isCaptureAbort(error, signal)) throw error;
         // A single protected image must not make the entire article fail.
       }
     }
@@ -1322,6 +1477,7 @@ export class BrowserCaptureServer {
     title: string,
     extension: string,
     sourceNotePath: string,
+    jobId: string,
   ): Promise<string> {
     const baseName = safeCaptureFileName(title);
     const path = normalizePath(await this.host.app.fileManager.getAvailablePathForAttachment(
@@ -1332,6 +1488,7 @@ export class BrowserCaptureServer {
     const buffer = await readFile(sourcePath);
     const data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     await this.host.app.vault.createBinary(path, data);
+    await this.trackCreatedAttachment(jobId, path);
     return path;
   }
 
@@ -1352,7 +1509,8 @@ export class BrowserCaptureServer {
     };
   }
 
-  private async extractArticle(job: BrowserCaptureJob): Promise<ExtractedSource> {
+  private async extractArticle(job: BrowserCaptureJob, signal?: AbortSignal): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const captureUrl = job.resolvedUrl || job.url;
     let fetched: ExtractedSource | undefined;
     let primaryError: unknown;
@@ -1379,7 +1537,7 @@ export class BrowserCaptureServer {
         "defuddle",
         "Defuddle",
       );
-      const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60);
+      const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60, signal);
       if (result.exitCode !== 0 || result.stdout.trim().length < 80) {
         if (fetched) return fetched;
         const browserCopy = this.capturedSources.get(job.id);
@@ -1388,12 +1546,12 @@ export class BrowserCaptureServer {
       }
       let title = fetched?.title || "";
       if (!title || title === job.title) {
-        const titleResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "title"], "", 90);
+        const titleResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "title"], "", 90, signal);
         if (titleResult.exitCode === 0 && titleResult.stdout.trim()) title = titleResult.stdout.trim();
       }
       let author = fetched?.author;
       if (!author) {
-        const authorResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "author"], "", 90);
+        const authorResult = await runLocalCommand(executable, ["parse", captureUrl, "-p", "author"], "", 90, signal);
         if (authorResult.exitCode === 0 && authorResult.stdout.trim()) author = authorResult.stdout.trim();
       }
       return {
@@ -1402,7 +1560,8 @@ export class BrowserCaptureServer {
         author,
         source: result.stdout.trim(),
       };
-    } catch {
+    } catch (error) {
+      if (isCaptureAbort(error, signal)) throw error;
       if (fetched) return fetched;
       const browserCopy = this.capturedSources.get(job.id);
       if (browserCopy) return browserCopy;
@@ -1410,7 +1569,8 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractVideo(job: BrowserCaptureJob): Promise<ExtractedSource> {
+  private async extractVideo(job: BrowserCaptureJob, signal?: AbortSignal): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const captureUrl = job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
@@ -1421,6 +1581,7 @@ export class BrowserCaptureServer {
         [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
+        signal,
       );
       const title = titleResult.exitCode === 0
         ? lastLine(titleResult.stdout) || job.title
@@ -1430,6 +1591,7 @@ export class BrowserCaptureServer {
         ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
         "",
         15 * 60,
+        signal,
       );
       const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
       if (subtitleFile) {
@@ -1459,6 +1621,7 @@ export class BrowserCaptureServer {
         ],
         "",
         60 * 60,
+        signal,
       );
       if (audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
@@ -1496,6 +1659,7 @@ export class BrowserCaptureServer {
         invocation.args,
         "",
         90 * 60,
+        signal,
       );
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
@@ -1517,7 +1681,9 @@ export class BrowserCaptureServer {
   private async extractLocalMedia(
     job: BrowserCaptureJob,
     sourceNotePath: string,
+    signal?: AbortSignal,
   ): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const linkPath = job.mediaPath?.trim() ?? "";
     if (!linkPath) throw new Error("本地媒体笔记没有可用的音视频引用");
     const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
@@ -1573,7 +1739,7 @@ export class BrowserCaptureServer {
           "-c:a",
           "pcm_s16le",
           whisperAudioPath,
-        ], "", 20 * 60);
+        ], "", 20 * 60, signal);
         if (conversion.exitCode !== 0) {
           throw new Error(conversion.stderr.trim() || "本地媒体音轨转换失败");
         }
@@ -1591,7 +1757,7 @@ export class BrowserCaptureServer {
           ? `正在使用 whisper.cpp ${model} 转录本地媒体`
           : `正在使用 Whisper ${model} 转录本地媒体`,
       });
-      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60, signal);
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
@@ -1621,7 +1787,8 @@ export class BrowserCaptureServer {
     }
   }
 
-  private async extractAudio(job: BrowserCaptureJob, sourceNotePath: string): Promise<ExtractedSource> {
+  private async extractAudio(job: BrowserCaptureJob, sourceNotePath: string, signal?: AbortSignal): Promise<ExtractedSource> {
+    throwIfCaptureAborted(signal);
     const captureUrl = job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
     const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
@@ -1632,6 +1799,7 @@ export class BrowserCaptureServer {
         [...ytDlpCaptureArgs(captureUrl), "--skip-download", "--print", "%(title)s", captureUrl],
         "",
         90,
+        signal,
       );
       const title = titleResult.exitCode === 0
         ? lastLine(titleResult.stdout) || job.title
@@ -1641,6 +1809,7 @@ export class BrowserCaptureServer {
         ytDlpSubtitleArgs(join(directory, "source.%(ext)s"), captureUrl),
         "",
         15 * 60,
+        signal,
       );
       const subtitleFile = selectPreferredSubtitleFile(await readdir(directory));
       if (subtitleFile) {
@@ -1671,6 +1840,7 @@ export class BrowserCaptureServer {
         ],
         "",
         60 * 60,
+        signal,
       );
       if (audioResult.exitCode !== 0) {
         throw new Error(formatYtDlpCaptureError(
@@ -1686,6 +1856,7 @@ export class BrowserCaptureServer {
         title || job.title || "未命名音频",
         extname(audioFile).replace(/^\./, "") || "m4a",
         sourceNotePath,
+        job.id,
       );
       await this.updateJob(job.id, {
         progress: 34,
@@ -1704,7 +1875,7 @@ export class BrowserCaptureServer {
         model,
         cppModelPath,
       });
-      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60);
+      const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60, signal);
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
@@ -1731,8 +1902,10 @@ export class BrowserCaptureServer {
     title: string,
     source: string,
     outputLocale: KnowGroveLocale,
+    signal: AbortSignal,
     onProgress: (message: string, progress: number) => Promise<void>,
   ): Promise<BrowserCaptureAIResult> {
+    throwIfCaptureAborted(signal);
     const protectedArticle = job.pageType === "article"
       ? protectArticleImages(source.slice(0, MAX_SOURCE_CHARACTERS))
       : { source: source.slice(0, MAX_SOURCE_CHARACTERS), images: [] };
@@ -1747,6 +1920,7 @@ export class BrowserCaptureServer {
       const output = await this.host.runProvider(
         job.providerId,
         withSkillInstruction(browserCapturePrompt(job.pageType, title, chunks[0]!, outputLocale)),
+        signal,
       );
       const result = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
       return job.pageType === "article"
@@ -1764,6 +1938,7 @@ export class BrowserCaptureServer {
         withSkillInstruction(
           browserCaptureChunkPrompt(job.pageType, title, chunks[index]!, index + 1, chunks.length, outputLocale),
         ),
+        signal,
       );
       partials.push(normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType));
     }
@@ -1771,6 +1946,7 @@ export class BrowserCaptureServer {
     const output = await this.host.runProvider(
       job.providerId,
       withSkillInstruction(browserCaptureSynthesisPrompt(job.pageType, title, partials, outputLocale)),
+      signal,
     );
     const synthesis = normalizeBrowserCaptureAIResult(extractJsonObject(output), job.pageType);
     const merged = {

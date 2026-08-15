@@ -52,6 +52,9 @@ for (const path of htmlFiles) {
   const html = await readFile(resolve(extensionRoot, path), "utf8");
   check(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), `${path} 包含内联脚本`);
   check(!/\son[a-z]+\s*=/i.test(html), `${path} 包含内联事件处理器`);
+  if (path === manifest.action?.default_popup) {
+    check(/id="cancel-job"/.test(html), "任务进度必须提供取消并清理入口");
+  }
 }
 
 const javaScriptFiles = [
@@ -74,6 +77,10 @@ for (const path of javaScriptFiles) {
       /fetch\(subtitleUrl, \{ credentials: "omit" \}\)/.test(source),
       "Bilibili 字幕正文必须避免携带凭据触发跨域失败",
     );
+  }
+  if (path === "popup.js") {
+    check(/\/v1\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/.test(source), "取消入口必须调用本机任务清理接口");
+    check(/storage\.local\.remove\("activeCaptureJob"\)/.test(source), "取消后必须清理浏览器活动任务状态");
   }
 }
 

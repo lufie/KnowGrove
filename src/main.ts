@@ -454,9 +454,10 @@ export default class KnowGrovePlugin extends Plugin {
       getSettings: () => this.settings,
       saveSettings: () => this.savePluginData(),
       getProviders: (force) => this.getAIProviders(force),
-      runProvider: (provider, prompt) => this.runBrowserCaptureProvider(provider, prompt),
+      runProvider: (provider, prompt, signal) => this.runBrowserCaptureProvider(provider, prompt, signal),
       getSkillInstruction: (pageType) => this.getRuntimeSkillInstruction(pageType),
       suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
+      suppressAutomaticLinkNote: (path) => this.cancelAutomaticLinkNote(path),
       enrichCapturedFile: (file) => this.ensureNewNoteStatus(file),
     });
     this.desktopRecorder = new DesktopRecorderController({
@@ -2225,8 +2226,8 @@ export default class KnowGrovePlugin extends Plugin {
     await this.browserCaptureServer?.resetPairing();
   }
 
-  private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<void> {
-    if (!this.browserCaptureServer) return;
+  private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<boolean> {
+    if (!this.browserCaptureServer) return false;
     try {
       const job = await this.browserCaptureServer.enqueueLinkNote(file, source);
       if (source === "manual") {
@@ -2243,10 +2244,12 @@ export default class KnowGrovePlugin extends Plugin {
           new Notice(error instanceof Error ? error.message : String(error), 7000);
         });
       }
+      return true;
     } catch (error) {
       if (source === "manual") {
         new Notice(`无法解析：${error instanceof Error ? error.message : String(error)}`, 7000);
       }
+      return false;
     }
   }
 
@@ -2273,8 +2276,9 @@ export default class KnowGrovePlugin extends Plugin {
         this.automaticLinkNoteTimers.delete(file.path);
         const current = this.app.vault.getAbstractFileByPath(file.path);
         if (!(current instanceof TFile)) return;
-        void this.parseLinkNote(current, "auto").catch(() => undefined);
-        if (remaining > 1) attempt(remaining - 1, 2_500);
+        void this.parseLinkNote(current, "auto").then((accepted) => {
+          if (!accepted && remaining > 1) attempt(remaining - 1, 2_500);
+        });
       }, delay);
       this.automaticLinkNoteTimers.set(file.path, timer);
     };
@@ -2374,7 +2378,7 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
-  private async runBrowserCaptureProvider(provider: AIProviderId, prompt: string): Promise<string> {
+  private async runBrowserCaptureProvider(provider: AIProviderId, prompt: string, signal?: AbortSignal): Promise<string> {
     const availability = await this.getAIProviders();
     const selected = availability.find((item) => item.id === provider);
     if (!selected?.available) throw new Error(selected?.detail || `${providerName(provider)} 当前不可用`);
@@ -2387,7 +2391,7 @@ export default class KnowGrovePlugin extends Plugin {
       executablePath: useSharedConfiguration ? base.executablePath : "",
       endpoint: useSharedConfiguration ? base.endpoint : "",
       timeoutSeconds: Math.max(900, base.timeoutSeconds),
-    }, prompt, availability, this.getAISecret(provider));
+    }, prompt, availability, this.getAISecret(provider), signal);
   }
 
   supportsAISecretStorage(): boolean {

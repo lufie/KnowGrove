@@ -142,6 +142,12 @@ async function pollActiveJob() {
       await clearJobAlarm();
     }
   } catch (error) {
+    if (error?.code === "HTTP_404") {
+      await extensionApi.storage.local.remove("activeCaptureJob");
+      await setBadge("", "#f24b3f");
+      await clearJobAlarm();
+      return;
+    }
     console.error("更新言序后台任务失败", error);
     await setBadge("!", "#9b3b3b");
   }
@@ -226,10 +232,15 @@ extensionApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 extensionApi.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes.activeCaptureJob?.newValue) return;
+  if (areaName !== "local" || !changes.activeCaptureJob) return;
   void (async () => {
     try {
       const job = changes.activeCaptureJob.newValue;
+      if (!job) {
+        await setBadge("", "#f24b3f");
+        await clearJobAlarm();
+        return;
+      }
       await renderJobBadge(job);
       await ensureJobAlarm();
     } catch (error) {
