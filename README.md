@@ -13,6 +13,7 @@ Current source, GitHub release, and Obsidian community release: `2.8.11`.
 - **Read it later:** collect notes in one inbox, switch between unread and read, and optionally mark a note as read when you reach the end.
 - **Browser and mobile capture:** send articles, videos, links, and lightweight voice notes to your vault.
 - **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, record audio into crash-recoverable local segments, or drop existing local audio and video files into the recorder workspace for background transcription and processing; every saved result includes a direct note shortcut.
+- **Open external Markdown on Mac:** enabled by default with a configurable vault import folder. After installing the KnowGrove Markdown opener and completing macOS's one-time **Get Info → Open with → Change All** confirmation, double-clicking `.md` or `.markdown` imports it and opens the note in Obsidian. By default, the external source moves to the macOS Trash only after the vault copy is written and verified; turn off source removal to keep both copies. Files already inside the vault are never removed by this setting, and the previous default app can be restored through the same system flow.
 - **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable. Audio and video transcripts keep the language actually spoken, while generated summaries and analysis follow the local system language.
 - **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
 - **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
@@ -66,7 +67,7 @@ Chrome / Safari
   → Obsidian vault
 ```
 
-The local receiver listens only on `127.0.0.1:47831` and requires confirmation in Obsidian before pairing. Browser extension source and setup notes are in [言序浏览器一键入库](言序浏览器一键入库/README.md).
+The local receiver listens only on `127.0.0.1:47831` and requires confirmation in Obsidian before pairing. The companion browser extension is distributed and versioned separately; its closed-source implementation is maintained outside this public Obsidian plugin repository.
 
 ## Privacy and safety
 
@@ -77,10 +78,11 @@ The local receiver listens only on `127.0.0.1:47831` and requires confirmation i
 - API keys use Obsidian SecretStorage when available.
 - Local CLIs run without a shell and in isolated temporary directories.
 - Local process execution is limited to the provider or media tools selected by the user; executable arguments are passed directly rather than through a command shell.
-- Direct filesystem access is limited to user-selected external media and KnowGrove runtime files outside the vault. Normal note writes use Obsidian's Vault APIs.
+- Direct filesystem access is limited to user-selected external media, external Markdown explicitly opened with the optional Mac opener, and KnowGrove runtime files outside the vault. Normal note writes use Obsidian's Vault APIs.
 - Whole-vault enumeration is reserved for explicit property, topic, or attachment checks. Attachment checks do not rebuild the vault index at startup.
 - Clipboard access occurs only after a user clicks a copy action.
 - KnowGrove does not bypass paywalls, login restrictions, DRM, or platform permissions.
+- The separately distributed browser extension and desktop application are closed-source companion products. This public release mirror contains the complete reviewed source for each published Obsidian Plugin version and its local bridge contract, but not those companion implementations or the private total PRD.
 - Attachment cleanup moves confirmed candidates to the Obsidian trash; it does not permanently delete them.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the complete boundaries.

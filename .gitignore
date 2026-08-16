@@ -15,6 +15,3 @@ runtime-dist/
 *.zip
 *.pem
 reading-companion-*/
-言序浏览器一键入库/安装文件/
-cloud/.neon
-cloud/dist/
