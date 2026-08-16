@@ -131,6 +131,24 @@ export interface CreationStudioSettings {
   imageAssetFolder: string;
 }
 
+export interface SavedDomainSession {
+  domain: string;
+  cookies: BrowserCaptureSessionCookie[];
+  userAgent?: string;
+  referer?: string;
+  updatedAt: number;
+}
+
+export interface BrowserCaptureSessionCookie {
+  domain: string;
+  path: string;
+  name: string;
+  value: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expirationDate?: number;
+}
+
 export interface BrowserCaptureSettings {
   enabled: boolean;
   port: number;
@@ -154,6 +172,8 @@ export interface BrowserCaptureSettings {
   whisperPath: string;
   whisperModel: string;
   accessToken: string;
+  savedDomainSessions: Record<string, SavedDomainSession>;
+  browserCookieSource: "auto" | "extension" | "chrome" | "edge" | "safari" | "firefox" | "disabled";
 }
 
 export interface DesktopCaptureSettings {
@@ -190,6 +210,7 @@ export interface KnowGroveSettings {
   autoOrganizeAttachments: boolean;
   sharedAttachmentHandling: SharedAttachmentHandling;
   enableTopicIndex: boolean;
+  enableDocumentAnchors: boolean;
   lastAttachmentCleanupScanAt: number;
   recentFileMode: RecentFileMode;
   recentFileLimit: number;
@@ -442,6 +463,7 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   autoOrganizeAttachments: false,
   sharedAttachmentHandling: "skip",
   enableTopicIndex: true,
+  enableDocumentAnchors: true,
   lastAttachmentCleanupScanAt: 0,
   recentFileMode: "opened",
   recentFileLimit: 8,
@@ -475,6 +497,8 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
     whisperPath: "",
     whisperModel: "small",
     accessToken: "",
+    savedDomainSessions: {},
+    browserCookieSource: "auto",
   },
   desktopCapture: {
     linkFolder: "",

@@ -2,16 +2,36 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  isKnowGroveUiElement,
+  KNOWGROVE_UI_ROOT_SELECTOR,
+  knowGroveDisplayName,
   knownEnglishTranslation,
   normalizeKnowGroveLocale,
   translateKnowGroveText,
 } from "../src/i18n";
+
+function elementWithClosest(match: string | null): Element {
+  return { closest: () => match ? ({ className: match } as unknown as Element) : null } as unknown as Element;
+}
 
 test("locale normalization follows Obsidian language variants and falls back to English", () => {
   assert.equal(normalizeKnowGroveLocale("zh"), "zh-CN");
   assert.equal(normalizeKnowGroveLocale("zh-Hant"), "zh-TW");
   assert.equal(normalizeKnowGroveLocale("pt-PT"), "pt-BR");
   assert.equal(normalizeKnowGroveLocale("it"), "en");
+});
+
+test("brand name follows Obsidian UI language without changing stable identifiers", () => {
+  for (const locale of ["zh-CN", "zh-TW", "zh-HK", "zh_Hans"] as const) {
+    assert.equal(knowGroveDisplayName(normalizeKnowGroveLocale(locale)), "言续");
+  }
+  for (const locale of ["en-US", "ja-JP", "", "invalid"] as const) {
+    assert.equal(knowGroveDisplayName(normalizeKnowGroveLocale(locale)), "KnowGrove");
+  }
+  assert.equal(translateKnowGroveText("言续", "zh-TW"), "言续");
+  assert.equal(translateKnowGroveText("言续", "en"), "KnowGrove");
+  assert.equal(translateKnowGroveText("连接 KnowGrove 与言序", "zh-CN"), "连接 言续 与言续");
+  assert.equal(translateKnowGroveText("连接 言续 与言序", "en"), "连接 KnowGrove 与KnowGrove");
 });
 
 test("localized UI uses native labels and English fallback for untranslated details", () => {
@@ -27,6 +47,17 @@ test("localized UI uses native labels and English fallback for untranslated deta
 
 test("user content without a catalog entry is never machine-translated", () => {
   assert.equal(translateKnowGroveText("我的金融研究", "en"), "我的金融研究");
+});
+
+test("automatic localization recognizes plugin-owned roots and excludes Obsidian content surfaces", () => {
+  assert.equal(isKnowGroveUiElement(elementWithClosest("knowgrove-settings")), true);
+  assert.equal(isKnowGroveUiElement(elementWithClosest(null)), false);
+  assert.match(KNOWGROVE_UI_ROOT_SELECTOR, /\.knowgrove-settings/);
+  assert.doesNotMatch(KNOWGROVE_UI_ROOT_SELECTOR, /markdown|workspace|document/);
+
+  const source = readFileSync("src/i18n.ts", "utf8");
+  assert.doesNotMatch(source, /localizeKnowGroveElement\(document\.body/);
+  assert.match(source, /observer\.observe\(root, \{ subtree: true, childList: true, characterData: true \}\)/);
 });
 
 test("every static settings label, description, placeholder, button, and notice has an English baseline", () => {

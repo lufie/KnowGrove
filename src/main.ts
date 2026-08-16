@@ -103,6 +103,7 @@ import {
 import {
   cleanMarkdownBlankLines,
 } from "./blank-line-cleanup";
+import { DocumentAnchorManager } from "./document-anchor-navigator";
 import {
   KNOWGROVE_ROOT,
   LEGACY_READING_VIEW_TYPE,
@@ -448,6 +449,7 @@ export default class KnowGrovePlugin extends Plugin {
   private startupLinkNoteScanTimer?: number;
   private readonly automaticLinkNoteTimers = new Map<string, number>();
   private attachmentCleanupManager?: AttachmentCleanupManager;
+  private documentAnchorManager?: DocumentAnchorManager;
   private disposeLocalization?: () => void;
 
   async onload(): Promise<void> {
@@ -492,6 +494,10 @@ export default class KnowGrovePlugin extends Plugin {
       this.register(() => this.recordingUiUnsubscribe?.());
     }
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
+    this.documentAnchorManager = new DocumentAnchorManager(this);
+    this.app.workspace.onLayoutReady(() => {
+      this.documentAnchorManager?.refreshAll();
+    });
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
       if (!nonce || !this.browserCaptureServer) {
@@ -823,6 +829,7 @@ export default class KnowGrovePlugin extends Plugin {
       this.refreshReadingViews();
       this.scheduleReferenceRepair(file);
       this.attachmentCleanupManager?.refreshSourceAfterMetadataChange(file);
+      this.documentAnchorManager?.refreshAll();
     }));
     this.registerEvent(this.app.workspace.on("quick-preview", (file) => {
       this.lastEditorChangeAt.set(file.path, Date.now());
@@ -831,13 +838,21 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
-      if (leaf?.view instanceof MarkdownView && leaf.view.file) this.refreshCommentSidebars(leaf.view.file.path);
+      if (leaf?.view instanceof MarkdownView && leaf.view.file) {
+        this.refreshCommentSidebars(leaf.view.file.path);
+        this.documentAnchorManager?.updateView(leaf.view);
+      }
     }));
     this.registerEvent(this.app.workspace.on("file-open", (file) => {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
       if (file) this.refreshCommentSidebars(file.path);
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (activeView) this.documentAnchorManager?.updateView(activeView);
       this.scheduleRecentFilesSection(30);
+    }));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.documentAnchorManager?.refreshAll();
     }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof TFile) || file.extension !== "md") return;
@@ -892,6 +907,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.recordingOverlay?.hide();
     this.runtimeInstallProgressListeners.clear();
     this.attachmentCleanupManager?.stop();
+    this.documentAnchorManager?.destroyAll();
     this.disposeLocalization?.();
     this.disposeLocalization = undefined;
     window.clearTimeout(this.startupRuntimeBootstrapTimer);
@@ -2988,6 +3004,10 @@ export default class KnowGrovePlugin extends Plugin {
         if (leaf.view instanceof ReadingListView) leaf.view.refresh();
       }
     }, 80);
+  }
+
+  refreshDocumentAnchors(): void {
+    this.documentAnchorManager?.refreshAll();
   }
 
   async activateReadingView(): Promise<void> {

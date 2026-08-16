@@ -27,6 +27,11 @@ import type { RuntimeInstallProgress } from "./runtime-manager";
 import { currentKnowGroveLocale, localizeKnowGroveElement } from "./i18n";
 import { normalizeAttachmentExtensions } from "./attachment-cleanup";
 
+import {
+  PlatformLoginModal,
+  PLATFORM_AUTH_CONFIGS,
+} from "./platform-login-modal";
+
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
     "codex-cli": "/opt/homebrew/bin/codex",
@@ -75,7 +80,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [{
-      name: "言序 KnowGrove 设置",
+      name: "言续设置",
       desc: "配置大模型、稍后阅读、属性管理、知识工作台与增强功能。",
       aliases: [
         "大模型配置", "模型选择", "Read It Later", "阅读列表", "浏览器剪藏", "手机剪藏",
@@ -638,6 +643,18 @@ export class KnowGroveSettingTab extends PluginSettingTab {
   }
 
   private renderEnhancementSettings(containerEl: HTMLElement): void {
+    this.addClickableToggleSetting(
+      containerEl,
+      "文档浮动层级定位锚点",
+      "默认开启。在文档阅读区左侧边缘显示极简浮动锚点轨。仅在文档包含标题层级时展示，鼠标悬停可预览标题，点击可快速跳转定位，滚动时实时跟随阅读位置。",
+      this.plugin.settings.enableDocumentAnchors,
+      async (value) => {
+        this.plugin.settings.enableDocumentAnchors = value;
+        await this.plugin.savePluginData();
+        this.plugin.refreshDocumentAnchors();
+      },
+    );
+
     this.addClickableToggleSetting(
       containerEl,
       "主题列表",
@@ -1210,6 +1227,108 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
     this.renderRuntimeEnvironment(section);
+    this.renderPlatformSessionSettings(section);
+  }
+
+  private renderPlatformSessionSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "平台登录授权与状态管理" });
+    const section = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(section)
+      .setName("浏览器 cookie 来源")
+      .setDesc("配置下载组件读取 cookie 的模式。推荐使用“自动优先探测”，优先静默复用本机已登录的浏览器会话。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("auto", "自动优先探测（推荐，静默复用本机浏览器会话）")
+        .addOption("extension", "扩展实时同步")
+        .addOption("chrome", "直接从本地 Chrome 浏览器读取")
+        .addOption("edge", "直接从本地 Edge 浏览器读取")
+        .addOption("safari", "直接从本地 Safari 浏览器读取")
+        .addOption("firefox", "直接从本地 Firefox 浏览器读取")
+        .addOption("disabled", "禁用外部 cookie")
+        .setValue(settings.browserCookieSource || "auto")
+        .onChange(async (value) => {
+          settings.browserCookieSource = value as "auto" | "extension" | "chrome" | "edge" | "safari" | "firefox" | "disabled";
+          await this.plugin.savePluginData();
+        }));
+
+    const savedSessions = settings.savedDomainSessions || {};
+
+    const listContainer = section.createDiv({ cls: "knowgrove-platform-list" });
+    new Setting(listContainer)
+      .setName("各平台登录授权状态")
+      .setHeading();
+
+    for (const p of Object.values(PLATFORM_AUTH_CONFIGS)) {
+      const match = savedSessions[p.domain] || savedSessions[`.${p.domain}`];
+      const hasCookies = Boolean(match?.cookies?.length);
+      const row = new Setting(listContainer)
+        .setName(p.name)
+        .setDesc(
+          hasCookies
+            ? `已授权 · 可直接解析高清与私密内容（最近更新：${new Date(match!.updatedAt).toLocaleDateString()}）`
+            : "未授权 · 当前使用公开/匿名模式解析",
+        );
+
+      if (hasCookies) {
+        row.addButton((btn) => btn
+          .setButtonText("重新登录")
+          .onClick(() => {
+            new PlatformLoginModal(this.app, p, (session) => {
+              void (async () => {
+                if (!settings.savedDomainSessions) settings.savedDomainSessions = {};
+                settings.savedDomainSessions[p.domain] = session;
+                await this.plugin.savePluginData();
+                this.update();
+              })();
+            }).open();
+          }));
+
+        row.addButton((btn) => btn
+          .setButtonText("解除授权")
+          .setDestructive()
+          .onClick(() => {
+            void (async () => {
+              delete savedSessions[p.domain];
+              delete savedSessions[`.${p.domain}`];
+              settings.savedDomainSessions = savedSessions;
+              await this.plugin.savePluginData();
+              new Notice(`已解除 ${p.name} 的登录授权`);
+              this.update();
+            })();
+          }));
+      } else {
+        row.addButton((btn) => btn
+          .setButtonText("一键登录授权")
+          .setCta()
+          .onClick(() => {
+            new PlatformLoginModal(this.app, p, (session) => {
+              void (async () => {
+                if (!settings.savedDomainSessions) settings.savedDomainSessions = {};
+                settings.savedDomainSessions[p.domain] = session;
+                await this.plugin.savePluginData();
+                this.update();
+              })();
+            }).open();
+          }));
+      }
+    }
+
+    new Setting(section)
+      .setName("清空所有平台授权")
+      .setDesc("删除本地保存的所有平台登录凭据与授权状态。")
+      .addButton((btn) => btn
+        .setButtonText("清空全部授权")
+        .setDestructive()
+        .onClick(() => {
+          void (async () => {
+            settings.savedDomainSessions = {};
+            await this.plugin.savePluginData();
+            new Notice("已清空所有平台的登录凭据与授权状态");
+            this.update();
+          })();
+        }));
   }
 
   private renderAIProperties(containerEl: HTMLElement): void {

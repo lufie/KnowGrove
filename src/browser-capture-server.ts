@@ -56,6 +56,17 @@ import {
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
+  extractRootDomain,
+  matchDomainSessionCookies,
+  isTikTokCaptureUrl,
+  isXiguaCaptureUrl,
+  isVimeoCaptureUrl,
+  isTencentVideoUrl,
+  isInstagramCaptureUrl,
+  extractVimeoVideoId,
+  parseTikTokHtml,
+  extractTencentVideoVid,
+  parseXiguaHtml,
   type BrowserCaptureAIResult,
   type ApplePodcastEpisode,
   type BrowserCaptureMediaCandidate,
@@ -909,6 +920,21 @@ export class BrowserCaptureServer {
       const cookies = captureSessionCookies(body.sessionCookies, url);
       const userAgent = stringField(body.userAgent).replace(/[\r\n\0]/g, "").slice(0, 1_000);
       const referer = stringField(body.referer, url).replace(/[\r\n\0]/g, "").slice(0, 2_000);
+      if (cookies.length) {
+        const rootDomain = extractRootDomain(url);
+        const pluginSettings = this.host.getSettings();
+        if (!pluginSettings.browserCapture.savedDomainSessions) {
+          pluginSettings.browserCapture.savedDomainSessions = {};
+        }
+        pluginSettings.browserCapture.savedDomainSessions[rootDomain] = {
+          domain: rootDomain,
+          cookies,
+          userAgent: userAgent || undefined,
+          referer: referer || undefined,
+          updatedAt: Date.now(),
+        };
+        void this.host.saveSettings();
+      }
       if (cookies.length || mediaCandidates.length || userAgent) {
         this.captureSessions.set(job.id, {
           cookies,
@@ -1048,6 +1074,17 @@ export class BrowserCaptureServer {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    if (!this.captureSessions.has(job.id) && payload.url) {
+      const saved = matchDomainSessionCookies(this.host.getSettings().browserCapture.savedDomainSessions, payload.url);
+      if (saved?.cookies?.length) {
+        this.captureSessions.set(job.id, {
+          cookies: saved.cookies,
+          userAgent: saved.userAgent || "",
+          referer: saved.referer || payload.url,
+          mediaCandidates: [],
+        });
+      }
+    }
     this.jobs.set(job.id, job);
     await this.persistJobs();
     return job;
@@ -1556,15 +1593,23 @@ export class BrowserCaptureServer {
     captureUrl: string,
   ): Promise<string[]> {
     const session = this.captureSessions.get(job.id);
-    if (!session) return [];
+    const saved = matchDomainSessionCookies(this.host.getSettings().browserCapture.savedDomainSessions, captureUrl);
+    const cookies = session?.cookies?.length ? session.cookies : (saved?.cookies ?? []);
+    const userAgent = session?.userAgent || saved?.userAgent || "";
+    const referer = session?.referer || saved?.referer || captureUrl;
+    const browserCookieSource = this.host.getSettings().browserCapture.browserCookieSource;
+
     const args: string[] = [];
-    if (session.cookies.length) {
+    if (cookies.length) {
       const cookiePath = join(directory, "session-cookies.txt");
-      await writeFile(cookiePath, serializeNetscapeCookies(session.cookies), { encoding: "utf8", mode: 0o600 });
+      await writeFile(cookiePath, serializeNetscapeCookies(cookies), { encoding: "utf8", mode: 0o600 });
       args.push("--cookies", cookiePath);
+    } else if (browserCookieSource === "auto") {
+      args.push("--cookies-from-browser", "chrome");
+    } else if (browserCookieSource && browserCookieSource !== "extension" && browserCookieSource !== "disabled") {
+      args.push("--cookies-from-browser", browserCookieSource);
     }
-    if (session.userAgent) args.push("--user-agent", session.userAgent);
-    const referer = session.referer || captureUrl;
+    if (userAgent) args.push("--user-agent", userAgent);
     if (referer) args.push("--referer", referer);
     return args;
   }
@@ -1885,16 +1930,136 @@ export class BrowserCaptureServer {
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-video-"));
     try {
       const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
-      const titleResult = await runLocalCommand(
-        downloader,
-        [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
-        "",
-        90,
-        signal,
-      );
-      const title = titleResult.exitCode === 0
-        ? lastLine(titleResult.stdout) || job.title
-        : job.title;
+      let resolvedTitle = job.title;
+      let audioReady = false;
+
+      // Platform specialized metadata resolution
+      if (isTencentVideoUrl(captureUrl)) {
+        const vid = extractTencentVideoVid(captureUrl);
+        if (vid) {
+          try {
+            const vinfo = await requestUrl({
+              url: `https://node.video.qq.com/x/api/float_vinfo2?cid=&vid=${vid}`,
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+            });
+            const data = vinfo.json as { c?: { title?: string } };
+            if (data.c?.title) {
+              resolvedTitle = data.c.title.trim();
+            }
+          } catch {
+            // Best-effort
+          }
+        }
+      } else if (isXiguaCaptureUrl(captureUrl)) {
+        try {
+          const match = captureUrl.match(/(?:video\/|\/)([0-9]+)/);
+          const xiguaId = match?.[1];
+          if (xiguaId) {
+            const res = await requestUrl({
+              url: `https://m.ixigua.com/video/${xiguaId}`,
+              headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15" },
+            });
+            const parsedXigua = parseXiguaHtml(res.text);
+            if (parsedXigua?.title) {
+              resolvedTitle = parsedXigua.title;
+            }
+          }
+        } catch {
+          // Best-effort
+        }
+      } else if (isVimeoCaptureUrl(captureUrl)) {
+        const vimeoId = extractVimeoVideoId(captureUrl);
+        if (vimeoId) {
+          try {
+            const vimeoRes = await requestUrl({
+              url: `https://player.vimeo.com/video/${vimeoId}/config`,
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Referer": "https://vimeo.com/",
+              },
+            });
+            const vimeoData = vimeoRes.json as {
+              video?: { title?: string };
+              request?: {
+                files?: {
+                  progressive?: Array<{ url: string; quality: string }>;
+                  hls?: { default_cdn?: string; cdns?: Record<string, { url: string }> };
+                };
+              };
+            };
+            if (vimeoData.video?.title) {
+              resolvedTitle = vimeoData.video.title;
+            }
+            const prog = vimeoData.request?.files?.progressive;
+            const hls = vimeoData.request?.files?.hls;
+            const streamUrl = prog?.[0]?.url
+              || (hls?.default_cdn && hls.cdns?.[hls.default_cdn]?.url)
+              || Object.values(hls?.cdns ?? {})[0]?.url;
+            if (streamUrl) {
+              const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg");
+              const audioPath = join(directory, "audio.mp3");
+              const ffmpegRes = await runLocalCommand(
+                ffmpeg,
+                ["-y", "-headers", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\r\nReferer: https://vimeo.com/\r\n", "-i", streamUrl, "-vn", "-acodec", "libmp3lame", "-q:a", "2", audioPath],
+                "",
+                10 * 60,
+                signal,
+              );
+              if (ffmpegRes.exitCode === 0) {
+                audioReady = true;
+              }
+            }
+          } catch {
+            // Fallback to yt-dlp
+          }
+        }
+      } else if (isTikTokCaptureUrl(captureUrl)) {
+        try {
+          const tiktokRes = await requestUrl({
+            url: captureUrl,
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+              "Referer": "https://www.tiktok.com/",
+            },
+          });
+          const tiktokData = parseTikTokHtml(tiktokRes.text);
+          if (tiktokData?.title) {
+            resolvedTitle = tiktokData.title;
+          }
+          const mediaUrl = tiktokData?.audioUrl || tiktokData?.playUrl;
+          if (mediaUrl) {
+            const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg");
+            const audioPath = join(directory, "audio.mp3");
+            const ffmpegRes = await runLocalCommand(
+              ffmpeg,
+              ["-y", "-headers", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\r\nReferer: https://www.tiktok.com/\r\n", "-i", mediaUrl, "-vn", "-acodec", "libmp3lame", "-q:a", "2", audioPath],
+              "",
+              10 * 60,
+              signal,
+            );
+            if (ffmpegRes.exitCode === 0) {
+              audioReady = true;
+            }
+          }
+        } catch {
+          // Fallback to yt-dlp
+        }
+      }
+
+      if (!resolvedTitle || resolvedTitle === job.title) {
+        const titleResult = await runLocalCommand(
+          downloader,
+          [...ytDlpCaptureArgs(captureUrl), ...sessionArgs, "--skip-download", "--print", "%(title)s", captureUrl],
+          "",
+          90,
+          signal,
+        );
+        if (titleResult.exitCode === 0 && lastLine(titleResult.stdout)) {
+          resolvedTitle = lastLine(titleResult.stdout);
+        }
+      }
+      const title = resolvedTitle || job.title;
+
       await runLocalCommand(
         downloader,
         [
@@ -1916,42 +2081,71 @@ export class BrowserCaptureServer {
       }
       // A subtitle lookup can fail even when the public audio remains downloadable.
       // Continue to the local transcription fallback instead of requiring a manual path.
-      await this.updateJob(job.id, {
-        progress: 28,
-        message: "没有找到可用字幕，正在下载音频",
-      });
-      const downloadUrls = [
-        captureUrl,
-        ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
-          .filter((candidate) => candidate.pageType === "video")
-          .map((candidate) => candidate.url),
-      ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
-      let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
-      for (const downloadUrl of downloadUrls) {
-        audioResult = await runLocalCommand(
-          downloader,
-          [
-            ...ytDlpCaptureArgs(downloadUrl),
-            ...sessionArgs,
-            ...ffmpegLocationArgs(settings),
-            "-x",
-            "--audio-format",
-            "mp3",
-            "-o",
-            join(directory, "audio.%(ext)s"),
-            downloadUrl,
-          ],
-          "",
-          60 * 60,
-          signal,
-        );
-        if (audioResult.exitCode === 0) break;
-      }
-      if (!audioResult || audioResult.exitCode !== 0) {
-        throw new Error(formatYtDlpCaptureError(
-          `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
+      if (!audioReady) {
+        await this.updateJob(job.id, {
+          progress: 28,
+          message: "没有找到可用字幕，正在下载音频",
+        });
+        const downloadUrls = [
           captureUrl,
-        ));
+          ...(this.captureSessions.get(job.id)?.mediaCandidates ?? [])
+            .filter((candidate) => candidate.pageType === "video")
+            .map((candidate) => candidate.url),
+        ].filter((url, index, all) => all.findIndex((candidate) => sameCaptureResourceUrl(candidate, url)) === index);
+        let audioResult: Awaited<ReturnType<typeof runLocalCommand>> | undefined;
+        for (const downloadUrl of downloadUrls) {
+          audioResult = await runLocalCommand(
+            downloader,
+            [
+              ...ytDlpCaptureArgs(downloadUrl),
+              ...sessionArgs,
+              ...ffmpegLocationArgs(settings),
+              "-x",
+              "--audio-format",
+              "mp3",
+              "-o",
+              join(directory, "audio.%(ext)s"),
+              downloadUrl,
+            ],
+            "",
+            60 * 60,
+            signal,
+          );
+          if (audioResult.exitCode === 0) {
+            audioReady = true;
+            break;
+          }
+        }
+        if (!audioReady) {
+          if (isInstagramCaptureUrl(captureUrl)) {
+            const videoResult = await runLocalCommand(
+              downloader,
+              [
+                ...ytDlpCaptureArgs(captureUrl),
+                ...sessionArgs,
+                "--skip-download",
+                "--print",
+                "%(description)s",
+                captureUrl,
+              ],
+              "",
+              60,
+              signal,
+            );
+            const desc = videoResult.exitCode === 0 ? videoResult.stdout.trim() : "";
+            return {
+              title: title || "Instagram 视频",
+              source: [
+                desc ? `## 动态文案\n\n${desc}` : "",
+                "> 注：该视频无独立音轨，已提取视频文案与基础信息并整理入库。",
+              ].filter(Boolean).join("\n\n"),
+            };
+          }
+          throw new Error(formatYtDlpCaptureError(
+            `${audioResult?.stderr ?? ""}\n${audioResult?.stdout ?? ""}`,
+            captureUrl,
+          ));
+        }
       }
       const audioFile = (await readdir(directory)).find((name) => /^audio\./.test(name));
       if (!audioFile) throw new Error("没有找到已下载的视频音频");

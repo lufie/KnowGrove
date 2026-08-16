@@ -24,7 +24,8 @@ export const SUPPORTED_LOCALES: readonly KnowGroveLocale[] = [
 ] as const;
 
 const ENGLISH: Record<string, string> = {
-  "言序 · KnowGrove": "KnowGrove",
+  "言续": "KnowGrove",
+  "言续设置": "KnowGrove settings",
   "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。": "Set up each area once, then let capture, property management, and knowledge creation flow through your vault.",
   "大模型配置": "AI model",
   "选择本地 CLI 或 API、模型与连接方式，供属性整理、内容解析和知识创作统一使用。": "Choose a local CLI or API, model, and connection for property management, content processing, and creation.",
@@ -93,6 +94,8 @@ const ENGLISH: Record<string, string> = {
   "默认 3 秒，用于避免快速滑过时误标已读。": "Defaults to 3 seconds to avoid marking a note as read while scrolling past.",
   "主题列表": "Topic list",
   "默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。": "On by default. Shows all topics in the left sidebar. Turning it off only hides the entry and never changes topic properties.",
+  "文档浮动层级定位锚点": "Floating document outline anchors",
+  "默认开启。在文档阅读区左侧边缘显示极简浮动锚点轨。仅在文档包含标题层级时展示，鼠标悬停可预览标题，点击可快速跳转定位，滚动时实时跟随阅读位置。": "On by default. Displays a minimal floating outline rail along the left edge of the document reading area. Visible only when the document has headings; hover to preview heading, click to jump, and syncs automatically with current scroll position.",
   "附件冗余检测": "Orphaned attachment check",
   "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。": "Tracks only attachments previously used by notes and alerts when the last reference is removed. Never treats never-referenced files as cleanup candidates.",
   "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。": "Checks only notes you just created, edited, moved, or deleted. Alerts when an attachment loses its last reference. Never scans the full vault at startup or treats never-referenced files as cleanup candidates.",
@@ -207,6 +210,19 @@ const ENGLISH: Record<string, string> = {
   "打开阅读列表": "Open reading list",
   "打开主题": "Open topics",
   "打开工作台": "Open workspace",
+  "浏览器 cookie 来源": "Browser cookie source",
+  "配置下载组件读取 cookie 的模式。推荐使用“自动优先探测”，优先静默复用本机已登录的浏览器会话。": "Configures how the downloader accesses cookies. “Automatic detection” is recommended to seamlessly reuse existing browser sessions on this computer.",
+  "平台登录授权与状态管理": "Platform login authorization & status",
+  "各平台登录授权状态": "Platform login authorization status",
+  "重新登录": "Log in again",
+  "解除授权": "Revoke authorization",
+  "一键登录授权": "One-click login authorization",
+  "我已完成登录": "I have completed login",
+  "未能检测到有效的登录会话，请在上方页面中完成登录后重试": "No valid login session was detected. Please complete login in the page above and try again.",
+  "清空所有平台授权": "Clear all platform authorizations",
+  "删除本地保存的所有平台登录凭据与授权状态。": "Deletes all locally saved platform credentials and authorization states.",
+  "清空全部授权": "Clear all authorizations",
+  "已清空所有平台的登录凭据与授权状态": "Cleared all platform credentials and authorization states",
   "存链接": "Save links",
   "批量存链接": "Save links in batch",
   "录音": "Record",
@@ -337,6 +353,7 @@ const ENGLISH: Record<string, string> = {
 
 const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> = {
   "zh-TW": {
+    "言续": "言续", "言续设置": "言续設定",
     "大模型配置": "AI 模型設定", "属性管理": "屬性管理", "知识工作台": "知識工作區", "增强功能": "增強功能",
     "收集箱路径": "收集匣路徑", "自动整理新内容": "自動整理新內容", "阅读习惯设置": "閱讀習慣",
     "主题列表": "主題列表", "附件冗余检测": "孤立附件檢查", "附件随笔记移动": "附件隨筆記移動", "自动整理附件": "自動整理附件", "共享附件处理": "共用附件處理", "附件与链接排除目录": "附件與連結排除資料夾", "额外附件格式": "其他附件格式", "最近文件依据": "最近檔案依據",
@@ -461,10 +478,19 @@ export function currentKnowGroveLocale(): KnowGroveLocale {
   return activeLocale;
 }
 
+export function knowGroveDisplayName(locale = currentKnowGroveLocale()): "言续" | "KnowGrove" {
+  return locale === "zh-CN" || locale === "zh-TW" ? "言续" : "KnowGrove";
+}
+
+function localizeBrandTokens(value: string, locale: KnowGroveLocale): string {
+  return value.replace(/KnowGrove|言序|言续/g, knowGroveDisplayName(locale));
+}
+
 export function translateKnowGroveText(source: string, locale = currentKnowGroveLocale()): string {
-  if (!source || locale === "zh-CN") return source;
+  if (!source) return source;
+  if (locale === "zh-CN") return localizeBrandTokens(source, locale);
   const exact = LOCAL_OVERRIDES[locale]?.[source] ?? ENGLISH[source];
-  if (exact) return exact;
+  if (exact) return localizeBrandTokens(exact, locale);
   const noteCount = source.match(/^(\d+)\s*篇$/);
   if (noteCount) return formatLocalizedCount(Number(noteCount[1]), "note", locale);
   const topicCount = source.match(/^(\d+)\s*个主题$/);
@@ -479,7 +505,7 @@ export function translateKnowGroveText(source: string, locale = currentKnowGrove
   ] as const) {
     if (source.startsWith(prefix)) return `${englishPrefix}${source.slice(prefix.length)}`;
   }
-  return source;
+  return localizeBrandTokens(source, locale);
 }
 
 function formatLocalizedCount(count: number, unit: "note" | "topic", locale: KnowGroveLocale): string {
@@ -530,6 +556,29 @@ const SKIP_LOCALIZATION_SELECTOR = [
   "[data-knowgrove-user-content]",
 ].join(",");
 
+export const KNOWGROVE_UI_ROOT_SELECTOR = [
+  ".knowgrove-settings",
+  ".knowgrove-modal",
+  ".knowgrove-property-matrix-shell",
+  ".knowgrove-property-issue-modal",
+  ".knowgrove-view",
+  ".knowgrove-topic-index-view",
+  ".knowgrove-creation-assistant",
+  ".knowgrove-comments-view",
+  ".knowgrove-theme-synthesis-modal",
+  ".knowgrove-property-workbench",
+  ".knowgrove-capture-modal",
+  ".knowgrove-capture-view",
+  ".knowgrove-recording-overlay",
+  ".knowgrove-attachment-cleanup-shell",
+  ".knowgrove-ai-batch-modal",
+  ".knowgrove-tooltip",
+].join(",");
+
+export function isKnowGroveUiElement(element: Element | null): boolean {
+  return Boolean(element?.closest(KNOWGROVE_UI_ROOT_SELECTOR));
+}
+
 function shouldSkip(element: Element | null): boolean {
   return Boolean(element?.closest(SKIP_LOCALIZATION_SELECTOR));
 }
@@ -555,7 +604,6 @@ function translateAttributes(element: Element, locale: KnowGroveLocale): void {
 }
 
 export function localizeKnowGroveElement(root: Node, locale = currentKnowGroveLocale()): void {
-  if (locale === "zh-CN") return;
   if (root.instanceOf(Element)) translateAttributes(root, locale);
   if (root.instanceOf(Text)) translateTextNode(root, locale);
   const document = root.ownerDocument ?? (root.instanceOf(Document) ? root : undefined);
@@ -571,16 +619,45 @@ export function localizeKnowGroveElement(root: Node, locale = currentKnowGroveLo
 
 export function installKnowGroveLocalization(document: Document): () => void {
   const locale = currentKnowGroveLocale();
-  if (locale === "zh-CN") return () => undefined;
-  localizeKnowGroveElement(document.body, locale);
-  const observer = new MutationObserver((mutations) => {
+  const rootObservers = new Map<Element, MutationObserver>();
+
+  const observeRoot = (root: Element): void => {
+    if (rootObservers.has(root)) return;
+    localizeKnowGroveElement(root, locale);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData") localizeKnowGroveElement(mutation.target, locale);
+        for (const node of Array.from(mutation.addedNodes)) localizeKnowGroveElement(node, locale);
+      }
+    });
+    observer.observe(root, { subtree: true, childList: true, characterData: true });
+    rootObservers.set(root, observer);
+  };
+
+  const discoverRoots = (node: Node): void => {
+    if (!node.instanceOf(Element)) return;
+    if (node.matches(KNOWGROVE_UI_ROOT_SELECTOR)) observeRoot(node);
+    node.querySelectorAll(KNOWGROVE_UI_ROOT_SELECTOR).forEach(observeRoot);
+  };
+
+  document.querySelectorAll(KNOWGROVE_UI_ROOT_SELECTOR).forEach(observeRoot);
+  const discoveryObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (mutation.type === "characterData") localizeKnowGroveElement(mutation.target, locale);
-      for (const node of Array.from(mutation.addedNodes)) localizeKnowGroveElement(node, locale);
+      if (mutation.type === "attributes") discoverRoots(mutation.target);
+      for (const node of Array.from(mutation.addedNodes)) discoverRoots(node);
     }
   });
-  observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-  return () => observer.disconnect();
+  discoveryObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  return () => {
+    discoveryObserver.disconnect();
+    for (const observer of rootObservers.values()) observer.disconnect();
+    rootObservers.clear();
+  };
 }
 
 export function knownEnglishTranslation(source: string): string | undefined {

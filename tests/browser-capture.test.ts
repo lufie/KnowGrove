@@ -44,6 +44,13 @@ import {
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
+  extractRootDomain,
+  matchDomainSessionCookies,
+  parseRawCookieString,
+  parseTikTokHtml,
+  parseXiguaHtml,
+  extractVimeoVideoId,
+  extractTencentVideoVid,
 } from "../src/browser-capture-core";
 import { runBrowserProviderWithHandoff } from "../src/browser-provider-handoff";
 import type { AIPropertySettings } from "../src/types";
@@ -219,6 +226,81 @@ test("browser session cookies are scoped to the current site and serialized ephe
   assert.match(serialized, /^# Netscape HTTP Cookie File/);
   assert.match(serialized, /\.douyin\.com\tTRUE\t\/\tTRUE\t2000000000\tsessionid\tsafe/);
   assert.doesNotMatch(serialized, /example|line/);
+});
+
+test("extractRootDomain and matchDomainSessionCookies support multiple platforms", () => {
+  assert.equal(extractRootDomain("https://www.xiaohongshu.com/explore/123"), "xiaohongshu.com");
+  assert.equal(extractRootDomain("https://xhslink.com/m/abc"), "xhslink.com");
+  assert.equal(extractRootDomain("https://v.douyin.com/xyz"), "douyin.com");
+  assert.equal(extractRootDomain("https://m.ixigua.com/video/789"), "ixigua.com");
+  assert.equal(extractRootDomain("https://player.vimeo.com/video/456"), "vimeo.com");
+  assert.equal(extractRootDomain("https://v.qq.com/x/cover/cid/vid.html"), "qq.com");
+
+  const sessions = {
+    "xiaohongshu.com": {
+      domain: "xiaohongshu.com",
+      cookies: [{ domain: ".xiaohongshu.com", path: "/", name: "web_session", value: "abc" }],
+      updatedAt: 1700000000000,
+    },
+    "douyin.com": {
+      domain: "douyin.com",
+      cookies: [{ domain: ".douyin.com", path: "/", name: "passport_csrf_token", value: "def" }],
+      userAgent: "CustomUA/1.0",
+      updatedAt: 1700000000000,
+    },
+  };
+
+  const matchedXhs = matchDomainSessionCookies(sessions, "https://www.xiaohongshu.com/discovery/item/666");
+  assert.equal(matchedXhs?.cookies.length, 1);
+  assert.equal(matchedXhs?.cookies[0]?.name, "web_session");
+
+  const matchedDouyin = matchDomainSessionCookies(sessions, "https://v.douyin.com/test");
+  assert.equal(matchedDouyin?.cookies[0]?.name, "passport_csrf_token");
+  assert.equal(matchedDouyin?.userAgent, "CustomUA/1.0");
+
+  const matchedUnknown = matchDomainSessionCookies(sessions, "https://example.com");
+  assert.equal(matchedUnknown, undefined);
+});
+
+test("parseRawCookieString correctly parses Netscape and cookie header formats", () => {
+  const headerFormat = "a_cookie=val1; b_cookie=val2; secure; HttpOnly";
+  const parsedHeader = parseRawCookieString(headerFormat, "tiktok.com");
+  assert.equal(parsedHeader.length, 2);
+  assert.equal(parsedHeader[0]?.name, "a_cookie");
+  assert.equal(parsedHeader[0]?.value, "val1");
+  assert.equal(parsedHeader[0]?.domain, ".tiktok.com");
+
+  const netscapeFormat = [
+    "# Netscape HTTP Cookie File",
+    ".bilibili.com\tTRUE\t/\tTRUE\t2000000000\tSESSDATA\txyz123",
+    ".bilibili.com\tTRUE\t/\tFALSE\t2000000000\tbili_jct\tabc456",
+  ].join("\n");
+  const parsedNetscape = parseRawCookieString(netscapeFormat, "bilibili.com");
+  assert.equal(parsedNetscape.length, 2);
+  assert.equal(parsedNetscape[0]?.name, "SESSDATA");
+  assert.equal(parsedNetscape[0]?.value, "xyz123");
+  assert.equal(parsedNetscape[1]?.name, "bili_jct");
+});
+
+test("platform resolvers parse TikTok, Xigua, Vimeo, and Tencent video metadata", () => {
+  const mockTikTokHtml = `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{"__DEFAULT_SCOPE__":{"webapp.video-detail":{"itemInfo":{"itemStruct":{"desc":"TikTok 创意测试视频","author":{"nickname":"创作者A"},"video":{"duration":60,"playAddr":"https://v.tiktok.com/play.mp4"},"music":{"playUrl":"https://v.tiktok.com/music.mp3"}}}}}}</script>`;
+  const tikTokMeta = parseTikTokHtml(mockTikTokHtml);
+  assert.equal(tikTokMeta?.title, "TikTok 创意测试视频");
+  assert.equal(tikTokMeta?.author, "创作者A");
+  assert.equal(tikTokMeta?.duration, 60);
+  assert.equal(tikTokMeta?.audioUrl, "https://v.tiktok.com/music.mp3");
+
+  const mockXiguaHtml = `<script>window._SSR_DATA = {"data":{"storeState":{"detail":{"videoData":{"result":{"title":"西瓜视频精选纪录片","duration":3600,"media_user":{"screen_name":"纪录片频道"}}}}}}};</script>`;
+  const xiguaMeta = parseXiguaHtml(mockXiguaHtml);
+  assert.equal(xiguaMeta?.title, "西瓜视频精选纪录片");
+  assert.equal(xiguaMeta?.author, "纪录片频道");
+  assert.equal(xiguaMeta?.duration, 3600);
+
+  const vimeoId = extractVimeoVideoId("https://vimeo.com/channels/staffpicks/56015672");
+  assert.equal(vimeoId, "56015672");
+
+  const tencentVid = extractTencentVideoVid("https://v.qq.com/x/cover/mzc00200l2l82c7/q326831cny0.html");
+  assert.equal(tencentVid, "q326831cny0");
 });
 
 test("generic capture resolves short links and detects media from response metadata", () => {
@@ -459,7 +541,7 @@ test("KeepRec sparse capture template remains eligible for automatic organizatio
     "[打开原内容](<https://example.com/story>)",
     "",
     "## 整理",
-  ].join("\n"), "言序收集"), {
+  ].join("\n"), "言续收集"), {
     url: "https://example.com/story",
     title: "稍后整理的文章",
   });
@@ -852,7 +934,7 @@ test("browser capture failure note leaves a final retryable state", () => {
     error: "net::ERR_CONNECTION_CLOSED",
   });
   assert.match(failed, /KnowGrove采集状态: "部分完成"/);
-  assert.match(failed, /重新打开来源页面后，可以再次点击言序重试/);
+  assert.match(failed, /重新打开来源页面后，可以再次点击言续重试/);
   assert.match(failed, /net::ERR_CONNECTION_CLOSED/);
   assert.doesNotMatch(failed, /KnowGrove 正在提取/);
 });

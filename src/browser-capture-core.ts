@@ -60,6 +60,44 @@ export interface BrowserCaptureMediaCandidate {
   label?: string;
 }
 
+export interface SavedDomainSession {
+  domain: string;
+  cookies: BrowserCaptureSessionCookie[];
+  userAgent?: string;
+  referer?: string;
+  updatedAt: number;
+}
+
+export interface VimeoResolvedMedia {
+  title: string;
+  duration?: number;
+  author?: string;
+  streamUrl?: string;
+  hlsUrl?: string;
+  progressiveUrl?: string;
+}
+
+export interface TikTokResolvedMedia {
+  title: string;
+  author?: string;
+  duration?: number;
+  playUrl?: string;
+  audioUrl?: string;
+  coverUrl?: string;
+}
+
+export interface TencentVideoResolvedMeta {
+  title: string;
+  coverUrl?: string;
+}
+
+export interface XiguaResolvedMedia {
+  title: string;
+  duration?: number;
+  author?: string;
+  coverUrl?: string;
+}
+
 export interface BrowserCaptureSessionCookie {
   domain: string;
   path: string;
@@ -155,12 +193,14 @@ export function classifyBrowserCaptureUrl(url: string): BrowserCapturePageType {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    const isWeiboVideo = host.endsWith("weibo.com") && parsed.pathname.startsWith("/tv");
-    const isWeChatChannels = host === "weixin.qq.com" && parsed.pathname.startsWith("/sph/");
+    const isWeiboVideo = (host.endsWith("weibo.com") || host === "weibo.tv") && (parsed.pathname.startsWith("/tv") || parsed.pathname.startsWith("/show") || parsed.pathname.includes("/video"));
+    const isWeChatChannels = (host === "weixin.qq.com" && parsed.pathname.startsWith("/sph/")) || host === "channels.weixin.qq.com";
+    const isInstagramMedia = (host === "instagram.com" || host.endsWith(".instagram.com")) && /^\/(?:reel|reels|p|tv)\//i.test(parsed.pathname);
+    const isShortVideoHost = host === "v.douyin.com" || host === "vt.tiktok.com" || host === "vm.tiktok.com" || host === "v.ixigua.com" || host === "b23.tv" || host === "youtu.be";
     if (AUDIO_EXTENSIONS.test(parsed.href) || AUDIO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
     )) return "audio";
-    return isWeiboVideo || isWeChatChannels || VIDEO_EXTENSIONS.test(parsed.href) || VIDEO_HOSTS.some((candidate) =>
+    return isWeiboVideo || isWeChatChannels || isInstagramMedia || isShortVideoHost || VIDEO_EXTENSIONS.test(parsed.href) || VIDEO_HOSTS.some((candidate) =>
       host === candidate || host.endsWith(`.${candidate}`),
     )
       ? "video"
@@ -360,6 +400,59 @@ export function serializeNetscapeCookies(cookies: BrowserCaptureSessionCookie[])
   ].join("\n");
 }
 
+export function parseRawCookieString(
+  raw: string,
+  targetDomain: string,
+): BrowserCaptureSessionCookie[] {
+  const normalizedDomain = targetDomain.startsWith(".") ? targetDomain : `.${targetDomain}`;
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const cookies: BrowserCaptureSessionCookie[] = [];
+
+  const isNetscape = lines.some((l) => l.includes("\t"));
+  if (isNetscape) {
+    for (const line of lines) {
+      if (line.startsWith("#")) continue;
+      const parts = line.split("\t");
+      if (parts.length >= 7) {
+        cookies.push({
+          domain: parts[0] || normalizedDomain,
+          path: parts[2] || "/",
+          secure: parts[3] === "TRUE",
+          expirationDate: Number(parts[4]) || 0,
+          name: parts[5] || "",
+          value: parts[6] || "",
+          httpOnly: false,
+        });
+      }
+    }
+    if (cookies.length) return cookies;
+  }
+
+  const joined = raw.replace(/\r?\n/g, "; ");
+  const pairs = joined.split(";");
+  for (const pair of pairs) {
+    const trimmed = pair.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx > 0) {
+      const name = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (name && !["path", "domain", "expires", "max-age", "samesite", "secure", "httponly"].includes(name.toLowerCase())) {
+        cookies.push({
+          domain: normalizedDomain,
+          path: "/",
+          name,
+          value,
+          secure: true,
+          httpOnly: false,
+          expirationDate: Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
+        });
+      }
+    }
+  }
+  return cookies;
+}
+
 export function sameCaptureResourceUrl(left: string, right: string): boolean {
   try {
     const normalize = (value: string): string => {
@@ -388,6 +481,44 @@ export function captureCancellationPlan(input: {
   };
 }
 
+export function extractRootDomain(urlOrHost: string): string {
+  try {
+    const hostname = urlOrHost.includes("://") ? new URL(urlOrHost).hostname : urlOrHost;
+    const clean = hostname.toLowerCase().replace(/^\.+/, "");
+    const parts = clean.split(".");
+    if (parts.length <= 2) return clean;
+    const lastTwo = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
+    if (["com.cn", "net.cn", "org.cn", "gov.cn", "co.uk", "org.uk", "com.tw", "com.hk"].includes(lastTwo)) {
+      return parts.slice(-3).join(".");
+    }
+    return parts.slice(-2).join(".");
+  } catch {
+    return urlOrHost.toLowerCase();
+  }
+}
+
+export function matchDomainSessionCookies(
+  sessions: Record<string, SavedDomainSession> | undefined,
+  url: string,
+): { cookies: BrowserCaptureSessionCookie[]; userAgent?: string; referer?: string } | undefined {
+  if (!sessions) return undefined;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const root = extractRootDomain(host);
+    const candidateKeys = [host, `.${host}`, root, `.${root}`];
+    for (const key of candidateKeys) {
+      const match = sessions[key] || sessions[key.replace(/^\./, "")];
+      if (match?.cookies?.length) {
+        return match;
+      }
+    }
+  } catch {
+    // Ignore invalid url
+  }
+  return undefined;
+}
+
 export function isBilibiliCaptureUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -400,12 +531,221 @@ export function isBilibiliCaptureUrl(url: string): boolean {
   }
 }
 
+export function isDouyinCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "douyin.com" || host.endsWith(".douyin.com") || host === "v.douyin.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isTikTokCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "tiktok.com" || host.endsWith(".tiktok.com") || host === "vt.tiktok.com" || host === "vm.tiktok.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isXiguaCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "ixigua.com" || host.endsWith(".ixigua.com") || host === "v.ixigua.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isXiaohongshuCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com") || host === "xhslink.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isWeChatChannelsCaptureUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return (host === "weixin.qq.com" && parsed.pathname.startsWith("/sph/")) || host === "channels.weixin.qq.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isVimeoCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "vimeo.com" || host.endsWith(".vimeo.com") || host === "player.vimeo.com";
+  } catch {
+    return false;
+  }
+}
+
+export function isTencentVideoUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "v.qq.com" || host.endsWith(".v.qq.com");
+  } catch {
+    return false;
+  }
+}
+
+export function isInstagramCaptureUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "instagram.com" || host.endsWith(".instagram.com");
+  } catch {
+    return false;
+  }
+}
+
+export function extractVimeoVideoId(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/(?:videos?\/|channels\/(?:\w+\/)?|groups\/[^/]+\/videos\/|album\/(?:\d+\/)?video\/|video\/|)(\d+)/i);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseTikTokHtml(html: string): TikTokResolvedMedia | undefined {
+  const matchUniversal = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+  if (matchUniversal?.[1]) {
+    try {
+      const data = JSON.parse(matchUniversal[1]) as Record<string, unknown>;
+      const defaultScope = (data["__DEFAULT_SCOPE__"] ?? {}) as Record<string, unknown>;
+      const detail = (defaultScope["webapp.video-detail"] as Record<string, unknown> | undefined)?.itemInfo as {
+        itemStruct?: {
+          desc?: string;
+          author?: { nickname?: string; uniqueId?: string };
+          video?: { duration?: number; playAddr?: string; downloadAddr?: string; cover?: string };
+          music?: { playUrl?: string; title?: string };
+        };
+      } | undefined;
+      const item = detail?.itemStruct;
+      if (item) {
+        return {
+          title: item.desc?.trim() || "TikTok 视频",
+          author: item.author?.nickname || item.author?.uniqueId,
+          duration: item.video?.duration,
+          playUrl: item.video?.playAddr || item.video?.downloadAddr,
+          audioUrl: item.music?.playUrl,
+          coverUrl: item.video?.cover,
+        };
+      }
+    } catch {
+      // Continue
+    }
+  }
+  const matchSigi = html.match(/<script id="SIGI_STATE"[^>]*>([\s\S]*?)<\/script>/);
+  if (matchSigi?.[1]) {
+    try {
+      const data = JSON.parse(matchSigi[1]) as {
+        ItemModule?: Record<string, {
+          desc?: string;
+          author?: string;
+          video?: { duration?: number; playAddr?: string; downloadAddr?: string };
+          music?: { playUrl?: string };
+        }>;
+      };
+      const items = Object.values(data.ItemModule ?? {});
+      if (items.length) {
+        const item = items[0]!;
+        return {
+          title: item.desc?.trim() || "TikTok 视频",
+          author: item.author,
+          duration: item.video?.duration,
+          playUrl: item.video?.playAddr || item.video?.downloadAddr,
+          audioUrl: item.music?.playUrl,
+        };
+      }
+    } catch {
+      // Continue
+    }
+  }
+  return undefined;
+}
+
+export function extractTencentVideoVid(url: string): string | undefined {
+  try {
+    const match = url.match(/(?:\/page\/|\/cover\/[^/]+\/|\bvid=)([a-zA-Z0-9]{11})/);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseXiguaHtml(html: string): XiguaResolvedMedia | undefined {
+  const matchSsr = html.match(/window\._SSR_DATA\s*=\s*(\{[\s\S]*?\});/)
+    || html.match(/<script[^>]*>(window\._SSR_DATA\s*=[\s\S]*?)<\/script>/);
+  if (matchSsr?.[1]) {
+    try {
+      const raw = matchSsr[1].replace(/^window\._SSR_DATA\s*=\s*/, "").replace(/;?\s*$/, "");
+      const data = JSON.parse(raw) as {
+        data?: {
+          storeState?: {
+            detail?: {
+              videoData?: {
+                result?: {
+                  title?: string;
+                  duration?: number;
+                  media_user?: { screen_name?: string };
+                  cover_image_url?: string;
+                };
+              };
+            };
+          };
+        };
+      };
+      const result = data.data?.storeState?.detail?.videoData?.result;
+      if (result?.title) {
+        return {
+          title: result.title.trim(),
+          duration: result.duration,
+          author: result.media_user?.screen_name,
+          coverUrl: result.cover_image_url,
+        };
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  const ldJson = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+  if (ldJson?.[1]) {
+    try {
+      const data = JSON.parse(ldJson[1]) as { name?: string; description?: string; thumbnailUrl?: string };
+      if (data.name) {
+        return {
+          title: data.name.replace(/\s*\|\s*西瓜视频\s*$/, "").trim(),
+          coverUrl: data.thumbnailUrl,
+        };
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  return undefined;
+}
+
 /**
  * Keep video extraction independent from a user's global yt-dlp config and use
- * bounded retries. Bilibili rejects non-browser metadata requests on some
- * networks, so public page headers are supplied without reading browser cookies.
+ * bounded retries. Provides proper user-agent and headers for platform compatibility.
  */
-export function ytDlpCaptureArgs(url: string): string[] {
+export function ytDlpCaptureArgs(
+  url: string,
+  options: {
+    cookiesPath?: string;
+    userAgent?: string;
+    referer?: string;
+    browserCookieSource?: string;
+  } = {},
+): string[] {
   const args = [
     "--ignore-config",
     "--no-warnings",
@@ -419,15 +759,64 @@ export function ytDlpCaptureArgs(url: string): string[] {
     "--fragment-retries",
     "5",
   ];
+  if (options.cookiesPath) {
+    args.push("--cookies", options.cookiesPath);
+  } else if (options.browserCookieSource === "auto") {
+    args.push("--cookies-from-browser", "chrome");
+  } else if (
+    options.browserCookieSource
+    && options.browserCookieSource !== "extension"
+    && options.browserCookieSource !== "disabled"
+  ) {
+    args.push("--cookies-from-browser", options.browserCookieSource);
+  }
+  const ua = options.userAgent || YT_DLP_BROWSER_USER_AGENT;
   if (isBilibiliCaptureUrl(url)) {
     args.push(
       "--user-agent",
-      YT_DLP_BROWSER_USER_AGENT,
+      ua,
       "--add-header",
       "Referer:https://www.bilibili.com/",
       "--add-header",
       "Origin:https://www.bilibili.com",
     );
+  } else if (isDouyinCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      ua,
+      "--add-header",
+      "Referer:https://www.douyin.com/",
+    );
+  } else if (isXiguaCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      ua,
+      "--add-header",
+      "Referer:https://www.ixigua.com/",
+    );
+  } else if (isTikTokCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      ua,
+      "--add-header",
+      "Referer:https://www.tiktok.com/",
+    );
+  } else if (isXiaohongshuCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      ua,
+      "--add-header",
+      "Referer:https://www.xiaohongshu.com/",
+    );
+  } else if (isInstagramCaptureUrl(url)) {
+    args.push(
+      "--user-agent",
+      ua,
+      "--add-header",
+      "Referer:https://www.instagram.com/",
+    );
+  } else if (options.referer) {
+    args.push("--add-header", `Referer:${options.referer}`);
   }
   return args;
 }
@@ -477,11 +866,12 @@ export function formatYtDlpCaptureError(stderr: string, url: string): string {
   if (isBilibiliCaptureUrl(url) && /(?:HTTP Error\s*)?412|Precondition Failed/i.test(stderr)) {
     return "Bilibili 拒绝了当前下载组件的请求（HTTP 412）。KnowGrove 已使用浏览器请求头重试；请在设置 → Read It Later → 自动整理组件配置中点击“自动配置”更新组件后重试。";
   }
-  if (/(?:HTTP Error\s*)?(?:401|403|429)|cookies-from-browser|fresh cookies|Sign in to confirm|login required|Cloudflare/i.test(stderr)) {
-    return "站点要求登录、验证或拒绝了匿名下载。请先在浏览器中打开该页面并完成登录/验证码，再从言序浏览器扩展点击“使用当前站点登录状态并整理”。登录状态只用于当前本机任务，完成后不会保留。";
+  if (/(?:HTTP Error\s*)?(?:401|403|429)|cookies-from-browser|fresh cookies|Sign in to confirm|login required|Cloudflare|Cookies \(not necessarily logged in\) are needed/i.test(stderr)) {
+    return "该平台需要登录授权后方可解析。请在 KnowGrove 设置 → 平台登录授权中完成一次登录授权（仅需一次，后续全自动复用）。";
   }
   if (/Unsupported URL|No video formats found|Unable to extract/i.test(stderr)) {
-    return "当前下载组件没有识别出可用媒体。请先在浏览器中播放一次，再从言序浏览器扩展授权当前站点并重试；扩展会同时转交页面可见的媒体地址。";
+    return "当前下载组件没有识别出可用媒体。请检查链接是否有效，或在 KnowGrove 设置中确认该平台登录授权状态。";
+
   }
   return detail.replace(/^ERROR:\s*/i, "").slice(0, 800);
 }
@@ -1458,7 +1848,7 @@ export function buildCaptureFailureNote(input: {
     "",
     `# ${input.title}`,
     "",
-    "> 来源链接已经保存，但正文提取没有完成。重新打开来源页面后，可以再次点击言序重试。",
+    "> 来源链接已经保存，但正文提取没有完成。重新打开来源页面后，可以再次点击言续重试。",
     "",
     "## 处理状态",
     "",
