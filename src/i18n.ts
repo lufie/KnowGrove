@@ -24,7 +24,8 @@ export const SUPPORTED_LOCALES: readonly KnowGroveLocale[] = [
 ] as const;
 
 const ENGLISH: Record<string, string> = {
-  "言序 · KnowGrove": "KnowGrove",
+  "言续": "KnowGrove",
+  "言续设置": "KnowGrove settings",
   "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。": "Set up each area once, then let capture, property management, and knowledge creation flow through your vault.",
   "大模型配置": "AI model",
   "选择本地 CLI 或 API、模型与连接方式，供属性整理、内容解析和知识创作统一使用。": "Choose a local CLI or API, model, and connection for property management, content processing, and creation.",
@@ -47,6 +48,39 @@ const ENGLISH: Record<string, string> = {
   "每个链接保存为一篇独立笔记。留空时沿用收集箱路径。": "Save each link as a separate note. Leave blank to use the inbox folder.",
   "Mac 录音目录": "Mac recording folder",
   "录音、整理笔记和安全恢复片段保存在这里。留空时使用“收集箱路径/录音”。": "Store recordings, processed notes, and recovery segments here. Leave blank to use Inbox/Recordings.",
+  "默认用 Obsidian 打开 Markdown": "Open Markdown in Obsidian by default",
+  "默认开启。开启后由 KnowGrove Mac 打开器接管 .md 和 .markdown；库外文件会先导入下方 Vault 路径，再在 Obsidian 打开。首次启用仍需在 Finder 确认“全部更改”。": "On by default. The KnowGrove Mac opener handles .md and .markdown, imports external files into the vault folder below, and opens them in Obsidian. The first setup still requires confirming Change All in Finder.",
+  "导入成功后移除库外原文件": "Remove the external source after import",
+  "默认开启。只有 Vault 内副本完整写入并校验成功后，才把库外原文件移到 macOS 废纸篓，可从废纸篓恢复；关闭则保留原文件。Vault 内文件永远不会因此删除。": "On by default. Only after the vault copy is fully written and verified is the external source moved to the macOS Trash, where it can be restored. Turn this off to keep the source. Files already in the vault are never removed by this setting.",
+  "Markdown 默认导入路径": "Default Markdown import folder",
+  "双击库外 Markdown 时先导入这个 Vault 相对路径，再在 Obsidian 中打开。留空时默认使用收集箱路径；不会覆盖同名笔记。": "Import external Markdown into this vault-relative folder before opening it in Obsidian. Leave blank to use the inbox. Existing notes with the same name are never overwritten.",
+  "Mac Markdown 打开器状态": "Mac Markdown opener status",
+  "正在检查系统默认应用与 KnowGrove 打开器状态。": "Checking the system default app and KnowGrove opener status.",
+  "在访达中恢复": "Restore in Finder",
+  "双击导入 Markdown 当前仅支持 macOS；其他平台不会修改默认打开方式。": "Double-click Markdown import currently supports macOS only. Other platforms do not change file associations.",
+  "当前平台不可用": "Unavailable on this platform",
+  "功能已关闭，打开器也不会导入文件；macOS 仍把它列为默认应用，请点击右侧按钮并在 Finder 完成恢复。": "The feature is off and the opener will not import files, but macOS still lists it as the default app. Use the button on the right and complete restoration in Finder.",
+  "功能已关闭，KnowGrove 不会接管或导入双击的 Markdown。已有打开器保留，可随时重新开启。": "The feature is off. KnowGrove will not handle or import double-clicked Markdown. The installed opener remains available for later use.",
+  "功能已关闭": "Feature off",
+  "已启用并设为默认：库外 Markdown 导入并校验成功后，原文件会移到废纸篓；重名文件安全编号，Vault 内文件直接打开。": "Enabled and set as default. After an external Markdown file is imported and verified, its source moves to Trash. Name conflicts receive a safe suffix, and vault files open directly.",
+  "已启用并设为默认：库外 Markdown 会复制到上方路径并保留原文件；重名文件安全编号，Vault 内文件直接打开。": "Enabled and set as default. External Markdown is copied to the folder above while the source is kept. Name conflicts receive a safe suffix, and vault files open directly.",
+  "重新配置": "Reconfigure",
+  "打开器已安装，但当前不是默认 Markdown 应用。点击后会在访达中选中引导文件；打开文件简介，在“打开方式”选择 KnowGrove 打开器，再点“全部更改”。": "The Mac opener is installed but is not the default Markdown app. Click to select the setup file in Finder, open Get Info, choose KnowGrove Markdown Opener under Open with, and select Change All.",
+  "在访达中设置": "Set up in Finder",
+  "安装打开器": "Install opener",
+  "重试安装": "Retry installation",
+  "安装中…": "Installing…",
+  "已设为默认。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。": "Set as default. Double-clicking Markdown now imports it into the current vault and opens it in Obsidian.",
+  "打开器已安装。请在已打开的 Finder 中按 Command-I，选择 KnowGrove Markdown Opener，再点“全部更改”。": "The opener is installed. In the Finder window that opened, press Command-I, choose KnowGrove Markdown Opener, and select Change All.",
+  "已恢复原来的默认 Markdown 应用。KnowGrove 打开器仍保留，可随时重新启用。": "Restored the previous default Markdown app. The KnowGrove opener remains installed and can be enabled again at any time.",
+  "该默认打开能力当前仅支持 macOS；设置已保存，但不会修改系统文件关联。": "Default Markdown handling currently supports macOS only. The setting was saved, but system file associations were not changed.",
+  "已开启。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。": "Enabled. Double-clicking Markdown now imports it into the current vault and opens it in Obsidian.",
+  "功能已开启，打开器也已安装。请在 Finder 中完成“打开方式 → 全部更改”。": "The feature and opener are enabled. Complete Open with → Change All in Finder.",
+  "功能已关闭。请在 Finder 中选择原应用并点击“全部更改”以完成系统恢复。": "The feature is off. Choose the previous app in Finder and select Change All to finish restoring the system association.",
+  "功能已关闭，并已恢复原来的默认 Markdown 应用。": "The feature is off and the previous default Markdown app has been restored.",
+  "功能已关闭；KnowGrove 打开器不会再导入 Markdown。": "The feature is off. The KnowGrove opener will no longer import Markdown.",
+  "已开启：后续导入校验成功后，库外原文件会移到废纸篓。": "Enabled. After future imports are verified, external source files will move to Trash.",
+  "已关闭：后续导入会保留库外原文件。": "Disabled. Future imports will keep the external source file.",
   "读到文末自动标记已读": "Mark as read at the end",
   "在文末停留后自动完成；编辑文字时会暂停，避免误判。": "Mark a note as read after you remain at the end. Pauses while editing to avoid false positives.",
   "文章标题添加日期": "Add date to article titles",
@@ -60,6 +94,8 @@ const ENGLISH: Record<string, string> = {
   "默认 3 秒，用于避免快速滑过时误标已读。": "Defaults to 3 seconds to avoid marking a note as read while scrolling past.",
   "主题列表": "Topic list",
   "默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。": "On by default. Shows all topics in the left sidebar. Turning it off only hides the entry and never changes topic properties.",
+  "文档浮动层级定位锚点": "Floating document outline anchors",
+  "默认开启。在文档阅读区左侧边缘显示极简浮动锚点轨。仅在文档包含标题层级时展示，鼠标悬停可预览标题，点击可快速跳转定位，滚动时实时跟随阅读位置。": "On by default. Displays a minimal floating outline rail along the left edge of the document reading area. Visible only when the document has headings; hover to preview heading, click to jump, and syncs automatically with current scroll position.",
   "附件冗余检测": "Orphaned attachment check",
   "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。": "Tracks only attachments previously used by notes and alerts when the last reference is removed. Never treats never-referenced files as cleanup candidates.",
   "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。": "Checks only notes you just created, edited, moved, or deleted. Alerts when an attachment loses its last reference. Never scans the full vault at startup or treats never-referenced files as cleanup candidates.",
@@ -174,6 +210,19 @@ const ENGLISH: Record<string, string> = {
   "打开阅读列表": "Open reading list",
   "打开主题": "Open topics",
   "打开工作台": "Open workspace",
+  "浏览器 cookie 来源": "Browser cookie source",
+  "配置下载组件读取 cookie 的模式。推荐使用“自动优先探测”，优先静默复用本机已登录的浏览器会话。": "Configures how the downloader accesses cookies. “Automatic detection” is recommended to seamlessly reuse existing browser sessions on this computer.",
+  "平台登录授权与状态管理": "Platform login authorization & status",
+  "各平台登录授权状态": "Platform login authorization status",
+  "重新登录": "Log in again",
+  "解除授权": "Revoke authorization",
+  "一键登录授权": "One-click login authorization",
+  "我已完成登录": "I have completed login",
+  "未能检测到有效的登录会话，请在上方页面中完成登录后重试": "No valid login session was detected. Please complete login in the page above and try again.",
+  "清空所有平台授权": "Clear all platform authorizations",
+  "删除本地保存的所有平台登录凭据与授权状态。": "Deletes all locally saved platform credentials and authorization states.",
+  "清空全部授权": "Clear all authorizations",
+  "已清空所有平台的登录凭据与授权状态": "Cleared all platform credentials and authorization states",
   "存链接": "Save links",
   "批量存链接": "Save links in batch",
   "录音": "Record",
@@ -304,6 +353,7 @@ const ENGLISH: Record<string, string> = {
 
 const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> = {
   "zh-TW": {
+    "言续": "言续", "言续设置": "言续設定",
     "大模型配置": "AI 模型設定", "属性管理": "屬性管理", "知识工作台": "知識工作區", "增强功能": "增強功能",
     "收集箱路径": "收集匣路徑", "自动整理新内容": "自動整理新內容", "阅读习惯设置": "閱讀習慣",
     "主题列表": "主題列表", "附件冗余检测": "孤立附件檢查", "附件随笔记移动": "附件隨筆記移動", "自动整理附件": "自動整理附件", "共享附件处理": "共用附件處理", "附件与链接排除目录": "附件與連結排除資料夾", "额外附件格式": "其他附件格式", "最近文件依据": "最近檔案依據",
@@ -428,10 +478,19 @@ export function currentKnowGroveLocale(): KnowGroveLocale {
   return activeLocale;
 }
 
+export function knowGroveDisplayName(locale = currentKnowGroveLocale()): "言续" | "KnowGrove" {
+  return locale === "zh-CN" || locale === "zh-TW" ? "言续" : "KnowGrove";
+}
+
+function localizeBrandTokens(value: string, locale: KnowGroveLocale): string {
+  return value.replace(/KnowGrove|言序|言续/g, knowGroveDisplayName(locale));
+}
+
 export function translateKnowGroveText(source: string, locale = currentKnowGroveLocale()): string {
-  if (!source || locale === "zh-CN") return source;
+  if (!source) return source;
+  if (locale === "zh-CN") return localizeBrandTokens(source, locale);
   const exact = LOCAL_OVERRIDES[locale]?.[source] ?? ENGLISH[source];
-  if (exact) return exact;
+  if (exact) return localizeBrandTokens(exact, locale);
   const noteCount = source.match(/^(\d+)\s*篇$/);
   if (noteCount) return formatLocalizedCount(Number(noteCount[1]), "note", locale);
   const topicCount = source.match(/^(\d+)\s*个主题$/);
@@ -446,7 +505,7 @@ export function translateKnowGroveText(source: string, locale = currentKnowGrove
   ] as const) {
     if (source.startsWith(prefix)) return `${englishPrefix}${source.slice(prefix.length)}`;
   }
-  return source;
+  return localizeBrandTokens(source, locale);
 }
 
 function formatLocalizedCount(count: number, unit: "note" | "topic", locale: KnowGroveLocale): string {
@@ -497,6 +556,29 @@ const SKIP_LOCALIZATION_SELECTOR = [
   "[data-knowgrove-user-content]",
 ].join(",");
 
+export const KNOWGROVE_UI_ROOT_SELECTOR = [
+  ".knowgrove-settings",
+  ".knowgrove-modal",
+  ".knowgrove-property-matrix-shell",
+  ".knowgrove-property-issue-modal",
+  ".knowgrove-view",
+  ".knowgrove-topic-index-view",
+  ".knowgrove-creation-assistant",
+  ".knowgrove-comments-view",
+  ".knowgrove-theme-synthesis-modal",
+  ".knowgrove-property-workbench",
+  ".knowgrove-capture-modal",
+  ".knowgrove-capture-view",
+  ".knowgrove-recording-overlay",
+  ".knowgrove-attachment-cleanup-shell",
+  ".knowgrove-ai-batch-modal",
+  ".knowgrove-tooltip",
+].join(",");
+
+export function isKnowGroveUiElement(element: Element | null): boolean {
+  return Boolean(element?.closest(KNOWGROVE_UI_ROOT_SELECTOR));
+}
+
 function shouldSkip(element: Element | null): boolean {
   return Boolean(element?.closest(SKIP_LOCALIZATION_SELECTOR));
 }
@@ -522,7 +604,6 @@ function translateAttributes(element: Element, locale: KnowGroveLocale): void {
 }
 
 export function localizeKnowGroveElement(root: Node, locale = currentKnowGroveLocale()): void {
-  if (locale === "zh-CN") return;
   if (root.instanceOf(Element)) translateAttributes(root, locale);
   if (root.instanceOf(Text)) translateTextNode(root, locale);
   const document = root.ownerDocument ?? (root.instanceOf(Document) ? root : undefined);
@@ -538,16 +619,45 @@ export function localizeKnowGroveElement(root: Node, locale = currentKnowGroveLo
 
 export function installKnowGroveLocalization(document: Document): () => void {
   const locale = currentKnowGroveLocale();
-  if (locale === "zh-CN") return () => undefined;
-  localizeKnowGroveElement(document.body, locale);
-  const observer = new MutationObserver((mutations) => {
+  const rootObservers = new Map<Element, MutationObserver>();
+
+  const observeRoot = (root: Element): void => {
+    if (rootObservers.has(root)) return;
+    localizeKnowGroveElement(root, locale);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData") localizeKnowGroveElement(mutation.target, locale);
+        for (const node of Array.from(mutation.addedNodes)) localizeKnowGroveElement(node, locale);
+      }
+    });
+    observer.observe(root, { subtree: true, childList: true, characterData: true });
+    rootObservers.set(root, observer);
+  };
+
+  const discoverRoots = (node: Node): void => {
+    if (!node.instanceOf(Element)) return;
+    if (node.matches(KNOWGROVE_UI_ROOT_SELECTOR)) observeRoot(node);
+    node.querySelectorAll(KNOWGROVE_UI_ROOT_SELECTOR).forEach(observeRoot);
+  };
+
+  document.querySelectorAll(KNOWGROVE_UI_ROOT_SELECTOR).forEach(observeRoot);
+  const discoveryObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (mutation.type === "characterData") localizeKnowGroveElement(mutation.target, locale);
-      for (const node of Array.from(mutation.addedNodes)) localizeKnowGroveElement(node, locale);
+      if (mutation.type === "attributes") discoverRoots(mutation.target);
+      for (const node of Array.from(mutation.addedNodes)) discoverRoots(node);
     }
   });
-  observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-  return () => observer.disconnect();
+  discoveryObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  return () => {
+    discoveryObserver.disconnect();
+    for (const observer of rootObservers.values()) observer.disconnect();
+    rootObservers.clear();
+  };
 }
 
 export function knownEnglishTranslation(source: string): string | undefined {

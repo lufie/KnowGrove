@@ -1,6 +1,6 @@
 /*
- * 言序（KnowGrove）沿用 Obsidian 的排版与背景变量，
- * 品牌交互色与言序 App 统一为暖朱红 #F24B3F。
+ * 言续（KnowGrove）沿用 Obsidian 的排版与背景变量，
+ * 品牌交互色与言续 App 统一为暖朱红 #F24B3F。
  */
 
 :root {
@@ -5059,3 +5059,203 @@ button.knowgrove-recording-restore:focus-visible {
     display: none;
   }
 }
+
+.knowgrove-platform-login-desc {
+  margin-bottom: var(--size-4-3, 12px);
+}
+
+.knowgrove-platform-login-webview {
+  width: 100%;
+  height: 520px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 8px);
+  margin-bottom: var(--size-4-3, 12px);
+  background: var(--background-primary);
+}
+
+/* ==========================================================================
+   文档阅读区左侧浮动快捷定位锚点 (GPT 风格 Minimap TOC)
+   ========================================================================== */
+
+.knowgrove-anchor-container {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 15;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.knowgrove-anchor-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 18px 14px 6px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.knowgrove-anchor-node {
+  height: 2.5px;
+  width: var(--anchor-width, 10px);
+  margin-inline-start: var(--anchor-indent, 0px);
+  border-radius: 9999px;
+  background: var(--text-faint, #6b7280);
+  opacity: 0.35;
+  position: relative;
+  transition: width 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
+              height 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
+              background-color 0.16s ease,
+              opacity 0.16s ease,
+              box-shadow 0.16s ease;
+}
+
+.knowgrove-anchor-node.is-active {
+  background: var(--text-normal, #ffffff);
+  opacity: 0.85;
+  height: 2.5px;
+}
+
+.knowgrove-anchor-node.is-neighbor-3 {
+  background: var(--text-faint, #6b7280);
+  opacity: 0.55;
+}
+
+.knowgrove-anchor-node.is-neighbor-2 {
+  background: var(--text-muted, #9ca3af);
+  opacity: 0.7;
+  height: 2.5px;
+}
+
+.knowgrove-anchor-node.is-neighbor-1 {
+  background: var(--text-muted, #d1d5db);
+  opacity: 0.85;
+  height: 3px;
+}
+
+.knowgrove-anchor-node.is-hovered {
+  background: var(--text-normal, #ffffff) !important;
+  opacity: 1 !important;
+  height: 3.5px !important;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
+}
+
+.knowgrove-anchor-preview {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: var(--tooltip-top, 0px);
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--background-secondary-alt, #1e1e24);
+  color: var(--text-normal, #f3f4f6);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.1s ease, top 0.06s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0.1s ease;
+  z-index: 50;
+}
+
+.knowgrove-anchor-preview.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.knowgrove-anchor-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding-left: 2px;
+}
+
+.knowgrove-anchor-actions.is-hidden {
+  display: none !important;
+}
+
+.knowgrove-anchor-locate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-faint, #6b7280);
+  opacity: 0.45;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: all 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.knowgrove-anchor-locate-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 2;
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.knowgrove-anchor-locate-btn:hover {
+  opacity: 1;
+  color: var(--text-normal, #ffffff);
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.1));
+  transform: scale(1.15);
+}
+
+.knowgrove-anchor-locate-btn:hover svg {
+  transform: rotate(45deg);
+}
+
+.knowgrove-anchor-locate-btn:active,
+.knowgrove-anchor-locate-btn.is-active {
+  transform: scale(0.92);
+  color: var(--knowgrove-brand, #f24b3f);
+}
+
+/* ==========================================================================
+   文件列表定位脉冲高亮动效 (File Explorer Reveal Pulse)
+   ========================================================================== */
+
+@keyframes knowgrove-file-pulse {
+  0% {
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.4)) !important;
+    box-shadow: 0 0 10px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.45));
+  }
+  30% {
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.45)) !important;
+    box-shadow: 0 0 12px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.5));
+  }
+  70% {
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.2)) !important;
+    box-shadow: 0 0 6px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.25));
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.knowgrove-file-reveal-pulse {
+  animation: knowgrove-file-pulse 1.8s ease-out forwards !important;
+  border-radius: 4px;
+}
+
+
+
+

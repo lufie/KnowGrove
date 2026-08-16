@@ -18,4 +18,6 @@ import "./recent-files.test";
 import "./topic-index.test";
 import "./word-like-editing.test";
 import "./attachment-cleanup.test";
+import "./document-anchor.test";
+import "./external-markdown-opener.test";
 import "./i18n.test";

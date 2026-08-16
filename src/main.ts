@@ -52,6 +52,10 @@ import {
   type BrowserCaptureServerStatus,
 } from "./browser-capture-server";
 import {
+  runBrowserProviderWithHandoff,
+  type BrowserProviderRunResult,
+} from "./browser-provider-handoff";
+import {
   DESKTOP_RECORDER_VIEW_TYPE,
   DesktopRecorderView,
   DesktopRecordingOverlay,
@@ -74,6 +78,14 @@ import {
 } from "./capture-center-core";
 import { DesktopRecorderController } from "./desktop-recorder";
 import {
+  inspectExternalMarkdownOpener,
+  installExternalMarkdownOpener,
+  restorePreviousMarkdownHandler,
+  updateExternalMarkdownOpenerConfiguration,
+  type ExternalMarkdownOpenerInstallOptions,
+  type ExternalMarkdownOpenerStatus,
+} from "./external-markdown-opener";
+import {
   createBlockDragEditorExtension,
   createCommentEditorExtension,
   refreshCommentEditorDecorations,
@@ -91,6 +103,7 @@ import {
 import {
   cleanMarkdownBlankLines,
 } from "./blank-line-cleanup";
+import { DocumentAnchorManager } from "./document-anchor-navigator";
 import {
   KNOWGROVE_ROOT,
   LEGACY_READING_VIEW_TYPE,
@@ -436,10 +449,16 @@ export default class KnowGrovePlugin extends Plugin {
   private startupLinkNoteScanTimer?: number;
   private readonly automaticLinkNoteTimers = new Map<string, number>();
   private attachmentCleanupManager?: AttachmentCleanupManager;
+  private documentAnchorManager?: DocumentAnchorManager;
   private disposeLocalization?: () => void;
 
   async onload(): Promise<void> {
     await this.loadPluginData();
+    if (Platform.isDesktopApp) {
+      await this.syncExternalMarkdownOpenerConfiguration().catch((error) => {
+        console.error("KnowGrove: failed to refresh Markdown opener configuration", error);
+      });
+    }
     setKnowGroveLanguage(getLanguage());
     this.disposeLocalization = installKnowGroveLocalization(this.app.workspace.containerEl.ownerDocument);
     this.register(() => this.disposeLocalization?.());
@@ -454,9 +473,10 @@ export default class KnowGrovePlugin extends Plugin {
       getSettings: () => this.settings,
       saveSettings: () => this.savePluginData(),
       getProviders: (force) => this.getAIProviders(force),
-      runProvider: (provider, prompt) => this.runBrowserCaptureProvider(provider, prompt),
+      runProvider: (provider, prompt, signal) => this.runBrowserCaptureProvider(provider, prompt, signal),
       getSkillInstruction: (pageType) => this.getRuntimeSkillInstruction(pageType),
       suppressNewNoteInitialization: (path) => this.clearPendingNewNoteInitialization(path),
+      suppressAutomaticLinkNote: (path) => this.cancelAutomaticLinkNote(path),
       enrichCapturedFile: (file) => this.ensureNewNoteStatus(file),
     });
     this.desktopRecorder = new DesktopRecorderController({
@@ -474,6 +494,10 @@ export default class KnowGrovePlugin extends Plugin {
       this.register(() => this.recordingUiUnsubscribe?.());
     }
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
+    this.documentAnchorManager = new DocumentAnchorManager(this);
+    this.app.workspace.onLayoutReady(() => {
+      this.documentAnchorManager?.refreshAll();
+    });
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
       if (!nonce || !this.browserCaptureServer) {
@@ -805,6 +829,7 @@ export default class KnowGrovePlugin extends Plugin {
       this.refreshReadingViews();
       this.scheduleReferenceRepair(file);
       this.attachmentCleanupManager?.refreshSourceAfterMetadataChange(file);
+      this.documentAnchorManager?.refreshAll();
     }));
     this.registerEvent(this.app.workspace.on("quick-preview", (file) => {
       this.lastEditorChangeAt.set(file.path, Date.now());
@@ -813,13 +838,21 @@ export default class KnowGrovePlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
-      if (leaf?.view instanceof MarkdownView && leaf.view.file) this.refreshCommentSidebars(leaf.view.file.path);
+      if (leaf?.view instanceof MarkdownView && leaf.view.file) {
+        this.refreshCommentSidebars(leaf.view.file.path);
+        this.documentAnchorManager?.updateView(leaf.view);
+      }
     }));
     this.registerEvent(this.app.workspace.on("file-open", (file) => {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
       if (file) this.refreshCommentSidebars(file.path);
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (activeView) this.documentAnchorManager?.updateView(activeView);
       this.scheduleRecentFilesSection(30);
+    }));
+    this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.documentAnchorManager?.refreshAll();
     }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof TFile) || file.extension !== "md") return;
@@ -874,6 +907,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.recordingOverlay?.hide();
     this.runtimeInstallProgressListeners.clear();
     this.attachmentCleanupManager?.stop();
+    this.documentAnchorManager?.destroyAll();
     this.disposeLocalization?.();
     this.disposeLocalization = undefined;
     window.clearTimeout(this.startupRuntimeBootstrapTimer);
@@ -1391,6 +1425,10 @@ export default class KnowGrovePlugin extends Plugin {
       || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
     const legacyBrowserCapture = savedSettings?.browserCapture as unknown as Record<string, unknown> | undefined;
     const needsKeepAudioSourceMigration = legacyBrowserCapture?.keepAudioSource === false;
+    const legacyDesktopCapture = savedDesktopCapture as unknown as Record<string, unknown> | undefined;
+    const needsExternalMarkdownSettingsMigration = !legacyDesktopCapture
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownOpenerEnabled")
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownDeleteSourceAfterImport");
     const savedAIProvider = (savedAIProperties as { provider?: unknown } | undefined)?.provider;
     const normalizedAIProvider = normalizeAIProviderId(savedAIProvider, defaults.aiProperties.provider);
     const savedBrowserProviders = savedBrowserCapture as {
@@ -1522,6 +1560,7 @@ export default class KnowGrovePlugin extends Plugin {
       || needsRuleMigration
       || needsAutoProcessMigration
       || needsKeepAudioSourceMigration
+      || needsExternalMarkdownSettingsMigration
       || needsAIProviderMigration
       || needsFocusSettingsRemoval
     ) {
@@ -1816,6 +1855,41 @@ export default class KnowGrovePlugin extends Plugin {
       this.settings.browserCapture.mediaFolder.trim()
       || `${this.desktopLinkFolder()}/附件/音视频`,
     ).replace(/^\/+|\/+$/g, "");
+  }
+
+  private externalMarkdownFolder(): string {
+    return normalizePath(
+      this.settings.desktopCapture.externalMarkdownFolder.trim()
+      || this.desktopLinkFolder(),
+    ).replace(/^\/+|\/+$/g, "");
+  }
+
+  private externalMarkdownOpenerOptions(): ExternalMarkdownOpenerInstallOptions {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error("当前 Vault 不是本地文件系统");
+    return {
+      vaultPath: adapter.getFullPath(""),
+      destinationFolder: this.externalMarkdownFolder(),
+      enabled: this.settings.desktopCapture.externalMarkdownOpenerEnabled,
+      deleteSourceAfterImport: this.settings.desktopCapture.externalMarkdownDeleteSourceAfterImport,
+    };
+  }
+
+  async getExternalMarkdownOpenerStatus(): Promise<ExternalMarkdownOpenerStatus> {
+    return await inspectExternalMarkdownOpener();
+  }
+
+  async installExternalMarkdownOpener(): Promise<ExternalMarkdownOpenerStatus> {
+    return await installExternalMarkdownOpener(this.externalMarkdownOpenerOptions());
+  }
+
+  async syncExternalMarkdownOpenerConfiguration(): Promise<void> {
+    if (process.platform !== "darwin") return;
+    await updateExternalMarkdownOpenerConfiguration(this.externalMarkdownOpenerOptions());
+  }
+
+  async restorePreviousMarkdownHandler(): Promise<ExternalMarkdownOpenerStatus> {
+    return await restorePreviousMarkdownHandler();
   }
 
   getDesktopRecordingSnapshot(): DesktopRecordingSnapshot {
@@ -2225,8 +2299,8 @@ export default class KnowGrovePlugin extends Plugin {
     await this.browserCaptureServer?.resetPairing();
   }
 
-  private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<void> {
-    if (!this.browserCaptureServer) return;
+  private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<boolean> {
+    if (!this.browserCaptureServer) return false;
     try {
       const job = await this.browserCaptureServer.enqueueLinkNote(file, source);
       if (source === "manual") {
@@ -2243,10 +2317,12 @@ export default class KnowGrovePlugin extends Plugin {
           new Notice(error instanceof Error ? error.message : String(error), 7000);
         });
       }
+      return true;
     } catch (error) {
       if (source === "manual") {
         new Notice(`无法解析：${error instanceof Error ? error.message : String(error)}`, 7000);
       }
+      return false;
     }
   }
 
@@ -2273,8 +2349,9 @@ export default class KnowGrovePlugin extends Plugin {
         this.automaticLinkNoteTimers.delete(file.path);
         const current = this.app.vault.getAbstractFileByPath(file.path);
         if (!(current instanceof TFile)) return;
-        void this.parseLinkNote(current, "auto").catch(() => undefined);
-        if (remaining > 1) attempt(remaining - 1, 2_500);
+        void this.parseLinkNote(current, "auto").then((accepted) => {
+          if (!accepted && remaining > 1) attempt(remaining - 1, 2_500);
+        });
       }, delay);
       this.automaticLinkNoteTimers.set(file.path, timer);
     };
@@ -2374,20 +2451,33 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
-  private async runBrowserCaptureProvider(provider: AIProviderId, prompt: string): Promise<string> {
-    const availability = await this.getAIProviders();
-    const selected = availability.find((item) => item.id === provider);
-    if (!selected?.available) throw new Error(selected?.detail || `${providerName(provider)} 当前不可用`);
-    const base = this.settings.aiProperties;
-    const useSharedConfiguration = base.provider === provider;
-    return runAIProvider({
-      ...base,
-      provider,
-      model: useSharedConfiguration ? base.model : "",
-      executablePath: useSharedConfiguration ? base.executablePath : "",
-      endpoint: useSharedConfiguration ? base.endpoint : "",
-      timeoutSeconds: Math.max(900, base.timeoutSeconds),
-    }, prompt, availability, this.getAISecret(provider));
+  private async runBrowserCaptureProvider(
+    provider: AIProviderId,
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<BrowserProviderRunResult> {
+    try {
+      return await runBrowserProviderWithHandoff({
+        requestedProvider: provider,
+        getSettings: () => ({ ...this.settings.aiProperties }),
+        signal,
+        execute: async (configuration, runSignal, attempt) => {
+          const availability = await this.getAIProviders(attempt > 0);
+          const selected = availability.find((item) => item.id === configuration.provider);
+          if (!selected?.available) {
+            throw new Error(selected?.detail || `${providerName(configuration.provider)} 当前不可用`);
+          }
+          return runAIProvider({
+            ...configuration,
+            timeoutSeconds: Math.max(900, configuration.timeoutSeconds),
+          }, prompt, availability, this.getAISecret(configuration.provider), runSignal);
+        },
+      });
+    } catch (error) {
+      if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message}；整理未完成，请重新处理`);
+    }
   }
 
   supportsAISecretStorage(): boolean {
@@ -2914,6 +3004,10 @@ export default class KnowGrovePlugin extends Plugin {
         if (leaf.view instanceof ReadingListView) leaf.view.refresh();
       }
     }, 80);
+  }
+
+  refreshDocumentAnchors(): void {
+    this.documentAnchorManager?.refreshAll();
   }
 
   async activateReadingView(): Promise<void> {

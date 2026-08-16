@@ -1,5 +1,6 @@
 import {
   App,
+  ButtonComponent,
   FuzzySuggestModal,
   Modal,
   Notice,
@@ -25,6 +26,11 @@ import {
 import type { RuntimeInstallProgress } from "./runtime-manager";
 import { currentKnowGroveLocale, localizeKnowGroveElement } from "./i18n";
 import { normalizeAttachmentExtensions } from "./attachment-cleanup";
+
+import {
+  PlatformLoginModal,
+  PLATFORM_AUTH_CONFIGS,
+} from "./platform-login-modal";
 
 function cliExecutablePlaceholder(provider: AIProviderId): string {
   const placeholders: Partial<Record<AIProviderId, string>> = {
@@ -74,7 +80,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [{
-      name: "言序 KnowGrove 设置",
+      name: "言续设置",
       desc: "配置大模型、稍后阅读、属性管理、知识工作台与增强功能。",
       aliases: [
         "大模型配置", "模型选择", "Read It Later", "阅读列表", "浏览器剪藏", "手机剪藏",
@@ -191,6 +197,9 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           capture.inboxFolder = "";
           capture.watchFolder = "";
           await this.plugin.savePluginData();
+          await this.plugin.syncExternalMarkdownOpenerConfiguration().catch((error) => {
+            console.error("KnowGrove: failed to update Markdown opener configuration", error);
+          });
           this.plugin.refreshReadingViews();
         }));
 
@@ -200,6 +209,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       value: string,
       placeholder: string,
       save: (value: string) => void,
+      afterSave?: () => Promise<void>,
     ): void => {
       let input: HTMLInputElement | undefined;
       new Setting(containerEl)
@@ -213,6 +223,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
             .onChange(async (next) => {
               save(next.trim() ? normalizePath(next.trim()).replace(/^\/+|\/+$/g, "") : "");
               await this.plugin.savePluginData();
+              await afterSave?.();
             });
         })
         .addButton((button) => button
@@ -222,7 +233,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
               const next = normalizePath(folder.path).replace(/^\/+|\/+$/g, "");
               save(next);
               if (input) input.value = next;
-              void this.plugin.savePluginData();
+              void this.plugin.savePluginData().then(() => afterSave?.());
             }).open();
           }));
     };
@@ -241,6 +252,66 @@ export class KnowGroveSettingTab extends PluginSettingTab {
       `${settings.trackedFolder || "阅读列表"}/录音`,
       (value) => { desktopCapture.recordingFolder = value; },
     );
+    new Setting(containerEl)
+      .setName("默认用 Obsidian 打开 Markdown")
+      .setDesc("默认开启。开启后由 KnowGrove Mac 打开器接管 .md 和 .markdown；库外文件会先导入下方 Vault 路径，再在 Obsidian 打开。首次启用仍需在 Finder 确认“全部更改”。")
+      .addToggle((toggle) => toggle
+        .setValue(desktopCapture.externalMarkdownOpenerEnabled)
+        .onChange(async (value) => {
+          desktopCapture.externalMarkdownOpenerEnabled = value;
+          await this.plugin.savePluginData();
+          if (process.platform !== "darwin") {
+            new Notice("该默认打开能力当前仅支持 macOS；设置已保存，但不会修改系统文件关联。", 7000);
+            this.update();
+            return;
+          }
+          try {
+            if (value) {
+              const status = await this.plugin.installExternalMarkdownOpener();
+              new Notice(status.isDefault
+                ? "已开启。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。"
+                : "功能已开启，打开器也已安装。请在 Finder 中完成“打开方式 → 全部更改”。", 9000);
+            } else {
+              await this.plugin.syncExternalMarkdownOpenerConfiguration();
+              const current = await this.plugin.getExternalMarkdownOpenerStatus();
+              if (current.isDefault && current.previousHandlerPath) {
+                const restored = await this.plugin.restorePreviousMarkdownHandler();
+                new Notice(restored.isDefault
+                  ? "功能已关闭。请在 Finder 中选择原应用并点击“全部更改”以完成系统恢复。"
+                  : "功能已关闭，并已恢复原来的默认 Markdown 应用。", 9000);
+              } else {
+                new Notice("功能已关闭；KnowGrove 打开器不会再导入 Markdown。", 7000);
+              }
+            }
+          } catch (error) {
+            new Notice(`更新 Markdown 默认打开设置失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+          }
+          this.update();
+        }));
+    new Setting(containerEl)
+      .setName("导入成功后移除库外原文件")
+      .setDesc("默认开启。只有 Vault 内副本完整写入并校验成功后，才把库外原文件移到 macOS 废纸篓，可从废纸篓恢复；关闭则保留原文件。Vault 内文件永远不会因此删除。")
+      .addToggle((toggle) => toggle
+        .setValue(desktopCapture.externalMarkdownDeleteSourceAfterImport)
+        .onChange(async (value) => {
+          desktopCapture.externalMarkdownDeleteSourceAfterImport = value;
+          await this.plugin.savePluginData();
+          await this.plugin.syncExternalMarkdownOpenerConfiguration();
+          new Notice(value
+            ? "已开启：后续导入校验成功后，库外原文件会移到废纸篓。"
+            : "已关闭：后续导入会保留库外原文件。", 7000);
+        }));
+    addDesktopFolder(
+      "Markdown 默认导入路径",
+      "双击库外 Markdown 时先导入这个 Vault 相对路径，再在 Obsidian 中打开。留空时默认使用收集箱路径；不会覆盖同名笔记。",
+      desktopCapture.externalMarkdownFolder,
+      settings.trackedFolder || "阅读列表",
+      (value) => { desktopCapture.externalMarkdownFolder = value; },
+      async () => {
+        await this.plugin.syncExternalMarkdownOpenerConfiguration();
+      },
+    );
+    this.renderExternalMarkdownOpener(containerEl);
 
     new Setting(containerEl)
       .setName("浏览器授权")
@@ -285,6 +356,94 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
 
+  }
+
+  private renderExternalMarkdownOpener(containerEl: HTMLElement): void {
+    const openerEnabled = this.plugin.settings.desktopCapture.externalMarkdownOpenerEnabled;
+    const deleteSource = this.plugin.settings.desktopCapture.externalMarkdownDeleteSourceAfterImport;
+    let installButton!: ButtonComponent;
+    let restoreButton!: ButtonComponent;
+    const setting = new Setting(containerEl)
+      .setName("Mac Markdown 打开器状态")
+      .setDesc("正在检查系统默认应用与 KnowGrove 打开器状态。")
+      .addButton((button) => {
+        installButton = button;
+        button
+          .setButtonText("正在检查")
+          .setDisabled(true);
+      });
+    setting.addButton((button) => {
+      restoreButton = button;
+      button
+        .setButtonText("在访达中恢复")
+        .setDisabled(true);
+    });
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const status = await this.plugin.getExternalMarkdownOpenerStatus();
+        if (!status.supported) {
+          setting.setDesc("双击导入 Markdown 当前仅支持 macOS；其他平台不会修改默认打开方式。");
+          installButton.setButtonText("当前平台不可用").setDisabled(true);
+          restoreButton.setDisabled(true);
+          return;
+        }
+        if (!openerEnabled) {
+          setting.setDesc(status.isDefault
+            ? "功能已关闭，打开器也不会导入文件；macOS 仍把它列为默认应用，请点击右侧按钮并在 Finder 完成恢复。"
+            : "功能已关闭，KnowGrove 不会接管或导入双击的 Markdown。已有打开器保留，可随时重新开启。");
+          installButton.setButtonText("功能已关闭").setDisabled(true);
+          restoreButton.setDisabled(!status.isDefault || !status.previousHandlerPath);
+          return;
+        }
+        if (status.isDefault) {
+          setting.setDesc(deleteSource
+            ? "已启用并设为默认：库外 Markdown 导入并校验成功后，原文件会移到废纸篓；重名文件安全编号，Vault 内文件直接打开。"
+            : "已启用并设为默认：库外 Markdown 会复制到上方路径并保留原文件；重名文件安全编号，Vault 内文件直接打开。");
+          installButton.setButtonText("重新配置").setDisabled(false);
+        } else if (status.installed) {
+          setting.setDesc("打开器已安装，但当前不是默认 Markdown 应用。点击后会在访达中选中引导文件；打开文件简介，在“打开方式”选择 KnowGrove 打开器，再点“全部更改”。");
+          installButton.setButtonText("在访达中设置").setDisabled(false);
+        } else {
+          installButton.setButtonText("安装打开器").setDisabled(false);
+        }
+        restoreButton.setDisabled(!status.isDefault || !status.previousHandlerPath);
+      } catch (error) {
+        setting.setDesc(`检查 Mac 打开器失败：${error instanceof Error ? error.message : String(error)}`);
+        installButton.setButtonText("重试安装").setDisabled(false);
+        restoreButton.setDisabled(true);
+      }
+    };
+
+    installButton.onClick(async () => {
+      installButton.setButtonText("安装中…").setDisabled(true);
+      try {
+        const status = await this.plugin.installExternalMarkdownOpener();
+        new Notice(status.isDefault
+          ? "已设为默认。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。"
+          : "打开器已安装。请在已打开的 Finder 中按 Command-I，选择 KnowGrove Markdown Opener，再点“全部更改”。", 9000);
+      } catch (error) {
+        new Notice(`Mac 打开器安装失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+      }
+      await refresh();
+    });
+    restoreButton.onClick(async () => {
+      restoreButton.setDisabled(true);
+      try {
+        this.plugin.settings.desktopCapture.externalMarkdownOpenerEnabled = false;
+        await this.plugin.savePluginData();
+        await this.plugin.syncExternalMarkdownOpenerConfiguration();
+        const status = await this.plugin.restorePreviousMarkdownHandler();
+        const previousName = status.previousHandlerPath.split("/").filter(Boolean).pop() || "原应用";
+        new Notice(status.isDefault
+          ? `请在 Finder 的“打开方式”中选择 ${previousName} 并点击“全部更改”。`
+          : "已恢复原来的默认 Markdown 应用。KnowGrove 打开器仍保留，可随时重新启用。", 9000);
+      } catch (error) {
+        new Notice(`恢复默认应用失败：${error instanceof Error ? error.message : String(error)}`, 9000);
+      }
+      this.update();
+    });
+    void refresh();
   }
 
   private addClickableToggleSetting(
@@ -484,6 +643,18 @@ export class KnowGroveSettingTab extends PluginSettingTab {
   }
 
   private renderEnhancementSettings(containerEl: HTMLElement): void {
+    this.addClickableToggleSetting(
+      containerEl,
+      "文档浮动层级定位锚点",
+      "默认开启。在文档阅读区左侧边缘显示极简浮动锚点轨。仅在文档包含标题层级时展示，鼠标悬停可预览标题，点击可快速跳转定位，滚动时实时跟随阅读位置。",
+      this.plugin.settings.enableDocumentAnchors,
+      async (value) => {
+        this.plugin.settings.enableDocumentAnchors = value;
+        await this.plugin.savePluginData();
+        this.plugin.refreshDocumentAnchors();
+      },
+    );
+
     this.addClickableToggleSetting(
       containerEl,
       "主题列表",
@@ -1056,6 +1227,108 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.plugin.savePluginData();
         }));
     this.renderRuntimeEnvironment(section);
+    this.renderPlatformSessionSettings(section);
+  }
+
+  private renderPlatformSessionSettings(containerEl: HTMLElement): void {
+    const settings = this.plugin.settings.browserCapture;
+    const details = containerEl.createEl("details", { cls: "knowgrove-settings-details" });
+    details.createEl("summary", { text: "平台登录授权与状态管理" });
+    const section = details.createDiv("knowgrove-settings-details-content");
+
+    new Setting(section)
+      .setName("浏览器 cookie 来源")
+      .setDesc("配置下载组件读取 cookie 的模式。推荐使用“自动优先探测”，优先静默复用本机已登录的浏览器会话。")
+      .addDropdown((dropdown) => dropdown
+        .addOption("auto", "自动优先探测（推荐，静默复用本机浏览器会话）")
+        .addOption("extension", "扩展实时同步")
+        .addOption("chrome", "直接从本地 Chrome 浏览器读取")
+        .addOption("edge", "直接从本地 Edge 浏览器读取")
+        .addOption("safari", "直接从本地 Safari 浏览器读取")
+        .addOption("firefox", "直接从本地 Firefox 浏览器读取")
+        .addOption("disabled", "禁用外部 cookie")
+        .setValue(settings.browserCookieSource || "auto")
+        .onChange(async (value) => {
+          settings.browserCookieSource = value as "auto" | "extension" | "chrome" | "edge" | "safari" | "firefox" | "disabled";
+          await this.plugin.savePluginData();
+        }));
+
+    const savedSessions = settings.savedDomainSessions || {};
+
+    const listContainer = section.createDiv({ cls: "knowgrove-platform-list" });
+    new Setting(listContainer)
+      .setName("各平台登录授权状态")
+      .setHeading();
+
+    for (const p of Object.values(PLATFORM_AUTH_CONFIGS)) {
+      const match = savedSessions[p.domain] || savedSessions[`.${p.domain}`];
+      const hasCookies = Boolean(match?.cookies?.length);
+      const row = new Setting(listContainer)
+        .setName(p.name)
+        .setDesc(
+          hasCookies
+            ? `已授权 · 可直接解析高清与私密内容（最近更新：${new Date(match!.updatedAt).toLocaleDateString()}）`
+            : "未授权 · 当前使用公开/匿名模式解析",
+        );
+
+      if (hasCookies) {
+        row.addButton((btn) => btn
+          .setButtonText("重新登录")
+          .onClick(() => {
+            new PlatformLoginModal(this.app, p, (session) => {
+              void (async () => {
+                if (!settings.savedDomainSessions) settings.savedDomainSessions = {};
+                settings.savedDomainSessions[p.domain] = session;
+                await this.plugin.savePluginData();
+                this.update();
+              })();
+            }).open();
+          }));
+
+        row.addButton((btn) => btn
+          .setButtonText("解除授权")
+          .setDestructive()
+          .onClick(() => {
+            void (async () => {
+              delete savedSessions[p.domain];
+              delete savedSessions[`.${p.domain}`];
+              settings.savedDomainSessions = savedSessions;
+              await this.plugin.savePluginData();
+              new Notice(`已解除 ${p.name} 的登录授权`);
+              this.update();
+            })();
+          }));
+      } else {
+        row.addButton((btn) => btn
+          .setButtonText("一键登录授权")
+          .setCta()
+          .onClick(() => {
+            new PlatformLoginModal(this.app, p, (session) => {
+              void (async () => {
+                if (!settings.savedDomainSessions) settings.savedDomainSessions = {};
+                settings.savedDomainSessions[p.domain] = session;
+                await this.plugin.savePluginData();
+                this.update();
+              })();
+            }).open();
+          }));
+      }
+    }
+
+    new Setting(section)
+      .setName("清空所有平台授权")
+      .setDesc("删除本地保存的所有平台登录凭据与授权状态。")
+      .addButton((btn) => btn
+        .setButtonText("清空全部授权")
+        .setDestructive()
+        .onClick(() => {
+          void (async () => {
+            settings.savedDomainSessions = {};
+            await this.plugin.savePluginData();
+            new Notice("已清空所有平台的登录凭据与授权状态");
+            this.update();
+          })();
+        }));
   }
 
   private renderAIProperties(containerEl: HTMLElement): void {

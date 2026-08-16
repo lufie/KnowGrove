@@ -6,24 +6,30 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  buildWhisperPcmConversionArgs,
   browserCaptureChunkPrompt,
   browserCapturePrompt,
   browserCaptureSynthesisPrompt,
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   captureDatePrefix,
+  captureCancellationPlan,
+  CAPTURE_FILE_NAME_MAX_BYTES,
   cleanArticleMarkdown,
+  detectCaptureErrorShell,
   detectInterruptedCapture,
   detectLinkNoteCandidate,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   datedArticleTitle,
   extractJsonObject,
+  extractEmbeddedMediaCandidates,
   extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
   latestLinkNoteScanFiles,
   normalizeBrowserCaptureAIResult,
+  normalizeCaptureSessionCookies,
   parseSubtitleText,
   parseWebVtt,
   protectArticleImages,
@@ -32,11 +38,119 @@ import {
   sameCaptureResourceUrl,
   selectPreferredSubtitleFile,
   selectedCaptureProvider,
+  serializeNetscapeCookies,
+  selectApplePodcastEpisode,
   splitBrowserCaptureText,
   stripCaptureFrontmatter,
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
+  extractRootDomain,
+  matchDomainSessionCookies,
+  parseRawCookieString,
+  parseTikTokHtml,
+  parseXiguaHtml,
+  extractVimeoVideoId,
+  extractTencentVideoVid,
 } from "../src/browser-capture-core";
+import { runBrowserProviderWithHandoff } from "../src/browser-provider-handoff";
+import type { AIPropertySettings } from "../src/types";
+
+function providerSettings(
+  provider: AIPropertySettings["provider"],
+  model = "",
+): AIPropertySettings {
+  return {
+    enabled: true,
+    autoEnrichNewNotes: true,
+    provider,
+    model,
+    executablePath: "",
+    endpoint: "",
+    maxContentCharacters: 40_000,
+    timeoutSeconds: 900,
+  };
+}
+
+test("browser capture hands an in-flight prompt to a newly selected CLI", async () => {
+  let current = providerSettings("codex-cli", "gpt-old");
+  const attempts: string[] = [];
+  const resultPromise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (settings, signal) => {
+      attempts.push(`${settings.provider}:${settings.model}`);
+      if (settings.provider === "codebuddy-cli") return "new-provider-output";
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("old provider stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli", "buddy-new");
+  }, 25);
+  const result = await resultPromise;
+  assert.deepEqual(attempts, ["codex-cli:gpt-old", "codebuddy-cli:buddy-new"]);
+  assert.equal(result.output, "new-provider-output");
+  assert.equal(result.providerId, "codebuddy-cli");
+  assert.equal(result.handoffCount, 1);
+});
+
+test("browser capture does not retry a failed provider when configuration is unchanged", async () => {
+  const current = providerSettings("codex-cli", "gpt-same");
+  let attempts = 0;
+  await assert.rejects(
+    runBrowserProviderWithHandoff({
+      requestedProvider: "codex-cli",
+      getSettings: () => current,
+      pollIntervalMilliseconds: 10,
+      scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+      clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+      execute: async () => {
+        attempts += 1;
+        throw new Error("provider failed");
+      },
+    }),
+    /provider failed/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("browser capture cancellation wins over provider handoff", async () => {
+  const controller = new AbortController();
+  let current = providerSettings("codex-cli");
+  let attempts = 0;
+  const promise = runBrowserProviderWithHandoff({
+    requestedProvider: "codex-cli",
+    getSettings: () => current,
+    signal: controller.signal,
+    pollIntervalMilliseconds: 10,
+    scheduleInterval: (callback, milliseconds) => setInterval(callback, milliseconds),
+    clearScheduledInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+    execute: async (_settings, signal) => {
+      attempts += 1;
+      return await new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("stopped");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    },
+  });
+  globalThis.setTimeout(() => {
+    current = providerSettings("codebuddy-cli");
+    controller.abort();
+  }, 25);
+  await assert.rejects(promise, (error: unknown) => error instanceof Error && error.name === "AbortError");
+  assert.equal(attempts, 1);
+});
 
 test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://www.youtube.com/watch?v=1"), "video");
@@ -44,6 +158,149 @@ test("browser capture classifies common video hosts", () => {
   assert.equal(classifyBrowserCaptureUrl("https://example.com/article"), "article");
   assert.equal(classifyBrowserCaptureUrl("https://cdn.example.com/interview.m4a"), "audio");
   assert.equal(classifyBrowserCaptureUrl("https://podcasts.apple.com/cn/podcast/example/id1"), "audio");
+  assert.equal(classifyBrowserCaptureUrl("https://www.instagram.com/reel/example/"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://vimeo.com/56015672"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/sph/example"), "video");
+  assert.equal(classifyBrowserCaptureUrl("https://weixin.qq.com/article/example"), "article");
+});
+
+test("Apple Podcasts resolves a shared episode or the latest show episode to public audio", () => {
+  const results = [
+    { wrapperType: "track", kind: "podcast", trackId: 1894113824, trackName: "Top Five Tech" },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000783300456,
+      trackName: "Latest episode",
+      episodeUrl: "https://media.example.com/latest.mp3",
+    },
+    {
+      wrapperType: "podcastEpisode",
+      kind: "podcast-episode",
+      trackId: 1000779262450,
+      trackName: "Shared episode",
+      episodeUrl: "https://media.example.com/shared.mp3",
+    },
+  ];
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824", results),
+    { title: "Latest episode", mediaUrl: "https://media.example.com/latest.mp3" },
+  );
+  assert.deepEqual(
+    selectApplePodcastEpisode("https://podcasts.apple.com/us/podcast/show/id1894113824?i=1000779262450", results),
+    { title: "Shared episode", mediaUrl: "https://media.example.com/shared.mp3" },
+  );
+  assert.equal(selectApplePodcastEpisode("https://example.com/id1894113824", results), undefined);
+});
+
+test("articles with incidental embedded media stay articles while media candidates are inventoried", () => {
+  const html = [
+    "<article>",
+    `<p>${"正文内容".repeat(800)}</p>`,
+    '<video controls src="https://cdn.example.com/interview.mp4"></video>',
+    '<audio src="/episode.m4a"></audio>',
+    "</article>",
+  ].join("");
+  assert.equal(classifyBrowserCaptureResource("https://example.com/story", { html }), "article");
+  assert.deepEqual(extractEmbeddedMediaCandidates(html, "https://example.com/story"), [
+    { url: "https://cdn.example.com/interview.mp4", pageType: "video" },
+    { url: "https://example.com/episode.m4a", pageType: "audio" },
+  ]);
+});
+
+test("capture rejects expired login and verification shells", () => {
+  assert.equal(detectCaptureErrorShell({ text: "你访问的页面不见了" }), "页面内容不存在或已经失效");
+  assert.equal(detectCaptureErrorShell({ title: "安全验证", text: "请完成验证码后继续" }), "页面要求完成人机验证");
+  assert.equal(detectCaptureErrorShell({ text: "请先登录后查看这篇内容" }), "页面需要登录后才能读取内容");
+  assert.equal(detectCaptureErrorShell({ text: "这是一篇正常文章，讨论产品登录流程。".repeat(500) }), undefined);
+});
+
+test("browser session cookies are scoped to the current site and serialized ephemerally", () => {
+  const cookies = normalizeCaptureSessionCookies([
+    { domain: ".douyin.com", path: "/", name: "sessionid", value: "safe", secure: true, expirationDate: 2_000_000_000 },
+    { domain: ".example.com", path: "/", name: "secret", value: "blocked" },
+    { domain: ".douyin.com", path: "/", name: "bad", value: "line\nbreak" },
+  ], "https://www.douyin.com/video/1");
+  assert.equal(cookies.length, 1);
+  const serialized = serializeNetscapeCookies(cookies);
+  assert.match(serialized, /^# Netscape HTTP Cookie File/);
+  assert.match(serialized, /\.douyin\.com\tTRUE\t\/\tTRUE\t2000000000\tsessionid\tsafe/);
+  assert.doesNotMatch(serialized, /example|line/);
+});
+
+test("extractRootDomain and matchDomainSessionCookies support multiple platforms", () => {
+  assert.equal(extractRootDomain("https://www.xiaohongshu.com/explore/123"), "xiaohongshu.com");
+  assert.equal(extractRootDomain("https://xhslink.com/m/abc"), "xhslink.com");
+  assert.equal(extractRootDomain("https://v.douyin.com/xyz"), "douyin.com");
+  assert.equal(extractRootDomain("https://m.ixigua.com/video/789"), "ixigua.com");
+  assert.equal(extractRootDomain("https://player.vimeo.com/video/456"), "vimeo.com");
+  assert.equal(extractRootDomain("https://v.qq.com/x/cover/cid/vid.html"), "qq.com");
+
+  const sessions = {
+    "xiaohongshu.com": {
+      domain: "xiaohongshu.com",
+      cookies: [{ domain: ".xiaohongshu.com", path: "/", name: "web_session", value: "abc" }],
+      updatedAt: 1700000000000,
+    },
+    "douyin.com": {
+      domain: "douyin.com",
+      cookies: [{ domain: ".douyin.com", path: "/", name: "passport_csrf_token", value: "def" }],
+      userAgent: "CustomUA/1.0",
+      updatedAt: 1700000000000,
+    },
+  };
+
+  const matchedXhs = matchDomainSessionCookies(sessions, "https://www.xiaohongshu.com/discovery/item/666");
+  assert.equal(matchedXhs?.cookies.length, 1);
+  assert.equal(matchedXhs?.cookies[0]?.name, "web_session");
+
+  const matchedDouyin = matchDomainSessionCookies(sessions, "https://v.douyin.com/test");
+  assert.equal(matchedDouyin?.cookies[0]?.name, "passport_csrf_token");
+  assert.equal(matchedDouyin?.userAgent, "CustomUA/1.0");
+
+  const matchedUnknown = matchDomainSessionCookies(sessions, "https://example.com");
+  assert.equal(matchedUnknown, undefined);
+});
+
+test("parseRawCookieString correctly parses Netscape and cookie header formats", () => {
+  const headerFormat = "a_cookie=val1; b_cookie=val2; secure; HttpOnly";
+  const parsedHeader = parseRawCookieString(headerFormat, "tiktok.com");
+  assert.equal(parsedHeader.length, 2);
+  assert.equal(parsedHeader[0]?.name, "a_cookie");
+  assert.equal(parsedHeader[0]?.value, "val1");
+  assert.equal(parsedHeader[0]?.domain, ".tiktok.com");
+
+  const netscapeFormat = [
+    "# Netscape HTTP Cookie File",
+    ".bilibili.com\tTRUE\t/\tTRUE\t2000000000\tSESSDATA\txyz123",
+    ".bilibili.com\tTRUE\t/\tFALSE\t2000000000\tbili_jct\tabc456",
+  ].join("\n");
+  const parsedNetscape = parseRawCookieString(netscapeFormat, "bilibili.com");
+  assert.equal(parsedNetscape.length, 2);
+  assert.equal(parsedNetscape[0]?.name, "SESSDATA");
+  assert.equal(parsedNetscape[0]?.value, "xyz123");
+  assert.equal(parsedNetscape[1]?.name, "bili_jct");
+});
+
+test("platform resolvers parse TikTok, Xigua, Vimeo, and Tencent video metadata", () => {
+  const mockTikTokHtml = `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{"__DEFAULT_SCOPE__":{"webapp.video-detail":{"itemInfo":{"itemStruct":{"desc":"TikTok 创意测试视频","author":{"nickname":"创作者A"},"video":{"duration":60,"playAddr":"https://v.tiktok.com/play.mp4"},"music":{"playUrl":"https://v.tiktok.com/music.mp3"}}}}}}</script>`;
+  const tikTokMeta = parseTikTokHtml(mockTikTokHtml);
+  assert.equal(tikTokMeta?.title, "TikTok 创意测试视频");
+  assert.equal(tikTokMeta?.author, "创作者A");
+  assert.equal(tikTokMeta?.duration, 60);
+  assert.equal(tikTokMeta?.audioUrl, "https://v.tiktok.com/music.mp3");
+
+  const mockXiguaHtml = `<script>window._SSR_DATA = {"data":{"storeState":{"detail":{"videoData":{"result":{"title":"西瓜视频精选纪录片","duration":3600,"media_user":{"screen_name":"纪录片频道"}}}}}}};</script>`;
+  const xiguaMeta = parseXiguaHtml(mockXiguaHtml);
+  assert.equal(xiguaMeta?.title, "西瓜视频精选纪录片");
+  assert.equal(xiguaMeta?.author, "纪录片频道");
+  assert.equal(xiguaMeta?.duration, 3600);
+
+  const vimeoId = extractVimeoVideoId("https://vimeo.com/channels/staffpicks/56015672");
+  assert.equal(vimeoId, "56015672");
+
+  const tencentVid = extractTencentVideoVid("https://v.qq.com/x/cover/mzc00200l2l82c7/q326831cny0.html");
+  assert.equal(tencentVid, "q326831cny0");
 });
 
 test("generic capture resolves short links and detects media from response metadata", () => {
@@ -83,6 +340,23 @@ test("browser-rendered capture can target only a note with the same source URL",
     ),
     false,
   );
+});
+
+test("capture cancellation deletes only task-owned notes and attachments", () => {
+  assert.deepEqual(captureCancellationPlan({
+    createdNotePath: "Home/输入/任务.md",
+    createdAttachmentPaths: ["Home/输入/assets/a.png", "Home/输入/assets/a.png", "Home/输入/assets/b.m4a"],
+  }), {
+    trashPaths: ["Home/输入/assets/a.png", "Home/输入/assets/b.m4a", "Home/输入/任务.md"],
+    restoreTarget: false,
+  });
+  assert.deepEqual(captureCancellationPlan({
+    targetPath: "Home/输入/用户原有笔记.md",
+    createdAttachmentPaths: ["Home/输入/assets/task.png"],
+  }), {
+    trashPaths: ["Home/输入/assets/task.png"],
+    restoreTarget: true,
+  });
 });
 
 test("dynamic AI share pages recover question and answer text from embedded router data", () => {
@@ -267,7 +541,7 @@ test("KeepRec sparse capture template remains eligible for automatic organizatio
     "[打开原内容](<https://example.com/story>)",
     "",
     "## 整理",
-  ].join("\n"), "言序收集"), {
+  ].join("\n"), "言续收集"), {
     url: "https://example.com/story",
     title: "稍后整理的文章",
   });
@@ -343,6 +617,9 @@ test("video transcription supports both Whisper CLIs", () => {
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.m4a"), true);
   assert.equal(whisperNeedsPcmConversion("whisper-cpp", "/tmp/voice.wav"), false);
   assert.equal(whisperNeedsPcmConversion("openai-whisper", "/tmp/voice.m4a"), false);
+  assert.deepEqual(buildWhisperPcmConversionArgs("/tmp/voice.m4a", "/tmp/voice.wav"), [
+    "-y", "-i", "/tmp/voice.m4a", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "/tmp/voice.wav",
+  ]);
   assert.deepEqual(buildWhisperInvocation({
     implementation: "openai-whisper",
     audioPath: "/tmp/audio.mp3",
@@ -472,6 +749,13 @@ test("browser capture builds a completed note while retaining source", () => {
   assert.match(completed, /## 原文\n\n原始正文/);
   assert.match(completed, /## 内容摘要\n\n内容摘要/);
   assert.equal(safeCaptureFileName("a/b:c"), "a b c");
+});
+
+test("capture file names stay below the cross-platform UTF-8 byte limit", () => {
+  const fileName = safeCaptureFileName(`2026-08-15-${"超长中文标题".repeat(40)}.`);
+  assert.ok(new TextEncoder().encode(fileName).length <= CAPTURE_FILE_NAME_MAX_BYTES);
+  assert.doesNotMatch(fileName, /[. ]$/);
+  assert.ok(new TextEncoder().encode(`${fileName} 99.md`).length < 255);
 });
 
 test("article cleanup removes WeChat preamble, cover art, and footer noise", () => {
@@ -650,7 +934,7 @@ test("browser capture failure note leaves a final retryable state", () => {
     error: "net::ERR_CONNECTION_CLOSED",
   });
   assert.match(failed, /KnowGrove采集状态: "部分完成"/);
-  assert.match(failed, /重新打开来源页面后，可以再次点击言序重试/);
+  assert.match(failed, /重新打开来源页面后，可以再次点击言续重试/);
   assert.match(failed, /net::ERR_CONNECTION_CLOSED/);
   assert.doesNotMatch(failed, /KnowGrove 正在提取/);
 });

@@ -1,0 +1,21 @@
+[
+  { "platform": "微信公众号", "kind": "article", "mode": "public", "url": "https://mp.weixin.qq.com/s/aZEeBKNa-6moQW_I1Ixf-w" },
+  { "platform": "普通网页", "kind": "article", "mode": "public", "url": "https://www.anthropic.com/news/claude-opus-4-1" },
+  { "platform": "海外媒体", "kind": "article", "mode": "public", "url": "https://apnews.com/article/d92d0108730d146baa46da041b8523da" },
+  { "platform": "Medium", "kind": "article", "mode": "browser-rendered", "url": "https://medium.com/codetodeploy/i-built-a-public-ai-workflow-repository-without-writing-code-d21e00142ef9" },
+  { "platform": "X", "kind": "article", "mode": "public", "url": "https://x.com/elonmusk/status/1662292805312495618?lang=en" },
+  { "platform": "Bilibili", "kind": "video", "mode": "public", "url": "https://www.bilibili.com/video/BV1L24y1i7v3" },
+  { "platform": "YouTube", "kind": "video", "mode": "public", "url": "https://www.youtube.com/watch?v=rwF-X5STYks" },
+  { "platform": "腾讯视频", "kind": "video", "mode": "public", "url": "https://v.qq.com/x/page/q326831cny0.html" },
+  { "platform": "微博视频", "kind": "video", "mode": "public", "url": "https://weibo.com/tv/show/1034:4797699866951785?from=old_pc_videoshow" },
+  { "platform": "Vimeo", "kind": "video", "mode": "browser-rendered", "url": "https://vimeo.com/56015672" },
+  { "platform": "Dailymotion", "kind": "video", "mode": "public", "url": "https://www.dailymotion.com/video/x84sh87" },
+  { "platform": "SoundCloud", "kind": "audio", "mode": "public", "url": "https://soundcloud.com/user-554763457/short-composition-kevin-kellymusic-and-technology-podcast" },
+  { "platform": "Apple Podcasts", "kind": "audio", "mode": "apple-api", "url": "https://podcasts.apple.com/us/podcast/top-five-tech/id1894113824?i=1000772352959" },
+  { "platform": "小红书", "kind": "video", "mode": "browser-session", "url": "https://www.xiaohongshu.com/explore/6964ebb300000000220214c9" },
+  { "platform": "抖音", "kind": "video", "mode": "browser-session", "url": "https://www.douyin.com/video/7045232252812397864" },
+  { "platform": "TikTok", "kind": "video", "mode": "browser-session", "url": "https://www.tiktok.com/@officially_lunch2.0/video/6916040989090057477" },
+  { "platform": "Instagram", "kind": "video", "mode": "browser-session", "url": "https://www.instagram.com/reel/Chunk8-jurw/" },
+  { "platform": "西瓜视频", "kind": "video", "mode": "browser-session", "url": "https://www.ixigua.com/6996881461559165471" },
+  { "platform": "微信视频号", "kind": "video", "mode": "browser-session", "url": "https://weixin.qq.com/sph/AExvvHzwD" }
+]

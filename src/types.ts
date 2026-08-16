@@ -131,6 +131,24 @@ export interface CreationStudioSettings {
   imageAssetFolder: string;
 }
 
+export interface SavedDomainSession {
+  domain: string;
+  cookies: BrowserCaptureSessionCookie[];
+  userAgent?: string;
+  referer?: string;
+  updatedAt: number;
+}
+
+export interface BrowserCaptureSessionCookie {
+  domain: string;
+  path: string;
+  name: string;
+  value: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expirationDate?: number;
+}
+
 export interface BrowserCaptureSettings {
   enabled: boolean;
   port: number;
@@ -154,6 +172,8 @@ export interface BrowserCaptureSettings {
   whisperPath: string;
   whisperModel: string;
   accessToken: string;
+  savedDomainSessions: Record<string, SavedDomainSession>;
+  browserCookieSource: "auto" | "extension" | "chrome" | "edge" | "safari" | "firefox" | "disabled";
 }
 
 export interface DesktopCaptureSettings {
@@ -161,6 +181,12 @@ export interface DesktopCaptureSettings {
   linkFolder: string;
   /** 留空时使用“收集箱路径/录音”。 */
   recordingFolder: string;
+  /** 是否启用 macOS Markdown 默认打开器。 */
+  externalMarkdownOpenerEnabled: boolean;
+  /** 导入验证成功后，是否把 Vault 外源文件移到系统废纸篓。 */
+  externalMarkdownDeleteSourceAfterImport: boolean;
+  /** 留空时沿用阅读列表/收集箱路径。 */
+  externalMarkdownFolder: string;
 }
 
 export interface KnowGroveSettings {
@@ -184,6 +210,7 @@ export interface KnowGroveSettings {
   autoOrganizeAttachments: boolean;
   sharedAttachmentHandling: SharedAttachmentHandling;
   enableTopicIndex: boolean;
+  enableDocumentAnchors: boolean;
   lastAttachmentCleanupScanAt: number;
   recentFileMode: RecentFileMode;
   recentFileLimit: number;
@@ -436,6 +463,7 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   autoOrganizeAttachments: false,
   sharedAttachmentHandling: "skip",
   enableTopicIndex: true,
+  enableDocumentAnchors: true,
   lastAttachmentCleanupScanAt: 0,
   recentFileMode: "opened",
   recentFileLimit: 8,
@@ -469,10 +497,15 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
     whisperPath: "",
     whisperModel: "small",
     accessToken: "",
+    savedDomainSessions: {},
+    browserCookieSource: "auto",
   },
   desktopCapture: {
     linkFolder: "",
     recordingFolder: "",
+    externalMarkdownOpenerEnabled: true,
+    externalMarkdownDeleteSourceAfterImport: true,
+    externalMarkdownFolder: "",
   },
   aiProperties: {
     enabled: false,
