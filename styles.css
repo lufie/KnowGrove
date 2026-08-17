@@ -5256,6 +5256,602 @@ button.knowgrove-recording-restore:focus-visible {
   border-radius: 4px;
 }
 
+/* ==========================================================================
+   类 Word 编辑增强：表格列宽交互拖拽 (Table Column Resizing)
+   ========================================================================== */
+
+.knowgrove-resizable-table {
+  position: relative;
+}
+
+.knowgrove-table-fixed-layout {
+  table-layout: fixed !important;
+}
+
+.knowgrove-table-th {
+  position: relative !important;
+}
+
+.knowgrove-table-col-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 100;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.knowgrove-table-col-handle:hover,
+.knowgrove-table-col-handle:active {
+  background: var(--kg-primary, #8b5cf6);
+  border-radius: 2px;
+}
+
+.knowgrove-table-col-guide {
+  position: fixed;
+  width: 2px;
+  background: var(--kg-primary, #8b5cf6);
+  box-shadow: 0 0 8px var(--kg-primary-glow, rgba(139, 92, 246, 0.4));
+  pointer-events: none;
+  z-index: 99999;
+}
+
+/* ==========================================================================
+   类 Word 编辑增强：图片缩放、对齐与同行多图等高排版 (Image Layout Enhancements)
+   ========================================================================== */
+
+.knowgrove-enhanced-image-embed {
+  position: relative;
+  display: inline-block;
+  transition: box-shadow 0.18s ease;
+  vertical-align: middle;
+}
+
+.knowgrove-enhanced-image-embed img {
+  user-drag: none !important;
+  -webkit-user-drag: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.knowgrove-image-resizing {
+  display: inline-block !important;
+}
+
+.knowgrove-image-resizing img {
+  max-width: none !important;
+}
+
+.knowgrove-enhanced-image-embed:hover {
+  outline: 2px solid var(--kg-primary, #8b5cf6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* 快速对齐：靠左、居中、靠右 (独占整行，文字上下分布，绝不环绕) */
+.knowgrove-align-left,
+.knowgrove-enhanced-image-embed.knowgrove-align-left {
+  display: block !important;
+  float: none !important;
+  clear: both !important;
+  margin: 12px auto 12px 0 !important;
+}
+
+.knowgrove-align-center,
+.knowgrove-enhanced-image-embed.knowgrove-align-center {
+  display: block !important;
+  float: none !important;
+  clear: both !important;
+  margin: 12px auto !important;
+}
+
+.knowgrove-align-right,
+.knowgrove-enhanced-image-embed.knowgrove-align-right {
+  display: block !important;
+  float: none !important;
+  clear: both !important;
+  margin: 12px 0 12px auto !important;
+}
+
+/* 被拖拽中的原始图片样式 */
+.knowgrove-image-being-dragged {
+  opacity: 0.35 !important;
+  filter: grayscale(40%) !important;
+  outline: 2px dashed var(--kg-primary, #8b5cf6) !important;
+  outline-offset: 4px !important;
+}
+
+/* 随光标移动的微缩预览卡片 (Drag Ghost) */
+.knowgrove-image-drag-ghost {
+  position: fixed;
+  z-index: 100005 !important;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--kg-surface-overlay, rgba(20, 20, 26, 0.95));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid var(--kg-primary, #8b5cf6);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 16px var(--kg-primary-glow, rgba(139, 92, 246, 0.5));
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.knowgrove-image-drag-ghost img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.knowgrove-ghost-label {
+  color: var(--text-normal, #f3f4f6);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 跨行插入指示线 (Drop Indicator Line) - 0ms 无延迟即时吸附 */
+.knowgrove-image-drop-indicator {
+  position: fixed;
+  height: 3px;
+  background: var(--kg-primary, #8b5cf6);
+  border-radius: 2px;
+  box-shadow: 0 0 10px var(--kg-primary-glow, rgba(139, 92, 246, 0.9)), 0 0 4px #ffffff;
+  pointer-events: none;
+  z-index: 100004 !important;
+  display: none;
+  transition: none !important;
+}
+
+.knowgrove-image-drop-indicator.is-active {
+  display: block !important;
+}
+
+.knowgrove-drop-indicator-dot {
+  position: absolute;
+  top: -4px;
+  width: 11px;
+  height: 11px;
+  background: var(--kg-primary, #8b5cf6);
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--kg-primary-glow, rgba(139, 92, 246, 0.9));
+}
+
+.knowgrove-drop-indicator-dot.left {
+  left: -5px;
+}
+
+.knowgrove-drop-indicator-dot.right {
+  right: -5px;
+}
+
+body.knowgrove-reorder-dragging,
+body.knowgrove-reorder-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* ==========================================================================
+   KnowGrove Root Image Adorner Layer (全局独立图片选框浮层)
+   ========================================================================== */
+
+.knowgrove-image-adorner {
+  position: fixed;
+  pointer-events: auto !important;
+  cursor: grab !important;
+  z-index: 99999 !important;
+  box-sizing: border-box;
+  border: 2px solid var(--kg-primary, #8b5cf6);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25), 0 4px 16px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.knowgrove-image-adorner:active {
+  cursor: grabbing !important;
+}
+
+.knowgrove-image-adorner.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.knowgrove-image-adorner.is-resizing {
+  opacity: 1;
+  visibility: visible;
+  border-color: var(--kg-primary, #8b5cf6);
+  box-shadow: 0 0 12px var(--kg-primary-glow, rgba(139, 92, 246, 0.6));
+}
+
+/* 8 方位手柄 */
+.knowgrove-adorner-handle {
+  position: absolute;
+  pointer-events: auto !important;
+  box-sizing: border-box;
+  background: var(--kg-surface-card, #ffffff);
+  border: 2px solid var(--kg-primary, #8b5cf6);
+  border-radius: 50%;
+  z-index: 100000 !important;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.12s ease, background-color 0.12s ease;
+}
+
+/* 28px 隐形点击热区 */
+.knowgrove-adorner-handle::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  z-index: 100001 !important;
+}
+
+.knowgrove-adorner-handle:hover {
+  transform: scale(1.3);
+  background: var(--kg-primary, #8b5cf6);
+  border-color: #ffffff;
+}
+
+/* 4 个角手柄 (12x12px 圆形) */
+.knowgrove-adorner-handle-nw {
+  width: 12px;
+  height: 12px;
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize !important;
+}
+
+.knowgrove-adorner-handle-ne {
+  width: 12px;
+  height: 12px;
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize !important;
+}
+
+.knowgrove-adorner-handle-se {
+  width: 12px;
+  height: 12px;
+  bottom: -6px;
+  right: -6px;
+  cursor: nwse-resize !important;
+}
+
+.knowgrove-adorner-handle-sw {
+  width: 12px;
+  height: 12px;
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize !important;
+}
+
+/* 4 个边手柄 (药丸型 / 椭圆) */
+.knowgrove-adorner-handle-e {
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
+  top: 50%;
+  right: -4px;
+  transform: translateY(-50%);
+  cursor: ew-resize !important;
+}
+
+.knowgrove-adorner-handle-w {
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
+  top: 50%;
+  left: -4px;
+  transform: translateY(-50%);
+  cursor: ew-resize !important;
+}
+
+.knowgrove-adorner-handle-n {
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%);
+  cursor: ns-resize !important;
+}
+
+.knowgrove-adorner-handle-s {
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  cursor: ns-resize !important;
+}
+
+.knowgrove-adorner-handle-e:hover,
+.knowgrove-adorner-handle-w:hover {
+  transform: translateY(-50%) scale(1.25);
+}
+
+.knowgrove-adorner-handle-n:hover,
+.knowgrove-adorner-handle-s:hover {
+  transform: translateX(-50%) scale(1.25);
+}
+
+/* Adorner 悬浮工具栏 */
+.knowgrove-adorner-toolbar {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto !important;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  background: var(--kg-surface-overlay, rgba(24, 24, 28, 0.94));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--kg-border-subtle, rgba(255, 255, 255, 0.15));
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  z-index: 100002 !important;
+  white-space: nowrap;
+}
+
+.knowgrove-adorner-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #a1a1aa);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.knowgrove-adorner-btn:hover {
+  background: var(--kg-primary-subtle, rgba(139, 92, 246, 0.25));
+  color: var(--text-normal, #ffffff);
+}
+
+.knowgrove-adorner-sep {
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 2px;
+}
+
+/* Adorner 尺寸气泡 */
+.knowgrove-adorner-badge {
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  z-index: 100002 !important;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  white-space: nowrap;
+}
+
+.knowgrove-adorner-badge.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 拖拽手柄 (4角 + 2边缘) */
+.knowgrove-image-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--kg-surface-card, #ffffff);
+  border: 2.5px solid var(--kg-primary, #8b5cf6);
+  border-radius: 50%;
+  z-index: 10000 !important;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-sizing: border-box;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 扩展可点击热区 (Hit Target) 到 28px，确保鼠标无论怎么点都能轻松点中 */
+.knowgrove-image-handle::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  z-index: 10001 !important;
+}
+
+.knowgrove-enhanced-image-embed:hover .knowgrove-image-handle,
+.knowgrove-enhanced-image-embed.is-resizing .knowgrove-image-handle {
+  opacity: 1 !important;
+}
+
+.knowgrove-image-handle:hover {
+  transform: scale(1.25);
+  background: var(--kg-primary, #8b5cf6);
+  border-color: #ffffff;
+}
+
+.knowgrove-image-handle-nw {
+  left: -7px;
+  top: -7px;
+  cursor: nwse-resize !important;
+}
+
+.knowgrove-image-handle-ne {
+  right: -7px;
+  top: -7px;
+  cursor: nesw-resize !important;
+}
+
+.knowgrove-image-handle-se {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize !important;
+}
+
+.knowgrove-image-handle-sw {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+
+.knowgrove-image-handle-e {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+  border-radius: 3px;
+  height: 16px;
+  width: 8px;
+}
+
+.knowgrove-image-handle-w {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+  border-radius: 3px;
+  height: 16px;
+  width: 8px;
+}
+
+.knowgrove-image-handle:hover {
+  transform: scale(1.25);
+  background: var(--kg-primary, #8b5cf6);
+}
+
+.knowgrove-image-handle-e:hover,
+.knowgrove-image-handle-w:hover {
+  transform: translateY(-50%) scale(1.2);
+}
+
+/* 尺寸指示器气泡 */
+.knowgrove-image-dimension-badge {
+  position: fixed;
+  transform: translate(-50%, 0);
+  padding: 4px 10px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  z-index: 100000;
+}
+
+/* 悬浮快捷工具栏 (Claude/Vercel 毛玻璃设计) */
+.knowgrove-image-toolbar {
+  position: absolute;
+  top: -42px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--kg-surface-overlay, rgba(30, 30, 36, 0.92));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--kg-border-subtle, rgba(255, 255, 255, 0.15));
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 300;
+}
+
+.knowgrove-enhanced-image-embed:hover .knowgrove-image-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.knowgrove-image-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9ca3af);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.knowgrove-image-btn:hover {
+  background: var(--kg-primary-subtle, rgba(139, 92, 246, 0.25));
+  color: var(--text-normal, #ffffff);
+}
+
+.knowgrove-image-toolbar-sep {
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 2px;
+}
+
+/* 同行多图并排与等高画廊网格 (Multi-Image Equal-Height Grid) */
+.knowgrove-image-row {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  gap: 12px !important;
+  align-items: stretch !important;
+  margin: 14px 0 !important;
+}
+
+.knowgrove-image-row-equal-height .image-embed {
+  flex: 1 1 auto;
+  display: flex !important;
+  justify-content: center;
+  height: var(--knowgrove-row-height, 240px) !important;
+  width: auto !important;
+  max-width: 100% !important;
+}
+
+.knowgrove-image-row-equal-height .image-embed img {
+  height: 100% !important;
+  width: auto !important;
+  max-width: 100% !important;
+  object-fit: cover !important;
+  border-radius: 8px !important;
+}
+
 
 
 

@@ -272,7 +272,9 @@ export class DesktopRecorderView extends ItemView {
       void this.importMediaFiles(Array.from(event.dataTransfer?.files ?? []));
     });
     input.addEventListener("change", () => {
-      void this.importMediaFiles(Array.from(input.files ?? []));
+      const selected = Array.from(input.files ?? []);
+      input.value = "";
+      void this.importMediaFiles(selected);
     });
 
     const results = section.createDiv("knowgrove-media-import-results");

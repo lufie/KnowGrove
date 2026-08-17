@@ -6,6 +6,7 @@ import {
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   buildWhisperInvocation,
+  whisperLanguageFromLocale,
   buildWhisperPcmConversionArgs,
   browserCaptureChunkPrompt,
   browserCapturePrompt,
@@ -630,6 +631,10 @@ test("video transcription supports both Whisper CLIs", () => {
       "/tmp/audio.mp3",
       "--model",
       "small",
+      "--language",
+      "zh",
+      "--task",
+      "transcribe",
       "--output_format",
       "txt",
       "--output_dir",
@@ -649,7 +654,8 @@ test("video transcription supports both Whisper CLIs", () => {
       "-f",
       "/tmp/audio.mp3",
       "-l",
-      "auto",
+      "zh",
+      "-sns",
       "-otxt",
       "-of",
       "/tmp/output/transcript",
@@ -938,3 +944,89 @@ test("browser capture failure note leaves a final retryable state", () => {
   assert.match(failed, /net::ERR_CONNECTION_CLOSED/);
   assert.doesNotMatch(failed, /KnowGrove 正在提取/);
 });
+
+test("detectLocalMediaNoteCandidate matches mixed short and full media paths", () => {
+  const noteWithFullAndShortPaths = [
+    "---",
+    '文件名: "朝阳区"',
+    '内容类型: "语音"',
+    'audio: "[[Home/📬输入/附件/音视频/朝阳区.m4a]]"',
+    '采集时间: "2026-08-17T14:02:00.000Z"',
+    'KnowGrove采集状态: "待处理"',
+    "---",
+    "",
+    "# 朝阳区",
+    "",
+    "![[朝阳区.m4a]]",
+    "",
+  ].join("\n");
+
+  const candidate = detectLinkNoteCandidate(noteWithFullAndShortPaths, "朝阳区");
+  assert.equal(candidate.title, "朝阳区");
+});
+
+test("whisperLanguageFromLocale maps locale to correct whisper language code", () => {
+  assert.equal(whisperLanguageFromLocale("zh-CN"), "zh");
+  assert.equal(whisperLanguageFromLocale("zh-TW"), "zh");
+  assert.equal(whisperLanguageFromLocale("zh"), "zh");
+  assert.equal(whisperLanguageFromLocale("en"), "en");
+  assert.equal(whisperLanguageFromLocale("ja"), "ja");
+  assert.equal(whisperLanguageFromLocale("ko"), "ko");
+  assert.equal(whisperLanguageFromLocale("de"), "de");
+  assert.equal(whisperLanguageFromLocale(undefined), "zh");
+});
+
+test("buildWhisperInvocation configures explicit language and non-speech suppression", () => {
+  const cppInvocation = buildWhisperInvocation({
+    implementation: "whisper-cpp",
+    audioPath: "/tmp/audio.wav",
+    outputDirectory: "/tmp/out",
+    model: "small",
+    cppModelPath: "/models/ggml-small.bin",
+    language: "zh",
+  });
+  assert.deepEqual(cppInvocation.args, [
+    "-m",
+    "/models/ggml-small.bin",
+    "-f",
+    "/tmp/audio.wav",
+    "-l",
+    "zh",
+    "-sns",
+    "-otxt",
+    "-of",
+    "/tmp/out/transcript",
+    "-np",
+  ]);
+
+  const pythonInvocation = buildWhisperInvocation({
+    implementation: "whisper",
+    audioPath: "/tmp/audio.wav",
+    outputDirectory: "/tmp/out",
+    model: "small",
+    language: "zh",
+  });
+  assert.deepEqual(pythonInvocation.args, [
+    "/tmp/audio.wav",
+    "--model",
+    "small",
+    "--language",
+    "zh",
+    "--task",
+    "transcribe",
+    "--output_format",
+    "txt",
+    "--output_dir",
+    "/tmp/out",
+  ]);
+});
+
+test("formatTranscriptParagraphs strips non-speech noise characters and subtitle noise", () => {
+  const rawWithNoise = "වවවවවවවව MING PAO CANADA | MING PAO TORONTO\n你好，请做一个简单的自我介绍。\n好的，稍等一分钟。";
+  const formatted = formatTranscriptParagraphs(rawWithNoise);
+  assert.doesNotMatch(formatted, /වවව/);
+  assert.doesNotMatch(formatted, /MING PAO/);
+  assert.match(formatted, /你好，请做一个简单的自我介绍/);
+  assert.match(formatted, /好的，稍等一分钟/);
+});
+

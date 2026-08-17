@@ -318,6 +318,8 @@ import {
   type KnowGroveSettings,
   type ReferenceRecord,
 } from "./types";
+import { TableResizer } from "./table-resizer";
+import { ImageLayoutEnhancer } from "./image-layout-enhancer";
 
 const NEW_NOTE_SETTLE_MILLISECONDS = 650;
 const NEW_NOTE_IMPORT_WINDOW_MILLISECONDS = 15_000;
@@ -450,6 +452,8 @@ export default class KnowGrovePlugin extends Plugin {
   private readonly automaticLinkNoteTimers = new Map<string, number>();
   private attachmentCleanupManager?: AttachmentCleanupManager;
   private documentAnchorManager?: DocumentAnchorManager;
+  private tableResizer?: TableResizer;
+  private imageLayoutEnhancer?: ImageLayoutEnhancer;
   private disposeLocalization?: () => void;
 
   async onload(): Promise<void> {
@@ -495,8 +499,12 @@ export default class KnowGrovePlugin extends Plugin {
     }
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
     this.documentAnchorManager = new DocumentAnchorManager(this);
+    this.tableResizer = new TableResizer(this);
+    this.imageLayoutEnhancer = new ImageLayoutEnhancer(this);
     this.app.workspace.onLayoutReady(() => {
       this.documentAnchorManager?.refreshAll();
+      this.tableResizer?.scanAndBindTables();
+      this.imageLayoutEnhancer?.scanAndEnhanceImages();
     });
     this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
@@ -908,6 +916,8 @@ export default class KnowGrovePlugin extends Plugin {
     this.runtimeInstallProgressListeners.clear();
     this.attachmentCleanupManager?.stop();
     this.documentAnchorManager?.destroyAll();
+    this.tableResizer?.destroy();
+    this.imageLayoutEnhancer?.destroy();
     this.disposeLocalization?.();
     this.disposeLocalization = undefined;
     window.clearTimeout(this.startupRuntimeBootstrapTimer);
@@ -2046,6 +2056,8 @@ export default class KnowGrovePlugin extends Plugin {
         this.clearPendingNewNoteInitialization(note.path);
         this.cancelAutomaticLinkNote(note.path);
         await this.ensureNewNoteStatus(note, { skipAI: true });
+        this.clearPendingNewNoteInitialization(note.path);
+        this.cancelAutomaticLinkNote(note.path);
         const job = await this.browserCaptureServer.enqueueLinkNote(note, "manual");
         files.push(note);
         imported += 1;

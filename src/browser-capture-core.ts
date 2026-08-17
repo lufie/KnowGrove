@@ -919,8 +919,8 @@ export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): L
   };
 }
 
-const LOCAL_VIDEO_EXTENSION = /\.(?:mp4|mov|mkv|m4v)$/i;
-const LOCAL_MEDIA_EXTENSION = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm|mp4|mov|mkv|m4v)$/i;
+export const LOCAL_VIDEO_EXTENSION = /\.(?:mp4|mov|mkv|m4v)$/i;
+export const LOCAL_MEDIA_EXTENSION = /\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm|mp4|mov|mkv|m4v)$/i;
 
 function detectLocalMediaNoteCandidate(
   markdown: string,
@@ -937,8 +937,11 @@ function detectLocalMediaNoteCandidate(
   if (frontmatterMedia && LOCAL_MEDIA_EXTENSION.test(frontmatterMedia)) {
     embeddedMedia.push(frontmatterMedia);
   }
-  const mediaPaths = Array.from(new Set(embeddedMedia));
-  if (mediaPaths.length !== 1) return null;
+  if (embeddedMedia.length === 0) return null;
+
+  // Deduplicate by normalized basename so full vault path and short wikilink match the same media file
+  const uniqueNames = new Set(embeddedMedia.map((p) => p.split("/").pop()?.toLowerCase() || p.toLowerCase()));
+  if (uniqueNames.size !== 1) return null;
 
   const withoutTemplate = body
     .replace(/!\[\[[^\]]+]]/g, " ")
@@ -950,11 +953,12 @@ function detectLocalMediaNoteCandidate(
   if (withoutTemplate.length > 120 || body.length > 1_500) return null;
 
   const heading = body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const mediaPath = embeddedMedia[0]!;
   return {
     url: "",
     title: normalizedLinkNoteTitle(heading || fallbackTitle, ""),
-    pageType: LOCAL_VIDEO_EXTENSION.test(mediaPaths[0]!) ? "video" : "audio",
-    mediaPath: mediaPaths[0]!,
+    pageType: LOCAL_VIDEO_EXTENSION.test(mediaPath) ? "video" : "audio",
+    mediaPath,
   };
 }
 
@@ -1058,13 +1062,30 @@ export function buildWhisperPcmConversionArgs(inputPath: string, outputPath: str
   ];
 }
 
+export function whisperLanguageFromLocale(locale?: string): string {
+  const norm = String(locale ?? "").trim().toLowerCase();
+  if (norm.startsWith("zh")) return "zh";
+  if (norm.startsWith("en")) return "en";
+  if (norm.startsWith("ja")) return "ja";
+  if (norm.startsWith("ko")) return "ko";
+  if (norm.startsWith("de")) return "de";
+  if (norm.startsWith("fr")) return "fr";
+  if (norm.startsWith("es")) return "es";
+  if (norm.startsWith("pt")) return "pt";
+  if (norm.startsWith("ru")) return "ru";
+  if (norm.startsWith("it")) return "it";
+  return "zh";
+}
+
 export function buildWhisperInvocation(input: {
   implementation: WhisperImplementation;
   audioPath: string;
   outputDirectory: string;
   model: string;
   cppModelPath?: string;
+  language?: string;
 }): WhisperInvocation {
+  const language = input.language || "zh";
   if (input.implementation === "whisper-cpp") {
     if (!input.cppModelPath) throw new Error("whisper.cpp 缺少 GGML 模型文件");
     const transcriptStem = `${input.outputDirectory.replace(/[\\/]$/, "")}/transcript`;
@@ -1075,7 +1096,8 @@ export function buildWhisperInvocation(input: {
         "-f",
         input.audioPath,
         "-l",
-        "auto",
+        language,
+        "-sns",
         "-otxt",
         "-of",
         transcriptStem,
@@ -1089,6 +1111,10 @@ export function buildWhisperInvocation(input: {
       input.audioPath,
       "--model",
       input.model,
+      "--language",
+      language,
+      "--task",
+      "transcribe",
       "--output_format",
       "txt",
       "--output_dir",
@@ -1606,11 +1632,14 @@ function transcriptJoiner(left: string, right: string): string {
 }
 
 export function formatTranscriptParagraphs(source: string): string {
-  const fragments = source
+  const sanitized = source
+    .replace(/(?:[\p{Script=Sinhala}\p{Script=Telugu}\p{Script=Tamil}\p{Script=Devanagari}\p{Script=Gujarati}\p{Script=Bengali}]\s*){4,}/gu, " ")
+    .replace(/^.*?(?:MING PAO|字幕[製制作组]|未经许可|\(字幕).*?$/gim, " ");
+  const fragments = sanitized
     .replace(/\r\n/g, "\n")
     .split(/\n+/)
     .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+    .filter((line) => Boolean(line) && !/^(?:MING PAO|字幕[製制作组]|未经许可|\(字幕)/i.test(line));
   const merged: string[] = [];
   for (const fragment of fragments) {
     const previous = merged[merged.length - 1];

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createDefaultSettings } from "../src/types";
 import {
   findFencedCodeBlockRanges,
+  findMarkdownTableRanges,
   isStandaloneMediaBlock,
   taskListMarkerRange,
   wordLikeBackspaceEdit,
@@ -221,4 +222,39 @@ test("whole-block deletion collapses blank paragraphs on both sides to one", () 
   assert.equal(applyEdit(content, wordLikeBackspaceEdit(content, below)), "上文\n\n下文");
   const above = content.indexOf("\n\n") + 1;
   assert.equal(applyEdit(content, wordLikeDeleteEdit(content, above)), "上文\n\n下文");
+});
+
+test("recognizes Markdown table blocks as standalone components", () => {
+  const content = "前文\n| 姓名 | 年龄 |\n| --- | --- |\n| 张三 | 28 |\n后文";
+  const ranges = findMarkdownTableRanges(content);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.rowCount, 3);
+});
+
+test("backspace from the blank paragraph below a table removes the complete table block", () => {
+  const content = "上文\n| 姓名 | 年龄 |\n| --- | --- |\n| 张三 | 28 |\n\n下文";
+  const position = content.indexOf("|\n\n") + 2;
+  assert.equal(applyEdit(content, wordLikeBackspaceEdit(content, position)), "上文\n\n下文");
+});
+
+test("delete from the blank paragraph above a table removes the complete table block", () => {
+  const content = "上文\n\n| 姓名 | 年龄 |\n| --- | --- |\n| 张三 | 28 |\n下文";
+  const position = content.indexOf("\n\n") + 1;
+  assert.equal(applyEdit(content, wordLikeDeleteEdit(content, position)), "上文\n\n下文");
+});
+
+test("formats image wikilink with alignment and dimensions", () => {
+  const baseTarget = "assets/demo.png";
+  const align = "center";
+  const width = 450;
+  const height = 300;
+  const link = `![[${baseTarget}|${align}|${width}x${height}]]`;
+  assert.equal(link, "![[assets/demo.png|center|450x300]]");
+});
+
+test("detects multiple images on a single line for multi-image row", () => {
+  const singleLine = "![[img1.png]] ![[img2.png]] ![[img3.png]]";
+  const matches = singleLine.match(/!\[\[[^\]]+\]\]/g);
+  assert.ok(matches);
+  assert.equal(matches.length, 3);
 });
