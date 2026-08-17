@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Platform, TFile, normalizePath, requestUrl, type App } from "obsidian";
+import { FileSystemAdapter, getLanguage, Platform, TFile, normalizePath, requestUrl, type App } from "obsidian";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import * as http from "node:http";
@@ -22,6 +22,7 @@ import {
   browserCaptureSynthesisPrompt,
   captureCancellationPlan,
   buildWhisperInvocation,
+  whisperLanguageFromLocale,
   buildWhisperPcmConversionArgs,
   buildCaptureFailureNote,
   buildEnhancedCaptureNote,
@@ -33,6 +34,7 @@ import {
   detectInterruptedCapture,
   detectCaptureErrorShell,
   detectLinkNoteCandidate,
+  LOCAL_MEDIA_EXTENSION,
   detectWhisperImplementation,
   whisperNeedsPcmConversion,
   cleanArticleMarkdown,
@@ -267,10 +269,12 @@ function lastLine(value: string): string {
 }
 
 function systemCaptureOutputLocale(): KnowGroveLocale {
-  const language = typeof navigator !== "undefined"
-    ? navigator.languages?.[0] || navigator.language
-    : Intl.DateTimeFormat().resolvedOptions().locale;
-  return normalizeKnowGroveLocale(language || "en");
+  const language = typeof getLanguage === "function"
+    ? getLanguage()
+    : typeof navigator !== "undefined"
+      ? navigator.languages?.[0] || navigator.language
+      : Intl.DateTimeFormat().resolvedOptions().locale;
+  return normalizeKnowGroveLocale(language || "zh-CN");
 }
 
 async function downloadCaptureImage(url: string, referer: string, redirects = 0): Promise<{
@@ -1211,7 +1215,7 @@ export class BrowserCaptureServer {
           if (
             !candidate
             || candidate.url !== job.url
-            || (job.mediaPath && candidate.mediaPath !== job.mediaPath)
+            || (job.mediaPath && !this.isMatchingMediaPath(candidate.mediaPath, job.mediaPath, noteFile.path))
           ) {
             throw new Error("笔记在排队期间已经补写正文或更换链接，已停止自动覆盖");
           }
@@ -1246,12 +1250,12 @@ export class BrowserCaptureServer {
       } else {
         extracted = job.pageType === "video"
           ? job.mediaPath
-            ? await this.extractLocalMedia(job, noteFile.path, signal)
-            : this.capturedSources.get(id) ?? await this.extractVideo(job, signal)
+            ? await this.extractLocalMedia(job, noteFile.path, signal, outputLocale)
+            : this.capturedSources.get(id) ?? await this.extractVideo(job, signal, outputLocale)
           : job.pageType === "audio"
             ? job.mediaPath
-              ? await this.extractLocalMedia(job, noteFile.path, signal)
-              : await this.extractAudio(job, noteFile.path, signal)
+              ? await this.extractLocalMedia(job, noteFile.path, signal, outputLocale)
+              : await this.extractAudio(job, noteFile.path, signal, outputLocale)
             : this.capturedSources.get(id) ?? await this.extractArticle(job, signal);
         throwIfCaptureAborted(signal);
         this.capturedSources.delete(id);
@@ -1284,6 +1288,14 @@ export class BrowserCaptureServer {
             id,
             signal,
           );
+        } else {
+          const sourceTitle = extracted.title;
+          extracted.title = articleCaptureTitle(
+            sourceTitle,
+            this.articleDatePrefix(noteFile, extracted.publishedAt),
+            this.host.getSettings().browserCapture.prefixArticleTitleWithDate,
+          );
+          noteFile = await this.renameArticleToTitle(noteFile, extracted.title, id);
         }
         const rawNote = buildRawCaptureNote({
           pageType: job.pageType,
@@ -1892,8 +1904,8 @@ export class BrowserCaptureServer {
       });
       try {
         const result = candidate.pageType === "video"
-          ? await this.extractVideo(job, signal, candidate.url)
-          : await this.extractAudio(job, sourceNotePath, signal, candidate.url, false);
+          ? await this.extractVideo(job, signal, undefined, candidate.url)
+          : await this.extractAudio(job, sourceNotePath, signal, undefined, candidate.url, false);
         sections.push([
           `### ${result.title || candidate.label || (candidate.pageType === "video" ? "内嵌视频" : "内嵌音频")}`,
           "",
@@ -1921,6 +1933,7 @@ export class BrowserCaptureServer {
   private async extractVideo(
     job: BrowserCaptureJob,
     signal?: AbortSignal,
+    outputLocale?: KnowGroveLocale,
     urlOverride?: string,
   ): Promise<ExtractedSource> {
     throwIfCaptureAborted(signal);
@@ -2165,6 +2178,7 @@ export class BrowserCaptureServer {
         outputDirectory: directory,
         model,
         cppModelPath,
+        language: whisperLanguageFromLocale(outputLocale),
       });
       await this.updateJob(job.id, {
         progress: 40,
@@ -2203,22 +2217,48 @@ export class BrowserCaptureServer {
     }
   }
 
+  private isMatchingMediaPath(candidateMediaPath?: string, jobMediaPath?: string, sourceNotePath = ""): boolean {
+    if (!candidateMediaPath && !jobMediaPath) return true;
+    if (!candidateMediaPath || !jobMediaPath) return false;
+    const cNorm = normalizePath(candidateMediaPath.trim()).replace(/^\/+|\/+$/g, "");
+    const jNorm = normalizePath(jobMediaPath.trim()).replace(/^\/+|\/+$/g, "");
+    if (cNorm === jNorm) return true;
+    const cBase = cNorm.split("/").pop() || cNorm;
+    const jBase = jNorm.split("/").pop() || jNorm;
+    if (cBase.toLowerCase() === jBase.toLowerCase()) return true;
+
+    const file1 = this.host.app.metadataCache.getFirstLinkpathDest(cNorm, sourceNotePath)
+      ?? this.host.app.vault.getAbstractFileByPath(cNorm);
+    const file2 = this.host.app.metadataCache.getFirstLinkpathDest(jNorm, sourceNotePath)
+      ?? this.host.app.vault.getAbstractFileByPath(jNorm);
+    if (file1 instanceof TFile && file2 instanceof TFile && file1.path === file2.path) {
+      return true;
+    }
+    return false;
+  }
+
   private async extractLocalMedia(
     job: BrowserCaptureJob,
     sourceNotePath: string,
     signal?: AbortSignal,
+    outputLocale?: KnowGroveLocale,
   ): Promise<ExtractedSource> {
     throwIfCaptureAborted(signal);
     const linkPath = job.mediaPath?.trim() ?? "";
     if (!linkPath) throw new Error("本地媒体笔记没有可用的音视频引用");
     const linked = this.host.app.metadataCache.getFirstLinkpathDest(linkPath, sourceNotePath);
     const exact = this.host.app.vault.getAbstractFileByPath(normalizePath(linkPath));
+    const base = linkPath.split("/").pop() || linkPath;
+    const byBase = this.host.app.metadataCache.getFirstLinkpathDest(base, sourceNotePath)
+      ?? this.host.app.vault.getFiles().find((f) => f.name === base && LOCAL_MEDIA_EXTENSION.test(f.path));
     const mediaFile = linked instanceof TFile
       ? linked
       : exact instanceof TFile
         ? exact
-        : undefined;
-    if (!mediaFile || !/\.(?:mp3|m4a|wav|aac|flac|ogg|opus|webm|mp4|mov|mkv|m4v)$/i.test(mediaFile.path)) {
+        : byBase instanceof TFile
+          ? byBase
+          : undefined;
+    if (!mediaFile || !LOCAL_MEDIA_EXTENSION.test(mediaFile.path)) {
       throw new Error(`找不到本地音视频文件：${linkPath}`);
     }
 
@@ -2270,6 +2310,7 @@ export class BrowserCaptureServer {
         outputDirectory: directory,
         model,
         cppModelPath,
+        language: whisperLanguageFromLocale(outputLocale),
       });
       await this.updateJob(job.id, {
         progress: 38,
@@ -2311,6 +2352,7 @@ export class BrowserCaptureServer {
     job: BrowserCaptureJob,
     sourceNotePath: string,
     signal?: AbortSignal,
+    outputLocale?: KnowGroveLocale,
     urlOverride?: string,
     saveOriginal = true,
   ): Promise<ExtractedSource> {
@@ -2440,6 +2482,7 @@ export class BrowserCaptureServer {
         outputDirectory: directory,
         model,
         cppModelPath,
+        language: whisperLanguageFromLocale(outputLocale),
       });
       const whisperResult = await runLocalCommand(whisper, invocation.args, "", 90 * 60, signal);
       if (whisperResult.exitCode !== 0) {

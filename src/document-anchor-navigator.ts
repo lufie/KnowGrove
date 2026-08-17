@@ -358,6 +358,7 @@ export class DocumentAnchorWidget {
       const cm = (editor as unknown as { cm?: {
         state?: { doc?: { lines: number; line: (n: number) => { from: number } } };
         lineBlockAt?: (pos: number) => { top: number };
+        coordsAtPos?: (pos: number) => { top: number } | null;
         scrollDOM?: HTMLElement;
       } })?.cm;
 
@@ -365,24 +366,54 @@ export class DocumentAnchorWidget {
         const doc = cm.state.doc;
         const lineNum = Math.min(Math.max(1, item.line + 1), doc.lines);
         const lineObj = doc.line(lineNum);
-        const block = cm.lineBlockAt(lineObj.from);
-        const targetScrollTop = Math.max(0, block.top - targetTopOffsetPx);
+        const linePos = lineObj.from;
 
-        cm.scrollDOM.scrollTop = targetScrollTop;
+        // Phase 1: Jump to estimated block top position
+        const block = cm.lineBlockAt(linePos);
+        const initialScrollTop = Math.max(0, block.top - targetTopOffsetPx);
+        cm.scrollDOM.scrollTop = initialScrollTop;
         editor.setCursor({ line: item.line, ch: 0 });
-        cm.scrollDOM.scrollTop = targetScrollTop;
 
-        this.scrollCorrectionRaf = window.requestAnimationFrame(() => {
+        // Phase 2: Immediate physical visual coordinate correction if already rendered
+        if (cm.coordsAtPos) {
+          const scrollerRect = cm.scrollDOM.getBoundingClientRect();
+          const coords = cm.coordsAtPos(linePos);
+          if (coords) {
+            const currentOffset = coords.top - scrollerRect.top;
+            const delta = currentOffset - targetTopOffsetPx;
+            if (Math.abs(delta) > 1) {
+              cm.scrollDOM.scrollTop += delta;
+            }
+          }
+        }
+
+        // Phase 3: Multi-frame visual convergence for long-distance jumps across unrendered virtual lines
+        let attempts = 0;
+        const convergeVisualCoordinate = () => {
           try {
-            if (cm?.lineBlockAt && cm.scrollDOM) {
-              const updatedBlock = cm.lineBlockAt(lineObj.from);
-              cm.scrollDOM.scrollTop = Math.max(0, updatedBlock.top - targetTopOffsetPx);
+            if (cm?.coordsAtPos && cm.scrollDOM) {
+              const scrollerRect = cm.scrollDOM.getBoundingClientRect();
+              const coords = cm.coordsAtPos(linePos);
+              if (coords) {
+                const currentOffset = coords.top - scrollerRect.top;
+                const delta = currentOffset - targetTopOffsetPx;
+                if (Math.abs(delta) > 1) {
+                  cm.scrollDOM.scrollTop += delta;
+                  attempts += 1;
+                  if (attempts < 3) {
+                    this.scrollCorrectionRaf = window.requestAnimationFrame(convergeVisualCoordinate);
+                    return;
+                  }
+                }
+              }
             }
           } catch {
             // Ignore layout race
           }
           this.scrollCorrectionRaf = null;
-        });
+        };
+
+        this.scrollCorrectionRaf = window.requestAnimationFrame(convergeVisualCoordinate);
       } else {
         editor.scrollIntoView(
           { from: { line: item.line, ch: 0 }, to: { line: item.line, ch: 0 } },

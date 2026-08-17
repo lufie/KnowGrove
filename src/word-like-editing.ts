@@ -491,6 +491,63 @@ function fencedCodeBlockAfterBlankLine(content: string, blankLineTo: number): Fe
     .find((range) => range.from === blankLineTo + 1) ?? null;
 }
 
+export interface MarkdownTableRange {
+  from: number;
+  to: number;
+  rowCount: number;
+}
+
+export function isMarkdownTableLine(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.includes("|")) return false;
+  return trimmed.startsWith("|") || trimmed.endsWith("|");
+}
+
+export function findMarkdownTableRanges(content: string): MarkdownTableRange[] {
+  const ranges: MarkdownTableRange[] = [];
+  let line = lineBounds(content, 0);
+  while (true) {
+    if (isMarkdownTableLine(line.text)) {
+      const startFrom = line.from;
+      let endTo = line.to;
+      let rowCount = 1;
+      let cursor = line.to;
+      let hasSeparator = false;
+
+      while (cursor < content.length) {
+        const next = nextLine(content, cursor);
+        if (!next || !isMarkdownTableLine(next.text)) break;
+        if (/^[ \t]*\|?([ \t]*:?-+:?[ \t]*\|)+[ \t]*:?-+:?[ \t]*\|?[ \t]*$/.test(next.text)) {
+          hasSeparator = true;
+        }
+        endTo = next.to;
+        rowCount += 1;
+        cursor = next.to;
+        line = next;
+      }
+
+      if (hasSeparator && rowCount >= 2) {
+        ranges.push({ from: startFrom, to: endTo, rowCount });
+      }
+    }
+    if (line.to >= content.length) break;
+    const following = nextLine(content, line.to);
+    if (!following) break;
+    line = following;
+  }
+  return ranges;
+}
+
+function markdownTableBeforeBlankLine(content: string, blankLineFrom: number): MarkdownTableRange | null {
+  return findMarkdownTableRanges(content)
+    .find((range) => range.to === blankLineFrom - 1) ?? null;
+}
+
+function markdownTableAfterBlankLine(content: string, blankLineTo: number): MarkdownTableRange | null {
+  return findMarkdownTableRanges(content)
+    .find((range) => range.from === blankLineTo + 1) ?? null;
+}
+
 export function isStandaloneMediaBlock(text: string): boolean {
   return MEDIA_BLOCK.test(text);
 }
@@ -563,6 +620,12 @@ export function wordLikeBackspaceEdit(content: string, position: number, tabSize
   }
 
   if (!line.text.trim()) {
+    const tableBlock = markdownTableBeforeBlankLine(content, line.from);
+    if (tableBlock) {
+      const blankBefore = previousLine(content, tableBlock.from);
+      const from = blankBefore && !blankBefore.text.trim() ? blankBefore.from : tableBlock.from;
+      return { from, to: line.from, insert: "", cursor: from };
+    }
     const codeBlock = fencedCodeBlockBeforeBlankLine(content, line.from);
     if (codeBlock) {
       const blankBefore = previousLine(content, codeBlock.from);
@@ -572,6 +635,16 @@ export function wordLikeBackspaceEdit(content: string, position: number, tabSize
     const previous = previousLine(content, line.from);
     if (previous && isStandaloneMediaBlock(previous.text)) {
       return { from: previous.from, to: line.from, insert: "", cursor: previous.from };
+    }
+  }
+
+  if (offset === 0) {
+    const prev = previousLine(content, line.from);
+    if (prev && isMarkdownTableLine(prev.text)) {
+      const tableBlock = findMarkdownTableRanges(content).find((range) => range.to === line.from - 1);
+      if (tableBlock) {
+        return { from: tableBlock.from, to: line.from, insert: "", cursor: tableBlock.from };
+      }
     }
   }
 
@@ -597,10 +670,19 @@ export function wordLikeBackspaceEdit(content: string, position: number, tabSize
 
 export function wordLikeDeleteEdit(content: string, position: number, tabSize = 4): WordLikeEdit | null {
   const line = lineBounds(content, position);
+  const offset = position - line.from;
   if (isStandaloneMediaBlock(line.text)) {
     return { from: line.from, to: line.to, insert: "", cursor: line.from };
   }
   if (!line.text.trim()) {
+    const tableBlock = markdownTableAfterBlankLine(content, line.to);
+    if (tableBlock) {
+      const blankAfter = nextLine(content, tableBlock.to);
+      const to = blankAfter && !blankAfter.text.trim()
+        ? (blankAfter.to < content.length ? blankAfter.to + 1 : blankAfter.to)
+        : (tableBlock.to < content.length ? tableBlock.to + 1 : tableBlock.to);
+      return { from: tableBlock.from, to, insert: "", cursor: position };
+    }
     const codeBlock = fencedCodeBlockAfterBlankLine(content, line.to);
     if (codeBlock) {
       const blankAfter = nextLine(content, codeBlock.to);
@@ -613,6 +695,16 @@ export function wordLikeDeleteEdit(content: string, position: number, tabSize = 
     if (next && isStandaloneMediaBlock(next.text)) {
       const to = next.to < content.length ? next.to + 1 : next.to;
       return { from: next.from, to, insert: "", cursor: position };
+    }
+  }
+  if (offset === line.text.length) {
+    const next = nextLine(content, line.to);
+    if (next && isMarkdownTableLine(next.text)) {
+      const tableBlock = findMarkdownTableRanges(content).find((range) => range.from === line.to + 1);
+      if (tableBlock) {
+        const to = tableBlock.to < content.length ? tableBlock.to + 1 : tableBlock.to;
+        return { from: tableBlock.from, to, insert: "", cursor: position };
+      }
     }
   }
   const currentItem = parseListLine(line.text);
