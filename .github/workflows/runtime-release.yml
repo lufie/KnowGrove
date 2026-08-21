@@ -6,11 +6,11 @@ on:
       runtime_version:
         description: Runtime version
         required: true
-        default: 1.0.1
+        default: 1.0.2
       release_base_url:
         description: Primary release attachment base URL
         required: true
-        default: https://github.com/lufie/KnowGrove-runtime/releases/download/runtime-v1.0.1
+        default: https://github.com/lufie/KnowGrove-runtime/releases/download/runtime-v1.0.2
       fallback_base_url:
         description: Optional fallback release attachment base URL
         required: false
@@ -57,12 +57,18 @@ jobs:
       - name: Build whisper.cpp
         shell: bash
         run: |
-          git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git .runtime-whisper
+          git clone --depth 1 --branch v1.9.3 https://github.com/ggml-org/whisper.cpp.git .runtime-whisper
+          test "$(git -C .runtime-whisper rev-parse HEAD)" = "371b5a7561823ab2bb32142d2751e35e7534727b"
           cmake -S .runtime-whisper -B .runtime-whisper/build \
             -DWHISPER_BUILD_TESTS=OFF \
             -DWHISPER_BUILD_SERVER=OFF \
             -DBUILD_SHARED_LIBS=OFF
           cmake --build .runtime-whisper/build --config Release --parallel
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            .runtime-whisper/build/bin/Release/whisper-cli.exe --version
+          else
+            .runtime-whisper/build/bin/whisper-cli --version
+          fi
       - name: Download official yt-dlp binary
         shell: bash
         run: |
@@ -152,7 +158,7 @@ jobs:
             gh release create "$tag" \
               --repo "$RELEASE_REPOSITORY" \
               --title "KnowGrove Runtime ${RUNTIME_VERSION}" \
-              --notes "Signed cross-platform runtime for KnowGrove 2.5.0 and later."
+              --notes "Signed cross-platform runtime for KnowGrove 2.5.0 and later. Includes whisper.cpp v1.9.3 (371b5a7561823ab2bb32142d2751e35e7534727b)."
           fi
           gh release upload "$tag" release-assets/* \
             --repo "$RELEASE_REPOSITORY" \

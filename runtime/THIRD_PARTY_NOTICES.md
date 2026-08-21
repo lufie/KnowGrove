@@ -22,6 +22,8 @@ also record the exact upstream versions used.
 
 - Project: https://github.com/ggml-org/whisper.cpp
 - License: MIT
+- Runtime 1.0.2 version: v1.9.3
+- Source commit: 371b5a7561823ab2bb32142d2751e35e7534727b
 
 ## Whisper model
 
