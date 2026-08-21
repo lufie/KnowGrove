@@ -44,7 +44,13 @@ export class TopicIndexView extends ItemView {
   async onOpen(): Promise<void> {
     this.registerEvent(this.app.workspace.on("file-open", () => this.updateActiveFileHighlight()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateActiveFileHighlight()));
+    this.registerDomEvent(this.contentEl, "pointerdown", () => void this.ensureScanned(), { once: true });
+    this.registerDomEvent(this.contentEl, "focusin", () => void this.ensureScanned(), { once: true });
     this.render();
+  }
+
+  async ensureScanned(): Promise<void> {
+    if (this.snapshot || this.scanning) return;
     await this.scan();
   }
 
@@ -147,7 +153,13 @@ export class TopicIndexView extends ItemView {
       const empty = container.createDiv("knowgrove-topic-index-empty");
       const icon = empty.createSpan();
       setIcon(icon, this.query ? "search-x" : "tags");
-      empty.createSpan({ text: this.query ? "没有匹配的主题或文档" : "还没有主题属性" });
+      empty.createSpan({
+        text: this.query
+          ? "没有匹配的主题或文档"
+          : this.snapshot
+            ? "还没有主题属性"
+            : "点击刷新后读取主题",
+      });
       return;
     }
 

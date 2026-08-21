@@ -4745,6 +4745,182 @@ button.knowgrove-property-issue-row:hover {
   display: none;
 }
 
+.knowgrove-queue-container {
+  margin-top: var(--size-4-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.knowgrove-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--size-4-1);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.knowgrove-queue-title {
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.knowgrove-queue-stats {
+  display: flex;
+  gap: var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.knowgrove-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.knowgrove-queue-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.knowgrove-queue-item.is-running {
+  border-color: var(--interactive-accent);
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.05);
+}
+
+.knowgrove-queue-item.is-completed {
+  border-color: var(--background-modifier-border);
+  background: var(--background-secondary-alt);
+}
+
+.knowgrove-queue-item.is-failed {
+  border-color: var(--text-error);
+  background: rgba(var(--text-error-rgb, 239, 68, 68), 0.05);
+}
+
+.knowgrove-queue-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+}
+
+.knowgrove-queue-item-left {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.knowgrove-queue-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-form-field);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.knowgrove-queue-tag.tag-running {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.knowgrove-queue-tag.tag-completed {
+  background: rgba(var(--color-green-rgb, 34, 197, 94), 0.15);
+  color: var(--color-green, #22c55e);
+}
+
+.knowgrove-queue-tag.tag-failed {
+  background: rgba(var(--text-error-rgb, 239, 68, 68), 0.15);
+  color: var(--text-error);
+}
+
+.knowgrove-queue-item-title {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-queue-item-right {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  flex-shrink: 0;
+}
+
+.knowgrove-queue-percent {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--interactive-accent);
+  min-width: 32px;
+  text-align: right;
+}
+
+.knowgrove-queue-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  height: 24px;
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.knowgrove-queue-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.knowgrove-queue-progress-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.knowgrove-queue-item-status {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-queue-spin {
+  display: inline-block;
+  animation: knowgrove-spin 1s linear infinite;
+}
+
+@keyframes knowgrove-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .knowgrove-batch-link-results {
   display: flex;
   flex-direction: column;
@@ -5447,8 +5623,10 @@ body.knowgrove-reorder-dragging * {
 
 .knowgrove-image-adorner {
   position: fixed;
-  pointer-events: auto !important;
-  cursor: grab !important;
+  /* The body-sized overlay must not become the wheel target. Direct image
+     pointer handling still starts reordering; only the controls opt back in. */
+  pointer-events: none !important;
+  cursor: default !important;
   z-index: 99999 !important;
   box-sizing: border-box;
   border: 2px solid var(--kg-primary, #8b5cf6);
@@ -5457,10 +5635,6 @@ body.knowgrove-reorder-dragging * {
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.15s ease, visibility 0.15s ease;
-}
-
-.knowgrove-image-adorner:active {
-  cursor: grabbing !important;
 }
 
 .knowgrove-image-adorner.is-visible {
@@ -5851,7 +6025,6 @@ body.knowgrove-reorder-dragging * {
   object-fit: cover !important;
   border-radius: 8px !important;
 }
-
 
 
 

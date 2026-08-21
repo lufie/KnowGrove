@@ -67,6 +67,7 @@ import {
   isInstagramCaptureUrl,
   extractVimeoVideoId,
   parseTikTokHtml,
+  portableSiblingAssetLinkPath,
   extractTencentVideoVid,
   parseXiguaHtml,
   type BrowserCaptureAIResult,
@@ -569,10 +570,59 @@ export class BrowserCaptureServer {
   private readonly activeJobRuns = new Map<string, Promise<void>>();
   private readonly originalTargetContents = new Map<string, { path: string; content: string }>();
   private readonly currentNotePaths = new Map<string, string>();
+  private readonly listeners = new Set<(jobs: BrowserCaptureJob[]) => void>();
   private processing = false;
   private stopping = false;
 
   constructor(private readonly host: BrowserCaptureHost) {}
+
+  subscribe(listener: (jobs: BrowserCaptureJob[]) => void): () => void {
+    this.listeners.add(listener);
+    try {
+      listener(this.getJobs());
+    } catch (error) {
+      console.error("KnowGrove: capture job listener error", error);
+    }
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  getJobs(): BrowserCaptureJob[] {
+    return Array.from(this.jobs.values());
+  }
+
+  pruneFinishedJobs(idsToPrune?: Set<string>): void {
+    let changed = false;
+    for (const [id, job] of this.jobs) {
+      if (FINISHED_STATUSES.has(job.status)) {
+        if (!idsToPrune || idsToPrune.has(id)) {
+          this.jobs.delete(id);
+          this.currentNotePaths.delete(id);
+          this.jobAbortControllers.delete(id);
+          this.capturedSources.delete(id);
+          this.captureSessions.delete(id);
+          this.originalTargetContents.delete(id);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      void this.persistJobs();
+      this.notifyListeners();
+    }
+  }
+
+  private notifyListeners(): void {
+    const jobs = this.getJobs();
+    for (const listener of this.listeners) {
+      try {
+        listener(jobs);
+      } catch (error) {
+        console.error("KnowGrove: capture job listener error", error);
+      }
+    }
+  }
 
   getStatus(): BrowserCaptureServerStatus {
     return { ...this.status };
@@ -1091,6 +1141,7 @@ export class BrowserCaptureServer {
     }
     this.jobs.set(job.id, job);
     await this.persistJobs();
+    this.notifyListeners();
     return job;
   }
 
@@ -1104,6 +1155,7 @@ export class BrowserCaptureServer {
     };
     this.jobs.set(id, next);
     await this.persistJobs();
+    this.notifyListeners();
     return next;
   }
 
@@ -1482,6 +1534,7 @@ export class BrowserCaptureServer {
     this.jobAbortControllers.delete(id);
     this.jobs.delete(id);
     await this.persistJobs();
+    this.notifyListeners();
   }
 
   private async trackCreatedNote(id: string, path: string): Promise<void> {
@@ -1765,7 +1818,14 @@ export class BrowserCaptureServer {
         await this.host.app.vault.createBinary(path, data);
         await this.trackCreatedAttachment(jobId, path);
         const alt = match[1]?.trim();
-        localized.set(url, alt && alt !== "图片" ? `![[${path}|${alt}]]` : `![[${path}]]`);
+        const assetFile = this.host.app.vault.getFileByPath(path);
+        if (!(assetFile instanceof TFile)) throw new Error(`图片已写入但无法读取：${path}`);
+        const alias = alt && alt !== "图片" ? alt : undefined;
+        const portablePath = portableSiblingAssetLinkPath(assetFile.path, sourceNotePath);
+        const link = portablePath
+          ? `[[${portablePath}${alias ? `|${alias}` : ""}]]`
+          : this.host.app.fileManager.generateMarkdownLink(assetFile, sourceNotePath, undefined, alias);
+        localized.set(url, `!${link}`);
       } catch (error) {
         if (isCaptureAbort(error, signal)) throw error;
         // A single protected image must not make the entire article fail.

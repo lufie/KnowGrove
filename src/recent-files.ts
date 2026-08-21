@@ -12,7 +12,7 @@ export function isRecentDocumentPath(path: string): boolean {
 
 export function selectRecentDocumentPaths(
   history: readonly string[],
-  existingPaths: ReadonlySet<string>,
+  existingPaths: Pick<ReadonlySet<string>, "has">,
   limit = 8,
 ): string[] {
   if (limit <= 0) return [];

@@ -4,7 +4,7 @@
 
 KnowGrove est un espace de connaissances local pour Obsidian. Il transforme des sources dispersées en sujets reliés, preuves, recherches et connaissances réutilisables.
 
-Version actuelle du code source et de la publication GitHub : `2.8.11`
+Version actuelle du code source et de la publication GitHub : `2.8.22`
 
 ## Fonctions principales
 

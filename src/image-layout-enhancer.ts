@@ -1,16 +1,45 @@
 import { MarkdownView } from "obsidian";
 import type KnowGrovePlugin from "./main";
+import {
+  buildImageMoveChanges,
+  clampResize,
+  findImageOccurrence,
+  isOffsetInsideFencedCode,
+  parseImageOccurrences,
+  updateImageSyntax,
+  type ImageAlignment,
+  type ImageOccurrence,
+  type TextChange,
+} from "./image-layout-core";
 
 interface CodeMirrorEditorView {
   posAtCoords(coords: { x: number; y: number }): number | null;
   posAtDOM(node: Node): number;
-  lineBlockAt(pos: number): { top: number; bottom: number; height: number };
+  dispatch(spec: {
+    changes: Array<{ from: number; to?: number; insert?: string }>;
+    scrollIntoView?: boolean;
+    userEvent?: string;
+  }): void;
 }
 
-interface ImageDragState {
+type ResizeHandle = "nw" | "ne" | "se" | "sw" | "e" | "w" | "n" | "s";
+type DropPlacement = "line-before" | "line-after" | "image-before" | "image-after";
+
+interface PendingReorderState {
   embedEl: HTMLElement;
   imgEl: HTMLImageElement;
-  handleType: "nw" | "ne" | "se" | "sw" | "e" | "w" | "n" | "s";
+  pointerId: number;
+  startX: number;
+  startY: number;
+}
+
+interface ImageResizeState {
+  embedEl: HTMLElement;
+  imgEl: HTMLImageElement;
+  view: MarkdownView;
+  occurrence: ImageOccurrence;
+  handleType: ResizeHandle;
+  pointerId: number;
   startX: number;
   startY: number;
   startWidth: number;
@@ -18,33 +47,169 @@ interface ImageDragState {
   currentWidth: number;
   currentHeight: number;
   aspectRatio: number;
-  handle: HTMLElement;
-  badgeEl: HTMLElement;
+  maxWidth: number;
+  scroller: HTMLElement | null;
+  lockedScrollTop: number;
+  originalEmbedStyle: string;
+  originalImageStyle: string;
+  originalWrapperStyle: string | null;
 }
 
-interface ImageReorderDragState {
+interface ImageReorderState {
   embedEl: HTMLElement;
   imgEl: HTMLImageElement;
-  sourceLineIndex: number;
-  targetLineIndex: number;
+  view: MarkdownView;
+  occurrence: ImageOccurrence;
+  pointerId: number;
   ghostEl: HTMLElement;
   dropIndicator: HTMLElement;
-  startX: number;
-  startY: number;
+  targetOffset: number;
+  placement: DropPlacement;
+  targetImage: ImageOccurrence | null;
+  scroller: HTMLElement | null;
+  lockedScrollTop: number;
 }
 
+interface DocumentImageCache {
+  text: string;
+  occurrences: ImageOccurrence[];
+}
+
+const DRAG_THRESHOLD_PX = 4;
+const MIN_IMAGE_WIDTH = 60;
+const MIN_IMAGE_HEIGHT = 40;
+
 export class ImageLayoutEnhancer {
+  private readonly ownerDocument: Document;
+  private readonly workspaceRoot: HTMLElement;
   private adornerEl: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
+  private styleEl: HTMLStyleElement | null = null;
   private currentTarget: { embedEl: HTMLElement; imgEl: HTMLImageElement } | null = null;
-  private activeDrag: ImageDragState | null = null;
-  private activeReorderDrag: ImageReorderDragState | null = null;
+  private pendingReorder: PendingReorderState | null = null;
+  private activeResize: ImageResizeState | null = null;
+  private activeReorder: ImageReorderState | null = null;
   private hideTimeout: number | null = null;
-  private isSelected = false;
-  private boundImages = new WeakSet<HTMLImageElement>();
   private observer: MutationObserver | null = null;
+  private mutationRaf: number | null = null;
+  private geometryRaf: number | null = null;
+  private interactionRaf: number | null = null;
+  private pendingMoveEvent: PointerEvent | null = null;
+  private isSelected = false;
+  private readonly boundImages = new WeakSet<HTMLImageElement>();
+  private readonly imageCache = new WeakMap<MarkdownView, DocumentImageCache>();
+
+  private readonly onPointerOver = (event: PointerEvent): void => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest(".knowgrove-image-adorner")) {
+      this.cancelHideAdorner();
+      return;
+    }
+    const embedEl = target.closest<HTMLElement>(".image-embed");
+    const imgEl = embedEl?.querySelector<HTMLImageElement>("img");
+    if (!embedEl || !imgEl || !this.workspaceRoot.contains(embedEl)) return;
+    this.enhanceImageEmbed(embedEl);
+    this.cancelHideAdorner();
+    this.attachAdornerToImage(embedEl, imgEl);
+  };
+
+  private readonly onPointerOut = (event: PointerEvent): void => {
+    if (this.activeResize || this.activeReorder || this.pendingReorder || this.isSelected) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest(".image-embed, .knowgrove-image-adorner")) this.scheduleHideAdorner();
+  };
+
+  private readonly onWorkspacePointerDown = (event: PointerEvent): void => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (!target.closest(".knowgrove-image-adorner, .image-embed")) {
+      this.isSelected = false;
+      this.pendingReorder = null;
+      this.hideAdorner(true);
+    }
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (this.pendingReorder && event.pointerId === this.pendingReorder.pointerId) {
+      const deltaX = event.clientX - this.pendingReorder.startX;
+      const deltaY = event.clientY - this.pendingReorder.startY;
+      if (Math.hypot(deltaX, deltaY) >= DRAG_THRESHOLD_PX) {
+        const pending = this.pendingReorder;
+        this.pendingReorder = null;
+        try {
+          this.startReorderDrag(pending.embedEl, pending.imgEl, event);
+        } catch (error) {
+          this.abortImageReorder(error);
+        }
+      }
+    }
+
+    if (!this.activeResize && !this.activeReorder) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.pendingMoveEvent = event;
+    if (this.interactionRaf !== null) return;
+    this.interactionRaf = this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+      this.interactionRaf = null;
+      const latest = this.pendingMoveEvent;
+      this.pendingMoveEvent = null;
+      if (!latest) return;
+      if (this.activeResize && latest.pointerId === this.activeResize.pointerId) {
+        this.onResizeMove(latest.clientX, latest.clientY, latest.shiftKey);
+      } else if (this.activeReorder && latest.pointerId === this.activeReorder.pointerId) {
+        try {
+          this.onReorderMove(latest.clientX, latest.clientY);
+        } catch (error) {
+          this.abortImageReorder(error);
+        }
+      }
+    }) ?? null;
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (this.pendingReorder?.pointerId === event.pointerId) this.pendingReorder = null;
+    if (this.activeResize?.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.finishResize(false);
+      return;
+    }
+    if (this.activeReorder?.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.finishReorder(false);
+    }
+  };
+
+  private readonly onPointerCancel = (event: PointerEvent): void => {
+    if (this.pendingReorder?.pointerId === event.pointerId) this.pendingReorder = null;
+    if (this.activeResize?.pointerId === event.pointerId) this.finishResize(true);
+    if (this.activeReorder?.pointerId === event.pointerId) this.finishReorder(true);
+  };
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape") return;
+    if (this.activeResize) {
+      event.preventDefault();
+      this.finishResize(true);
+    } else if (this.activeReorder) {
+      event.preventDefault();
+      this.finishReorder(true);
+    } else if (this.pendingReorder) {
+      this.pendingReorder = null;
+    }
+  };
+
+  private readonly onScrollOrResize = (): void => {
+    if (!this.currentTarget || this.activeResize || this.activeReorder) return;
+    this.scheduleAdornerGeometryUpdate();
+  };
 
   constructor(private readonly plugin: KnowGrovePlugin) {
+    this.workspaceRoot = plugin.app.workspace.containerEl;
+    this.ownerDocument = this.workspaceRoot.ownerDocument;
+    this.installRuntimeStyles();
     this.createRootAdorner();
     this.setupGlobalListeners();
     this.startObserving();
@@ -52,50 +217,65 @@ export class ImageLayoutEnhancer {
 
   destroy(): void {
     this.stopObserving();
-    this.cleanupActiveDrag();
-    this.cleanupReorderDrag();
+    this.cancelAnimationFrames();
+    this.finishResize(true);
+    this.finishReorder(true);
+    this.pendingReorder = null;
     this.removeGlobalListeners();
-    if (this.adornerEl) {
-      this.adornerEl.remove();
-      this.adornerEl = null;
-    }
-    document.querySelectorAll(".knowgrove-image-drop-indicator").forEach((el) => el.remove());
+    this.cancelHideAdorner();
+    this.currentTarget = null;
+    this.adornerEl?.remove();
+    this.adornerEl = null;
+    this.badgeEl = null;
+    this.styleEl?.remove();
+    this.styleEl = null;
+    this.ownerDocument.body.classList.remove("knowgrove-image-dragging", "knowgrove-reorder-dragging");
+    this.ownerDocument.querySelectorAll(".knowgrove-image-drop-indicator, .knowgrove-image-drag-ghost")
+      .forEach((element) => element.remove());
+  }
+
+  private installRuntimeStyles(): void {
+    if (this.styleEl) return;
+    const style = this.ownerDocument.createElement("style");
+    style.dataset.knowgroveImageLayout = "true";
+    style.textContent = `
+      .knowgrove-image-row,
+      .knowgrove-image-row-equal-height {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        align-items: flex-start !important;
+        gap: 12px !important;
+      }
+      .knowgrove-image-row .image-embed,
+      .knowgrove-image-row-equal-height .image-embed {
+        flex: 0 0 auto !important;
+        height: auto !important;
+        max-width: 100% !important;
+      }
+      .knowgrove-image-row .image-embed img,
+      .knowgrove-image-row-equal-height .image-embed img {
+        object-fit: contain !important;
+        max-width: 100% !important;
+      }
+      .knowgrove-scroll-anchor-lock {
+        overflow-anchor: none !important;
+      }
+      .knowgrove-image-drag-ghost {
+        transform: translate(10px, -50%) !important;
+      }
+    `;
+    this.ownerDocument.head.appendChild(style);
+    this.styleEl = style;
   }
 
   private createRootAdorner(): void {
     if (this.adornerEl) return;
+    const adorner = this.ownerDocument.createElement("div");
+    adorner.className = "knowgrove-image-adorner";
+    adorner.setAttribute("aria-hidden", "true");
 
-    this.adornerEl = createDiv({ cls: "knowgrove-image-adorner" });
-    this.adornerEl.setAttribute("aria-hidden", "true");
-
-    // Drag anywhere on adorner frame to reorder
-    const onAdornerBodyStart = (event: MouseEvent | PointerEvent): void => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest(".knowgrove-adorner-handle, .knowgrove-adorner-btn")) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      if (this.adornerEl && "setPointerCapture" in this.adornerEl && "pointerId" in event && typeof event.pointerId === "number") {
-        try {
-          this.adornerEl.setPointerCapture(event.pointerId);
-        } catch {
-          // Best effort
-        }
-      }
-
-      if (this.currentTarget) {
-        this.startReorderDrag(this.currentTarget.embedEl, this.currentTarget.imgEl, event.clientX, event.clientY);
-      }
-    };
-
-    this.adornerEl.addEventListener("pointerdown", onAdornerBodyStart);
-    this.adornerEl.addEventListener("mousedown", onAdornerBodyStart);
-
-    // 8 Handles
-    const handleDefs: Array<{ type: "nw" | "ne" | "se" | "sw" | "e" | "w" | "n" | "s"; cls: string }> = [
+    const handleDefs: Array<{ type: ResizeHandle; cls: string }> = [
       { type: "nw", cls: "knowgrove-adorner-handle-nw" },
       { type: "ne", cls: "knowgrove-adorner-handle-ne" },
       { type: "se", cls: "knowgrove-adorner-handle-se" },
@@ -105,286 +285,170 @@ export class ImageLayoutEnhancer {
       { type: "n", cls: "knowgrove-adorner-handle-n" },
       { type: "s", cls: "knowgrove-adorner-handle-s" },
     ];
-
-    for (const h of handleDefs) {
-      const handle = createDiv({ cls: `knowgrove-adorner-handle ${h.cls}` });
-      handle.dataset.handleType = h.type;
-
-      const onStart = (event: MouseEvent | PointerEvent): void => {
+    for (const definition of handleDefs) {
+      const handle = this.ownerDocument.createElement("div");
+      handle.className = `knowgrove-adorner-handle ${definition.cls}`;
+      handle.dataset.handleType = definition.type;
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-
-        if ("setPointerCapture" in handle && "pointerId" in event && typeof event.pointerId === "number") {
-          try {
-            handle.setPointerCapture(event.pointerId);
-          } catch {
-            // Best effort
-          }
+        try {
+          handle.setPointerCapture(event.pointerId);
+        } catch {
+          // Pointer capture is best effort across Electron versions.
         }
-        this.startAdornerDrag(h.type, event.clientX, event.clientY, handle);
-      };
-
-      handle.addEventListener("pointerdown", onStart);
-      handle.addEventListener("mousedown", onStart);
-      this.adornerEl.appendChild(handle);
+        this.startResize(definition.type, event, handle);
+      });
+      adorner.appendChild(handle);
     }
 
-    // Floating Toolbar
-    const toolbar = createDiv({ cls: "knowgrove-adorner-toolbar" });
+    const toolbar = this.ownerDocument.createElement("div");
+    toolbar.className = "knowgrove-adorner-toolbar";
+    const createButton = (text: string, title: string, action: () => void): HTMLButtonElement => {
+      const button = this.ownerDocument.createElement("button");
+      button.className = "knowgrove-adorner-btn";
+      button.textContent = text;
+      button.title = title;
+      button.addEventListener("pointerdown", (event) => event.stopPropagation());
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        action();
+      });
+      toolbar.appendChild(button);
+      return button;
+    };
 
-    // Align Left
-    const btnLeft = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "⫷ 靠左" });
-    btnLeft.title = "靠左独占排版（文字上下分布，不环绕）";
-    btnLeft.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.setImageAlignment(this.currentTarget.embedEl, "left");
-    });
+    createButton("⫷ 靠左", "靠左独占排版（文字上下分布，不环绕）", () => this.applyAlignment("left"));
+    createButton("≡ 居中", "居中独占排版", () => this.applyAlignment("center"));
+    createButton("⫸ 靠右", "靠右独占排版", () => this.applyAlignment("right"));
+    const separator = this.ownerDocument.createElement("span");
+    separator.className = "knowgrove-adorner-sep";
+    toolbar.appendChild(separator);
+    createButton("50%", "设为当前编辑区宽度的 50%", () => this.applyPresetWidth(0.5));
+    createButton("100%", "设为当前编辑区最大可用宽度", () => this.applyPresetWidth(1));
+    createButton("↺ 还原", "还原默认尺寸与对齐", () => this.resetCurrentImage());
+    adorner.appendChild(toolbar);
 
-    // Align Center
-    const btnCenter = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "≡ 居中" });
-    btnCenter.title = "居中独占排版";
-    btnCenter.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.setImageAlignment(this.currentTarget.embedEl, "center");
-    });
+    const badge = this.ownerDocument.createElement("div");
+    badge.className = "knowgrove-adorner-badge";
+    adorner.appendChild(badge);
+    this.badgeEl = badge;
 
-    // Align Right
-    const btnRight = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "⫸ 靠右" });
-    btnRight.title = "靠右独占排版";
-    btnRight.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.setImageAlignment(this.currentTarget.embedEl, "right");
-    });
-
-    toolbar.createSpan({ cls: "knowgrove-adorner-sep" });
-
-    // Preset 50%
-    const btn50 = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "50%" });
-    btn50.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.applyPresetWidth(this.currentTarget.embedEl, this.currentTarget.imgEl, 0.5);
-    });
-
-    // Preset 100%
-    const btn100 = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "100%" });
-    btn100.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.applyPresetWidth(this.currentTarget.embedEl, this.currentTarget.imgEl, 1.0);
-    });
-
-    // Reset
-    const btnReset = toolbar.createEl("button", { cls: "knowgrove-adorner-btn", text: "↺ 还原" });
-    btnReset.title = "还原默认尺寸与对齐";
-    btnReset.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.currentTarget) this.resetImage(this.currentTarget.embedEl, this.currentTarget.imgEl);
-    });
-
-    this.adornerEl.appendChild(toolbar);
-
-    // Dimension Badge
-    this.badgeEl = createDiv({ cls: "knowgrove-adorner-badge" });
-    this.adornerEl.appendChild(this.badgeEl);
-
-    // Cancel hiding when cursor is over adorner
-    this.adornerEl.addEventListener("mouseenter", () => this.cancelHideAdorner());
-    this.adornerEl.addEventListener("mouseleave", () => this.scheduleHideAdorner());
-
-    document.body.appendChild(this.adornerEl);
+    adorner.addEventListener("pointerenter", () => this.cancelHideAdorner());
+    adorner.addEventListener("pointerleave", () => this.scheduleHideAdorner());
+    this.ownerDocument.body.appendChild(adorner);
+    this.adornerEl = adorner;
   }
 
   private setupGlobalListeners(): void {
-    window.addEventListener("pointerover", (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest(".knowgrove-image-adorner")) {
-        this.cancelHideAdorner();
-        return;
-      }
-      const embedEl = target.closest<HTMLElement>(".image-embed");
-      const imgEl = embedEl?.querySelector<HTMLImageElement>("img");
-      if (embedEl && imgEl) {
-        this.cancelHideAdorner();
-        this.attachAdornerToImage(embedEl, imgEl);
-      }
-    }, { capture: true, passive: true });
-
-    window.addEventListener("pointerout", (event: PointerEvent) => {
-      if (this.activeDrag || this.activeReorderDrag || this.isSelected) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest(".image-embed") || target?.closest(".knowgrove-image-adorner")) {
-        this.scheduleHideAdorner();
-      }
-    }, { capture: true, passive: true });
-
-    window.addEventListener("pointerdown", (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (!target.closest(".knowgrove-image-adorner, .image-embed")) {
-        this.isSelected = false;
-        this.hideAdorner();
-      }
-    }, { capture: true, passive: true });
-
-    window.addEventListener("scroll", () => {
-      if (this.currentTarget && !this.activeDrag && !this.activeReorderDrag) {
-        this.updateAdornerPosition();
-      }
-    }, { capture: true, passive: true });
-
-    window.addEventListener("resize", () => {
-      if (this.currentTarget && !this.activeDrag && !this.activeReorderDrag) {
-        this.updateAdornerPosition();
-      }
-    }, { passive: true });
-
-    // Drag move and end global capture
-    window.addEventListener("pointermove", (event: PointerEvent) => {
-      if (this.activeDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onAdornerDragMove(event.clientX, event.clientY, event.shiftKey);
-      } else if (this.activeReorderDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onReorderDragMove(event.clientX, event.clientY);
-      }
-    }, { passive: false, capture: true });
-
-    window.addEventListener("mousemove", (event: MouseEvent) => {
-      if (this.activeDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onAdornerDragMove(event.clientX, event.clientY, event.shiftKey);
-      } else if (this.activeReorderDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onReorderDragMove(event.clientX, event.clientY);
-      }
-    }, { capture: true });
-
-    window.addEventListener("pointerup", (event: PointerEvent) => {
-      if (this.activeDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onAdornerDragEnd();
-      } else if (this.activeReorderDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onReorderDragEnd();
-      }
-    }, { passive: false, capture: true });
-
-    window.addEventListener("mouseup", (event: MouseEvent) => {
-      if (this.activeDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onAdornerDragEnd();
-      } else if (this.activeReorderDrag) {
-        event.preventDefault();
-        event.stopPropagation();
-        this.onReorderDragEnd();
-      }
-    }, { capture: true });
-
-    window.addEventListener("pointercancel", () => {
-      if (this.activeDrag) {
-        this.onAdornerDragEnd();
-      } else if (this.activeReorderDrag) {
-        this.onReorderDragEnd();
-      }
-    }, { passive: false, capture: true });
+    this.workspaceRoot.addEventListener("pointerover", this.onPointerOver, { capture: true, passive: true });
+    this.workspaceRoot.addEventListener("pointerout", this.onPointerOut, { capture: true, passive: true });
+    this.workspaceRoot.addEventListener("pointerdown", this.onWorkspacePointerDown, { capture: true, passive: true });
+    this.workspaceRoot.addEventListener("scroll", this.onScrollOrResize, { capture: true, passive: true });
+    this.ownerDocument.defaultView?.addEventListener("resize", this.onScrollOrResize, { passive: true });
+    this.ownerDocument.defaultView?.addEventListener("pointermove", this.onPointerMove, { capture: true, passive: false });
+    this.ownerDocument.defaultView?.addEventListener("pointerup", this.onPointerUp, { capture: true, passive: false });
+    this.ownerDocument.defaultView?.addEventListener("pointercancel", this.onPointerCancel, { capture: true, passive: true });
+    this.ownerDocument.addEventListener("keydown", this.onKeyDown, { capture: true });
   }
 
   private removeGlobalListeners(): void {
-    // No-op
+    this.workspaceRoot.removeEventListener("pointerover", this.onPointerOver, true);
+    this.workspaceRoot.removeEventListener("pointerout", this.onPointerOut, true);
+    this.workspaceRoot.removeEventListener("pointerdown", this.onWorkspacePointerDown, true);
+    this.workspaceRoot.removeEventListener("scroll", this.onScrollOrResize, true);
+    this.ownerDocument.defaultView?.removeEventListener("resize", this.onScrollOrResize);
+    this.ownerDocument.defaultView?.removeEventListener("pointermove", this.onPointerMove, true);
+    this.ownerDocument.defaultView?.removeEventListener("pointerup", this.onPointerUp, true);
+    this.ownerDocument.defaultView?.removeEventListener("pointercancel", this.onPointerCancel, true);
+    this.ownerDocument.removeEventListener("keydown", this.onKeyDown, true);
   }
 
   private startObserving(): void {
     this.scanAndEnhanceImages();
-    this.observer = new MutationObserver(() => {
-      this.scanAndEnhanceImages();
+    this.observer = new MutationObserver((mutations) => {
+      if (this.mutationRaf !== null) return;
+      const affected = new Set<Element>();
+      for (const mutation of mutations) {
+        const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        const container = target?.closest(".markdown-source-view, .markdown-preview-view");
+        if (container) affected.add(container);
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (!(node instanceof Element)) continue;
+          const ownContainer = node.matches(".markdown-source-view, .markdown-preview-view")
+            ? node
+            : node.closest(".markdown-source-view, .markdown-preview-view");
+          if (ownContainer) affected.add(ownContainer);
+          node.querySelectorAll(".markdown-source-view, .markdown-preview-view").forEach((element) => affected.add(element));
+        }
+      }
+      if (!affected.size) return;
+      this.mutationRaf = this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+        this.mutationRaf = null;
+        for (const container of affected) this.scanContainer(container);
+      }) ?? null;
     });
-
-    this.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    this.observer.observe(this.workspaceRoot, { childList: true, subtree: true });
   }
 
   private stopObserving(): void {
-    if (this.observer) {
-      this.observer.disconnect();
-      this.observer = null;
-    }
+    this.observer?.disconnect();
+    this.observer = null;
   }
 
   public scanAndEnhanceImages(): void {
-    const markdownContainers = document.querySelectorAll(".markdown-source-view, .markdown-preview-view");
-    for (let i = 0; i < markdownContainers.length; i += 1) {
-      const container = markdownContainers[i];
-      if (!container) continue;
+    this.workspaceRoot.querySelectorAll(".markdown-source-view, .markdown-preview-view")
+      .forEach((container) => this.scanContainer(container));
+  }
 
-      const embeds = container.querySelectorAll<HTMLElement>(".image-embed");
-      for (let j = 0; j < embeds.length; j += 1) {
-        const embed = embeds[j];
-        if (embed) this.enhanceImageEmbed(embed);
-      }
-
-      this.detectAndGroupImageRows(container);
-    }
+  private scanContainer(container: Element): void {
+    container.querySelectorAll<HTMLElement>(".image-embed").forEach((embed) => this.enhanceImageEmbed(embed));
+    this.detectAndGroupImageRows(container);
   }
 
   private enhanceImageEmbed(embedEl: HTMLElement): void {
-    const img = embedEl.querySelector<HTMLImageElement>("img");
-    if (!img) return;
-
+    const imgEl = embedEl.querySelector<HTMLImageElement>("img");
+    if (!imgEl) return;
     embedEl.classList.add("knowgrove-enhanced-image-embed");
+    imgEl.setAttribute("draggable", "false");
 
-    // Apply alignment from alt or src if present
-    const alt = embedEl.getAttribute("alt") || "";
-    const src = embedEl.getAttribute("src") || "";
-    if (alt.includes("left") || src.includes("#left")) {
-      embedEl.classList.add("knowgrove-align-left");
-    } else if (alt.includes("right") || src.includes("#right")) {
-      embedEl.classList.add("knowgrove-align-right");
-    } else if (alt.includes("center") || src.includes("#center")) {
-      embedEl.classList.add("knowgrove-align-center");
+    const resolved = this.resolveOccurrence(embedEl, imgEl);
+    embedEl.classList.remove("knowgrove-align-left", "knowgrove-align-center", "knowgrove-align-right");
+    if (resolved?.occurrence.alignment) embedEl.classList.add(`knowgrove-align-${resolved.occurrence.alignment}`);
+    const width = resolved?.occurrence.width ?? Number.parseInt(imgEl.getAttribute("width") ?? "", 10);
+    const height = resolved?.occurrence.height;
+    if (Number.isFinite(width) && width > 0) {
+      this.applyImageDimensionsToDom(embedEl, imgEl, width, height);
     }
 
-    // Apply width attribute if present from markdown parsing
-    const imgWidthAttr = img.getAttribute("width");
-    if (imgWidthAttr) {
-      const w = parseInt(imgWidthAttr, 10);
-      if (w > 0) {
-        embedEl.classList.add("knowgrove-image-resizing");
-        embedEl.style.setProperty("width", `${w}px`, "important");
-        embedEl.style.setProperty("max-width", `${w}px`, "important");
-        img.style.setProperty("width", `${w}px`, "important");
-      }
-    }
+    if (this.boundImages.has(imgEl)) return;
+    this.boundImages.add(imgEl);
+    imgEl.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      this.cancelHideAdorner();
+      this.attachAdornerToImage(embedEl, imgEl);
+      this.isSelected = true;
+      event.preventDefault();
+      event.stopPropagation();
+      this.beginPendingReorder(embedEl, imgEl, event);
+    });
+  }
 
-    img.setAttribute("draggable", "false");
-
-    if (!this.boundImages.has(img)) {
-      this.boundImages.add(img);
-
-      const onDirectImageStart = (event: MouseEvent | PointerEvent): void => {
-        this.cancelHideAdorner();
-        this.attachAdornerToImage(embedEl, img);
-        this.isSelected = true;
-        this.startReorderDrag(embedEl, img, event.clientX, event.clientY);
-      };
-
-      img.addEventListener("pointerdown", onDirectImageStart);
-      img.addEventListener("mousedown", onDirectImageStart);
+  private beginPendingReorder(embedEl: HTMLElement, imgEl: HTMLImageElement, event: PointerEvent): void {
+    this.pendingReorder = {
+      embedEl,
+      imgEl,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    try {
+      (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Best effort.
     }
   }
 
@@ -392,552 +456,578 @@ export class ImageLayoutEnhancer {
     this.currentTarget = { embedEl, imgEl };
     this.createRootAdorner();
     this.updateAdornerPosition();
-    if (this.adornerEl) {
-      this.adornerEl.classList.add("is-visible");
-    }
+    this.adornerEl?.classList.add("is-visible");
+  }
+
+  private scheduleAdornerGeometryUpdate(): void {
+    if (this.geometryRaf !== null) return;
+    this.geometryRaf = this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+      this.geometryRaf = null;
+      this.updateAdornerPosition();
+    }) ?? null;
   }
 
   private updateAdornerPosition(): void {
     if (!this.adornerEl || !this.currentTarget) return;
     const { imgEl } = this.currentTarget;
     if (!imgEl.isConnected) {
-      this.hideAdorner();
+      this.hideAdorner(true);
       return;
     }
-
     const rect = imgEl.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
-      this.hideAdorner();
+    if (rect.width <= 0 || rect.height <= 0) {
+      this.hideAdorner(true);
       return;
     }
-
-    this.adornerEl.style.setProperty("left", `${rect.left}px`);
-    this.adornerEl.style.setProperty("top", `${rect.top}px`);
-    this.adornerEl.style.setProperty("width", `${rect.width}px`);
-    this.adornerEl.style.setProperty("height", `${rect.height}px`);
+    this.adornerEl.style.left = `${rect.left}px`;
+    this.adornerEl.style.top = `${rect.top}px`;
+    this.adornerEl.style.width = `${rect.width}px`;
+    this.adornerEl.style.height = `${rect.height}px`;
   }
 
   private scheduleHideAdorner(): void {
-    if (this.hideTimeout !== null) window.clearTimeout(this.hideTimeout);
-    this.hideTimeout = window.setTimeout(() => {
-      this.hideAdorner();
-    }, 280);
+    this.cancelHideAdorner();
+    this.hideTimeout = this.ownerDocument.defaultView?.setTimeout(() => this.hideAdorner(false), 220) ?? null;
   }
 
   private cancelHideAdorner(): void {
-    if (this.hideTimeout !== null) {
-      window.clearTimeout(this.hideTimeout);
-      this.hideTimeout = null;
-    }
+    if (this.hideTimeout !== null) this.ownerDocument.defaultView?.clearTimeout(this.hideTimeout);
+    this.hideTimeout = null;
   }
 
-  private hideAdorner(): void {
-    if (this.activeDrag) return;
-    if (this.adornerEl) {
-      this.adornerEl.classList.remove("is-visible", "is-resizing");
-    }
+  private hideAdorner(force: boolean): void {
+    if (!force && (this.activeResize || this.activeReorder || this.isSelected)) return;
+    this.adornerEl?.classList.remove("is-visible", "is-resizing");
+    if (force) this.currentTarget = null;
   }
 
-  public startAdornerDrag(
-    handleType: "nw" | "ne" | "se" | "sw" | "e" | "w" | "n" | "s",
-    clientX: number,
-    clientY: number,
-    handle: HTMLElement,
-  ): void {
+  private startResize(handleType: ResizeHandle, event: PointerEvent, _handle: HTMLElement): void {
     if (!this.currentTarget || !this.adornerEl) return;
     const { embedEl, imgEl } = this.currentTarget;
-
+    const resolved = this.resolveOccurrence(embedEl, imgEl);
+    if (!resolved) return;
     const rect = imgEl.getBoundingClientRect();
+    const parentWidth = this.availableContentWidth(embedEl);
+    const naturalWidth = imgEl.naturalWidth || rect.width || 300;
+    const naturalHeight = imgEl.naturalHeight || rect.height || 200;
+    const wrapper = embedEl.querySelector<HTMLElement>(".image-wrapper");
+    const scroller = this.findScroller(resolved.view);
     const startWidth = Math.round(rect.width);
     const startHeight = Math.round(rect.height);
-    const naturalWidth = imgEl.naturalWidth || startWidth || 300;
-    const naturalHeight = imgEl.naturalHeight || startHeight || 200;
-    const aspectRatio = naturalWidth / Math.max(1, naturalHeight);
-
-    this.adornerEl.classList.add("is-resizing");
-    document.body.classList.add("knowgrove-image-dragging");
-
-    if (this.badgeEl) {
-      this.badgeEl.setText(`${startWidth} × ${startHeight} px`);
-      this.badgeEl.classList.add("is-visible");
-    }
-
-    this.activeDrag = {
+    this.activeResize = {
       embedEl,
       imgEl,
+      view: resolved.view,
+      occurrence: resolved.occurrence,
       handleType,
-      startX: clientX,
-      startY: clientY,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
       startWidth,
       startHeight,
       currentWidth: startWidth,
       currentHeight: startHeight,
-      aspectRatio,
-      handle,
-      badgeEl: this.badgeEl ?? createDiv(),
+      aspectRatio: naturalWidth / Math.max(1, naturalHeight),
+      maxWidth: parentWidth,
+      scroller,
+      lockedScrollTop: scroller?.scrollTop ?? 0,
+      originalEmbedStyle: embedEl.getAttribute("style") ?? "",
+      originalImageStyle: imgEl.getAttribute("style") ?? "",
+      originalWrapperStyle: wrapper?.getAttribute("style") ?? null,
     };
-  }
-
-  private onAdornerDragMove(clientX: number, clientY: number, shiftKey: boolean): void {
-    if (!this.activeDrag || !this.adornerEl) return;
-
-    const deltaX = clientX - this.activeDrag.startX;
-    let newWidth = this.activeDrag.startWidth;
-
-    if (["se", "ne", "e"].includes(this.activeDrag.handleType)) {
-      newWidth = Math.max(60, this.activeDrag.startWidth + deltaX);
-    } else if (["sw", "nw", "w"].includes(this.activeDrag.handleType)) {
-      newWidth = Math.max(60, this.activeDrag.startWidth - deltaX);
-    }
-
-    let newHeight = Math.round(newWidth / this.activeDrag.aspectRatio);
-
-    if (this.activeDrag.handleType === "n" || this.activeDrag.handleType === "s" || shiftKey) {
-      const deltaY = clientY - this.activeDrag.startY;
-      if (this.activeDrag.handleType.includes("s")) {
-        newHeight = Math.max(40, this.activeDrag.startHeight + deltaY);
-      } else if (this.activeDrag.handleType.includes("n")) {
-        newHeight = Math.max(40, this.activeDrag.startHeight - deltaY);
-      }
-    }
-
-    this.activeDrag.currentWidth = newWidth;
-    this.activeDrag.currentHeight = newHeight;
-
-    // Apply to DOM elements
-    this.activeDrag.embedEl.classList.add("knowgrove-image-resizing");
-    this.activeDrag.embedEl.style.setProperty("width", `${newWidth}px`, "important");
-    this.activeDrag.embedEl.style.setProperty("max-width", `${newWidth}px`, "important");
-
-    this.activeDrag.imgEl.style.setProperty("width", `${newWidth}px`, "important");
-    this.activeDrag.imgEl.style.setProperty("height", `${newHeight}px`, "important");
-
-    const wrapper = this.activeDrag.embedEl.querySelector<HTMLElement>(".image-wrapper");
-    if (wrapper) {
-      wrapper.style.setProperty("width", `${newWidth}px`, "important");
-    }
-
-    // Update Adorner overlay size
-    this.adornerEl.style.setProperty("width", `${newWidth}px`);
-    this.adornerEl.style.setProperty("height", `${newHeight}px`);
-
+    scroller?.classList.add("knowgrove-scroll-anchor-lock");
+    this.adornerEl.classList.add("is-resizing", "is-visible");
+    this.ownerDocument.body.classList.add("knowgrove-image-dragging");
     if (this.badgeEl) {
-      this.badgeEl.setText(`${newWidth} × ${newHeight} px`);
+      this.badgeEl.textContent = `${startWidth} × ${startHeight} px`;
+      this.badgeEl.classList.add("is-visible");
     }
   }
 
-  private onAdornerDragEnd(): void {
-    if (!this.activeDrag) return;
-    const { embedEl, currentWidth, currentHeight } = this.activeDrag;
+  private onResizeMove(clientX: number, clientY: number, freeResize: boolean): void {
+    const state = this.activeResize;
+    if (!state || !this.adornerEl) return;
+    const dx = clientX - state.startX;
+    const dy = clientY - state.startY;
+    const horizontalSign = state.handleType.includes("w") ? -1 : 1;
+    const verticalSign = state.handleType.includes("n") ? -1 : 1;
+    const changesWidth = /[ew]/.test(state.handleType);
+    const changesHeight = /[ns]/.test(state.handleType);
 
-    if (this.adornerEl) {
-      this.adornerEl.classList.remove("is-resizing");
-    }
-    if (this.badgeEl) {
-      this.badgeEl.classList.remove("is-visible");
-    }
-    document.body.classList.remove("knowgrove-image-dragging");
-
-    this.commitImageSizeToMarkdown(embedEl, currentWidth, currentHeight);
-    this.cleanupActiveDrag();
-
-    window.setTimeout(() => {
-      this.updateAdornerPosition();
-    }, 40);
-  }
-
-  private cleanupActiveDrag(): void {
-    this.activeDrag = null;
-  }
-
-  public setImageAlignment(embedEl: HTMLElement, alignment: "left" | "center" | "right"): void {
-    embedEl.classList.remove("knowgrove-align-left", "knowgrove-align-center", "knowgrove-align-right");
-    embedEl.classList.add(`knowgrove-align-${alignment}`);
-
-    this.updateImageMarkdownSyntax(embedEl, { alignment });
-    window.setTimeout(() => this.updateAdornerPosition(), 40);
-  }
-
-  private applyPresetWidth(embedEl: HTMLElement, imgEl: HTMLImageElement, ratio: number): void {
-    const parentWidth = embedEl.parentElement?.getBoundingClientRect().width || 700;
-    const targetWidth = Math.round(parentWidth * ratio);
-    const naturalWidth = imgEl.naturalWidth || 300;
-    const naturalHeight = imgEl.naturalHeight || 200;
-    const targetHeight = Math.round(targetWidth * (naturalHeight / naturalWidth));
-
-    embedEl.classList.add("knowgrove-image-resizing");
-    embedEl.style.setProperty("width", `${targetWidth}px`, "important");
-    embedEl.style.setProperty("max-width", `${targetWidth}px`, "important");
-
-    imgEl.style.setProperty("width", `${targetWidth}px`, "important");
-    imgEl.style.setProperty("height", `${targetHeight}px`, "important");
-
-    const wrapper = embedEl.querySelector<HTMLElement>(".image-wrapper");
-    if (wrapper) {
-      wrapper.style.setProperty("width", `${targetWidth}px`, "important");
-    }
-
-    this.commitImageSizeToMarkdown(embedEl, targetWidth, targetHeight);
-    window.setTimeout(() => this.updateAdornerPosition(), 40);
-  }
-
-  private resetImage(embedEl: HTMLElement, imgEl: HTMLImageElement): void {
-    imgEl.style.removeProperty("width");
-    imgEl.style.removeProperty("height");
-    embedEl.style.removeProperty("width");
-    embedEl.style.removeProperty("max-width");
-    embedEl.classList.remove("knowgrove-image-resizing", "knowgrove-align-left", "knowgrove-align-center", "knowgrove-align-right");
-
-    const wrapper = embedEl.querySelector<HTMLElement>(".image-wrapper");
-    if (wrapper) {
-      wrapper.style.removeProperty("width");
-    }
-
-    this.updateImageMarkdownSyntax(embedEl, { reset: true });
-    window.setTimeout(() => this.updateAdornerPosition(), 40);
-  }
-
-  private commitImageSizeToMarkdown(embedEl: HTMLElement, width: number, height?: number): void {
-    this.updateImageMarkdownSyntax(embedEl, { width, height });
-  }
-
-  private getFrontmatterEndLine(docText: string): number {
-    const lines = docText.split("\n");
-    if (lines[0]?.trim() !== "---") return -1;
-    for (let i = 1; i < lines.length; i += 1) {
-      if (lines[i]?.trim() === "---") return i;
-    }
-    return -1;
-  }
-
-  private startReorderDrag(embedEl: HTMLElement, imgEl: HTMLImageElement, clientX: number, clientY: number): void {
-    this.cleanupReorderDrag();
-
-    const view = this.findMarkdownViewForElement(embedEl);
-    if (!view) return;
-
-    const src = embedEl.getAttribute("src") || "";
-    const filename = src.split("/").pop() || src;
-    const cleanFilename = filename.split("#")[0] || filename;
-
-    const docText = view.editor.getValue();
-    const lines = docText.split("\n");
-    let sourceLineIndex = -1;
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i]?.includes(cleanFilename)) {
-        sourceLineIndex = i;
-        break;
-      }
-    }
-
-    if (sourceLineIndex < 0) return;
-
-    // Create Ghost preview element
-    const ghostEl = createDiv({ cls: "knowgrove-image-drag-ghost" });
-    const ghostImg = ghostEl.createEl("img");
-    ghostImg.src = imgEl.src;
-    ghostEl.createSpan({ cls: "knowgrove-ghost-label", text: "移动图片至..." });
-    ghostEl.style.setProperty("left", `${clientX + 16}px`);
-    ghostEl.style.setProperty("top", `${clientY + 16}px`);
-    document.body.appendChild(ghostEl);
-
-    // Create Drop Indicator line
-    const dropIndicator = createDiv({ cls: "knowgrove-image-drop-indicator" });
-    dropIndicator.createDiv({ cls: "knowgrove-drop-indicator-dot left" });
-    dropIndicator.createDiv({ cls: "knowgrove-drop-indicator-dot right" });
-    document.body.appendChild(dropIndicator);
-
-    // Hide Adorner during reorder drag
-    if (this.adornerEl) {
-      this.adornerEl.classList.remove("is-visible");
-    }
-    embedEl.classList.add("knowgrove-image-being-dragged");
-    document.body.classList.add("knowgrove-reorder-dragging");
-
-    this.activeReorderDrag = {
-      embedEl,
-      imgEl,
-      sourceLineIndex,
-      targetLineIndex: sourceLineIndex,
-      ghostEl,
-      dropIndicator,
-      startX: clientX,
-      startY: clientY,
-    };
-  }
-
-  private onReorderDragMove(clientX: number, clientY: number): void {
-    if (!this.activeReorderDrag) return;
-
-    // Move Ghost preview
-    this.activeReorderDrag.ghostEl.style.setProperty("left", `${clientX + 16}px`);
-    this.activeReorderDrag.ghostEl.style.setProperty("top", `${clientY + 16}px`);
-
-    const view = this.findMarkdownViewForElement(this.activeReorderDrag.embedEl);
-    if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const lines = docText.split("\n");
-    const fmEnd = this.getFrontmatterEndLine(docText);
-    const minAllowedLine = fmEnd >= 0 ? fmEnd + 1 : 0;
-
-    const container = view.containerEl;
-    const contentEl = container.querySelector<HTMLElement>(".cm-content, .markdown-preview-section") || container;
-    const contentRect = contentEl.getBoundingClientRect();
-
-    // Query all visible block elements
-    const lineElements = Array.from(contentEl.querySelectorAll<HTMLElement>(".cm-line, p, h1, h2, h3, h4, h5, h6, li, table, pre"));
-    if (lineElements.length === 0) return;
-
-    // Find the line element closest to clientY
-    let closestEl: HTMLElement | null = null;
-    let closestDistance = Infinity;
-
-    for (let i = 0; i < lineElements.length; i += 1) {
-      const el = lineElements[i];
-      if (!el) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.height === 0) continue;
-
-      const midY = rect.top + rect.height / 2;
-      const dist = Math.abs(clientY - midY);
-
-      if (dist < closestDistance) {
-        closestDistance = dist;
-        closestEl = el;
-      }
-    }
-
-    if (!closestEl) return;
-
-    const targetRect = closestEl.getBoundingClientRect();
-    const isEmptyLine = (closestEl.textContent || "").trim() === "";
-
-    let isUpper = false;
-    let indicatorY = targetRect.top;
-
-    if (isEmptyLine) {
-      // For empty paragraph gap, snap indicator to vertical center
-      indicatorY = targetRect.top + targetRect.height / 2;
+    let width = state.startWidth;
+    let height = state.startHeight;
+    if (freeResize) {
+      if (changesWidth) width = state.startWidth + horizontalSign * dx;
+      if (changesHeight) height = state.startHeight + verticalSign * dy;
+    } else if (changesWidth && changesHeight) {
+      const candidateWidth = state.startWidth + horizontalSign * dx;
+      const candidateHeight = state.startHeight + verticalSign * dy;
+      const widthFromHeight = candidateHeight * state.aspectRatio;
+      width = Math.abs(candidateWidth - state.startWidth) >= Math.abs(widthFromHeight - state.startWidth)
+        ? candidateWidth
+        : widthFromHeight;
+      height = width / state.aspectRatio;
+    } else if (changesWidth) {
+      width = state.startWidth + horizontalSign * dx;
+      height = width / state.aspectRatio;
     } else {
-      // For text lines, snap indicator to top or bottom edge based on mouse half
-      isUpper = clientY < targetRect.top + targetRect.height / 2;
-      indicatorY = isUpper ? targetRect.top : targetRect.bottom;
+      height = state.startHeight + verticalSign * dy;
+      width = height * state.aspectRatio;
     }
 
-    // Get exact line index from CodeMirror 6 or fallback to text search
-    let targetLine = -1;
-    const cmView = (editor as unknown as { cm?: CodeMirrorEditorView }).cm;
-    if (cmView && typeof cmView.posAtDOM === "function") {
-      try {
-        const pos = cmView.posAtDOM(closestEl);
-        targetLine = editor.offsetToPos(pos).line;
-      } catch {
-        targetLine = -1;
-      }
-    }
-
-    if (targetLine < 0) {
-      const targetText = closestEl.textContent?.trim() || "";
-      if (targetText) {
-        targetLine = lines.findIndex((l) => l.trim().includes(targetText.slice(0, 30)));
-      }
-    }
-    if (targetLine < 0) targetLine = minAllowedLine;
-
-    let targetIdx = isEmptyLine ? targetLine : (isUpper ? targetLine : targetLine + 1);
-    if (fmEnd >= 0 && targetIdx <= fmEnd) {
-      targetIdx = fmEnd + 1;
-    }
-    targetIdx = Math.max(minAllowedLine, Math.min(targetIdx, lines.length));
-
-    this.activeReorderDrag.targetLineIndex = targetIdx;
-
-    // Align indicator visually with the line element
-    const indicatorLeft = Math.max(contentRect.left, targetRect.left);
-    const indicatorWidth = Math.min(contentRect.width, targetRect.width || contentRect.width);
-
-    this.activeReorderDrag.dropIndicator.classList.add("is-active");
-    this.activeReorderDrag.dropIndicator.style.setProperty("left", `${indicatorLeft}px`);
-    this.activeReorderDrag.dropIndicator.style.setProperty("top", `${indicatorY - 1.5}px`);
-    this.activeReorderDrag.dropIndicator.style.setProperty("width", `${indicatorWidth}px`);
+    const clamped = clampResize(width, height, state.maxWidth, MIN_IMAGE_WIDTH, MIN_IMAGE_HEIGHT);
+    state.currentWidth = clamped.width;
+    state.currentHeight = clamped.height;
+    this.applyImageDimensionsToDom(state.embedEl, state.imgEl, clamped.width, clamped.height);
+    this.adornerEl.style.width = `${clamped.width}px`;
+    this.adornerEl.style.height = `${clamped.height}px`;
+    if (this.badgeEl) this.badgeEl.textContent = `${clamped.width} × ${clamped.height} px`;
+    this.restoreLockedScroll(state.scroller, state.lockedScrollTop);
   }
 
-  private onReorderDragEnd(): void {
-    if (!this.activeReorderDrag) return;
+  private finishResize(cancelled: boolean): void {
+    const state = this.activeResize;
+    if (!state) return;
+    this.activeResize = null;
+    this.ownerDocument.body.classList.remove("knowgrove-image-dragging");
+    this.adornerEl?.classList.remove("is-resizing");
+    this.badgeEl?.classList.remove("is-visible");
 
-    const { embedEl, sourceLineIndex, targetLineIndex } = this.activeReorderDrag;
-    this.cleanupReorderDrag();
-
-    if (sourceLineIndex === targetLineIndex || targetLineIndex === sourceLineIndex + 1 || targetLineIndex < 0) {
-      const imgEl = embedEl.querySelector<HTMLImageElement>("img");
-      if (imgEl) this.attachAdornerToImage(embedEl, imgEl);
+    if (cancelled) {
+      this.restoreInlineStyle(state.embedEl, state.originalEmbedStyle);
+      this.restoreInlineStyle(state.imgEl, state.originalImageStyle);
+      const wrapper = state.embedEl.querySelector<HTMLElement>(".image-wrapper");
+      if (wrapper) this.restoreInlineStyle(wrapper, state.originalWrapperStyle ?? "");
+      this.unlockScrollerSoon(state.scroller, state.lockedScrollTop);
+      this.scheduleAdornerGeometryUpdate();
       return;
     }
 
-    const view = this.findMarkdownViewForElement(embedEl);
-    if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const lines = docText.split("\n");
-
-    const sourceLineText = lines[sourceLineIndex];
-    if (!sourceLineText) return;
-
-    const fmEnd = this.getFrontmatterEndLine(docText);
-    let finalTarget = targetLineIndex;
-    if (fmEnd >= 0 && finalTarget <= fmEnd) {
-      finalTarget = fmEnd + 1;
-    }
-
-    lines.splice(sourceLineIndex, 1);
-    const insertIdx = finalTarget > sourceLineIndex ? finalTarget - 1 : finalTarget;
-    lines.splice(Math.max(0, Math.min(insertIdx, lines.length)), 0, sourceLineText);
-
-    editor.setValue(lines.join("\n"));
-
-    window.setTimeout(() => {
-      this.scanAndEnhanceImages();
-      const updatedEmbed = view.containerEl.querySelector<HTMLElement>(`.image-embed[src*="${embedEl.getAttribute("src") || ""}"]`);
-      const updatedImg = updatedEmbed?.querySelector<HTMLImageElement>("img");
-      if (updatedEmbed && updatedImg) {
-        this.attachAdornerToImage(updatedEmbed, updatedImg);
-      }
-    }, 100);
+    this.commitOccurrenceUpdate(state.view, state.occurrence, {
+      width: state.currentWidth,
+      height: state.currentHeight,
+    }, state.scroller, state.lockedScrollTop);
   }
 
-  private cleanupReorderDrag(): void {
-    if (this.activeReorderDrag) {
-      this.activeReorderDrag.ghostEl.remove();
-      this.activeReorderDrag.dropIndicator.remove();
-      this.activeReorderDrag.embedEl.classList.remove("knowgrove-image-being-dragged");
-      document.body.classList.remove("knowgrove-reorder-dragging");
-      this.activeReorderDrag = null;
+  private startReorderDrag(embedEl: HTMLElement, imgEl: HTMLImageElement, event: PointerEvent): void {
+    const resolved = this.resolveOccurrence(embedEl, imgEl);
+    if (!resolved) return;
+    const ghostEl = this.ownerDocument.createElement("div");
+    ghostEl.className = "knowgrove-image-drag-ghost";
+    const ghostImg = this.ownerDocument.createElement("img");
+    ghostImg.src = imgEl.src;
+    ghostEl.appendChild(ghostImg);
+    const label = this.ownerDocument.createElement("span");
+    label.className = "knowgrove-ghost-label";
+    label.textContent = "移动图片";
+    ghostEl.appendChild(label);
+    ghostEl.style.left = `${event.clientX}px`;
+    ghostEl.style.top = `${event.clientY}px`;
+    this.ownerDocument.body.appendChild(ghostEl);
+
+    const indicator = this.ownerDocument.createElement("div");
+    indicator.className = "knowgrove-image-drop-indicator is-active";
+    for (const side of ["left", "right"]) {
+      const dot = this.ownerDocument.createElement("div");
+      dot.className = `knowgrove-drop-indicator-dot ${side}`;
+      indicator.appendChild(dot);
     }
+    this.ownerDocument.body.appendChild(indicator);
+
+    const scroller = this.findScroller(resolved.view);
+    scroller?.classList.add("knowgrove-scroll-anchor-lock");
+    embedEl.classList.add("knowgrove-image-being-dragged");
+    this.ownerDocument.body.classList.add("knowgrove-reorder-dragging");
+    this.adornerEl?.classList.remove("is-visible");
+    this.activeReorder = {
+      embedEl,
+      imgEl,
+      view: resolved.view,
+      occurrence: resolved.occurrence,
+      pointerId: event.pointerId,
+      ghostEl,
+      dropIndicator: indicator,
+      targetOffset: resolved.occurrence.unitFrom,
+      placement: "line-before",
+      targetImage: null,
+      scroller,
+      lockedScrollTop: scroller?.scrollTop ?? 0,
+    };
+    this.onReorderMove(event.clientX, event.clientY);
+  }
+
+  private onReorderMove(clientX: number, clientY: number): void {
+    const state = this.activeReorder;
+    if (!state) return;
+    state.ghostEl.style.left = `${clientX}px`;
+    state.ghostEl.style.top = `${clientY}px`;
+    const contentEl = state.view.containerEl.querySelector<HTMLElement>(".cm-content")
+      ?? state.view.containerEl.querySelector<HTMLElement>(".markdown-preview-section")
+      ?? state.view.containerEl;
+    const contentRect = contentEl.getBoundingClientRect();
+    const indicatorY = Math.max(contentRect.top, Math.min(clientY, contentRect.bottom));
+    const indicatorLeft = contentRect.left;
+    state.dropIndicator.style.left = `${indicatorLeft}px`;
+    state.dropIndicator.style.top = `${indicatorY - 1.5}px`;
+    state.dropIndicator.style.width = `${contentRect.width}px`;
+
+    const pointed = this.ownerDocument.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const targetEmbed = pointed?.closest<HTMLElement>(".image-embed");
+    if (targetEmbed && targetEmbed !== state.embedEl && state.view.containerEl.contains(targetEmbed)) {
+      const targetImg = targetEmbed.querySelector<HTMLImageElement>("img");
+      const resolvedTarget = targetImg ? this.resolveOccurrence(targetEmbed, targetImg) : null;
+      if (resolvedTarget && resolvedTarget.occurrence.unitFrom !== state.occurrence.unitFrom) {
+        const rect = targetEmbed.getBoundingClientRect();
+        state.targetImage = resolvedTarget.occurrence;
+        state.placement = clientX < rect.left + rect.width / 2 ? "image-before" : "image-after";
+        state.targetOffset = state.placement === "image-before"
+          ? resolvedTarget.occurrence.unitFrom
+          : resolvedTarget.occurrence.unitTo;
+        this.restoreLockedScroll(state.scroller, state.lockedScrollTop);
+        return;
+      }
+    }
+
+    const cm = this.codeMirror(state.view);
+    const offset = cm?.posAtCoords({ x: clientX, y: clientY });
+    if (offset === null || offset === undefined) return;
+    const docText = state.view.editor.getValue();
+    if (isOffsetInsideFencedCode(docText, offset)) return;
+    const position = state.view.editor.offsetToPos(offset);
+    const lineText = state.view.editor.getLine(position.line) ?? "";
+    const lineStart = state.view.editor.posToOffset({ line: position.line, ch: 0 });
+    const lineElement = pointed?.closest<HTMLElement>(".cm-line, p, h1, h2, h3, h4, h5, h6, li, table, pre");
+    const lineRect = lineElement?.getBoundingClientRect();
+    state.placement = lineRect && clientY >= lineRect.top + lineRect.height / 2 ? "line-after" : "line-before";
+    state.targetOffset = state.placement === "line-after" ? lineStart + lineText.length : lineStart;
+    state.targetImage = null;
+    this.restoreLockedScroll(state.scroller, state.lockedScrollTop);
+  }
+
+  private abortImageReorder(error: unknown): void {
+    this.pendingReorder = null;
+    this.pendingMoveEvent = null;
+    this.finishReorder(true);
+    console.warn("KnowGrove: cancelled image reorder after an editor coordinate lookup failed", error);
+  }
+
+  private finishReorder(cancelled: boolean): void {
+    const state = this.activeReorder;
+    if (!state) return;
+    this.activeReorder = null;
+    state.ghostEl.remove();
+    state.dropIndicator.remove();
+    state.embedEl.classList.remove("knowgrove-image-being-dragged");
+    this.ownerDocument.body.classList.remove("knowgrove-reorder-dragging");
+
+    if (cancelled) {
+      this.unlockScrollerSoon(state.scroller, state.lockedScrollTop);
+      if (state.imgEl.isConnected) this.attachAdornerToImage(state.embedEl, state.imgEl);
+      return;
+    }
+
+    const docText = state.view.editor.getValue();
+    const source = this.reResolveOccurrence(state.view, state.occurrence, state.embedEl, state.imgEl);
+    if (!source) {
+      this.unlockScrollerSoon(state.scroller, state.lockedScrollTop);
+      return;
+    }
+    let targetImage = state.targetImage;
+    if (targetImage) {
+      targetImage = findImageOccurrence(docText, targetImage.unitFrom, targetImage.target);
+    }
+    const changes = buildImageMoveChanges(
+      docText,
+      source,
+      state.targetOffset,
+      state.placement,
+      targetImage,
+    );
+    if (!changes) {
+      this.unlockScrollerSoon(state.scroller, state.lockedScrollTop);
+      if (state.imgEl.isConnected) this.attachAdornerToImage(state.embedEl, state.imgEl);
+      return;
+    }
+    this.dispatchChanges(state.view, changes);
+    this.invalidateCache(state.view);
+    this.hideAdorner(true);
+    this.unlockScrollerSoon(state.scroller, state.lockedScrollTop);
+  }
+
+  private applyAlignment(alignment: ImageAlignment): void {
+    if (!this.currentTarget) return;
+    const resolved = this.resolveOccurrence(this.currentTarget.embedEl, this.currentTarget.imgEl);
+    if (!resolved) return;
+    const scroller = this.findScroller(resolved.view);
+    const scrollTop = scroller?.scrollTop ?? 0;
+    this.commitOccurrenceUpdate(resolved.view, resolved.occurrence, { alignment }, scroller, scrollTop);
+  }
+
+  private applyPresetWidth(ratio: number): void {
+    if (!this.currentTarget) return;
+    const { embedEl, imgEl } = this.currentTarget;
+    const resolved = this.resolveOccurrence(embedEl, imgEl);
+    if (!resolved) return;
+    const available = this.availableContentWidth(embedEl);
+    const targetWidth = Math.max(MIN_IMAGE_WIDTH, Math.round(available * ratio));
+    const naturalWidth = imgEl.naturalWidth || imgEl.getBoundingClientRect().width || 300;
+    const naturalHeight = imgEl.naturalHeight || imgEl.getBoundingClientRect().height || 200;
+    const targetHeight = Math.max(MIN_IMAGE_HEIGHT, Math.round(targetWidth * (naturalHeight / Math.max(1, naturalWidth))));
+    const scroller = this.findScroller(resolved.view);
+    const scrollTop = scroller?.scrollTop ?? 0;
+    this.applyImageDimensionsToDom(embedEl, imgEl, targetWidth, targetHeight);
+    this.commitOccurrenceUpdate(resolved.view, resolved.occurrence, { width: targetWidth, height: targetHeight }, scroller, scrollTop);
+  }
+
+  private resetCurrentImage(): void {
+    if (!this.currentTarget) return;
+    const { embedEl, imgEl } = this.currentTarget;
+    const resolved = this.resolveOccurrence(embedEl, imgEl);
+    if (!resolved) return;
+    const scroller = this.findScroller(resolved.view);
+    const scrollTop = scroller?.scrollTop ?? 0;
+    this.commitOccurrenceUpdate(resolved.view, resolved.occurrence, { reset: true }, scroller, scrollTop);
+  }
+
+  private commitOccurrenceUpdate(
+    view: MarkdownView,
+    occurrence: ImageOccurrence,
+    update: { alignment?: ImageAlignment; width?: number; height?: number; reset?: boolean },
+    scroller: HTMLElement | null,
+    scrollTop: number,
+  ): void {
+    const currentText = view.editor.getValue();
+    const current = findImageOccurrence(currentText, occurrence.unitFrom, occurrence.target);
+    if (!current) {
+      this.unlockScrollerSoon(scroller, scrollTop);
+      return;
+    }
+    const replacement = updateImageSyntax(current, update);
+    if (replacement === current.unitRaw) {
+      this.unlockScrollerSoon(scroller, scrollTop);
+      return;
+    }
+    scroller?.classList.add("knowgrove-scroll-anchor-lock");
+    this.dispatchChanges(view, [{ from: current.unitFrom, to: current.unitTo, insert: replacement }]);
+    this.invalidateCache(view);
+    this.hideAdorner(true);
+    this.unlockScrollerSoon(scroller, scrollTop);
+  }
+
+  private dispatchChanges(view: MarkdownView, changes: TextChange[]): void {
+    const cm = this.codeMirror(view);
+    if (cm) {
+      cm.dispatch({
+        changes: changes.map((change) => ({ from: change.from, to: change.to, insert: change.insert })),
+        scrollIntoView: false,
+        userEvent: "input.knowgrove-image",
+      });
+      return;
+    }
+    for (const change of [...changes].sort((left, right) => right.from - left.from || right.to - left.to)) {
+      view.editor.replaceRange(
+        change.insert,
+        view.editor.offsetToPos(change.from),
+        view.editor.offsetToPos(change.to),
+      );
+    }
+  }
+
+  private resolveOccurrence(
+    embedEl: HTMLElement,
+    imgEl: HTMLImageElement,
+  ): { view: MarkdownView; occurrence: ImageOccurrence } | null {
+    const view = this.findMarkdownViewForElement(embedEl);
+    if (!view) return null;
+    const docText = view.editor.getValue();
+    const cache = this.documentCache(view, docText);
+    const cm = this.codeMirror(view);
+    let hintOffset = 0;
+    if (cm) {
+      try {
+        hintOffset = cm.posAtDOM(embedEl);
+      } catch {
+        try {
+          const line = embedEl.closest(".cm-line");
+          if (line) hintOffset = cm.posAtDOM(line);
+        } catch {
+          hintOffset = 0;
+        }
+      }
+    }
+    const sourceHint = embedEl.getAttribute("src") || imgEl.getAttribute("src") || imgEl.getAttribute("alt") || "";
+    const occurrence = this.findCachedOccurrence(cache.occurrences, hintOffset, sourceHint)
+      ?? findImageOccurrence(docText, hintOffset, sourceHint);
+    return occurrence ? { view, occurrence } : null;
+  }
+
+  private reResolveOccurrence(
+    view: MarkdownView,
+    previous: ImageOccurrence,
+    embedEl: HTMLElement,
+    imgEl: HTMLImageElement,
+  ): ImageOccurrence | null {
+    const current = this.resolveOccurrence(embedEl, imgEl);
+    if (current?.view === view) return current.occurrence;
+    return findImageOccurrence(view.editor.getValue(), previous.unitFrom, previous.target);
+  }
+
+  private documentCache(view: MarkdownView, text: string): DocumentImageCache {
+    const existing = this.imageCache.get(view);
+    if (existing?.text === text) return existing;
+    const next = { text, occurrences: parseImageOccurrences(text) };
+    this.imageCache.set(view, next);
+    return next;
+  }
+
+  private invalidateCache(view: MarkdownView): void {
+    this.imageCache.delete(view);
+  }
+
+  private findCachedOccurrence(
+    occurrences: ImageOccurrence[],
+    hintOffset: number,
+    sourceHint: string,
+  ): ImageOccurrence | null {
+    if (!occurrences.length) return null;
+    const name = this.normalizedFileName(sourceHint);
+    let best: ImageOccurrence | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const occurrence of occurrences) {
+      if (name && this.normalizedFileName(occurrence.target) !== name) continue;
+      const distance = hintOffset < occurrence.from
+        ? occurrence.from - hintOffset
+        : hintOffset > occurrence.to
+          ? hintOffset - occurrence.to
+          : 0;
+      if (distance < bestDistance) {
+        best = occurrence;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  private normalizedFileName(value: string): string {
+    let normalized = value.replace(/\\/g, "/").split("?")[0]?.split("#")[0] ?? value;
+    try {
+      normalized = decodeURIComponent(normalized);
+    } catch {
+      // Keep original text.
+    }
+    return normalized.split("/").pop()?.toLowerCase() ?? "";
   }
 
   private findMarkdownViewForElement(element: HTMLElement): MarkdownView | null {
-    const active = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
-    if (active && active.containerEl.contains(element)) return active;
-
     for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
-      if (leaf.view instanceof MarkdownView && leaf.view.containerEl.contains(element)) {
-        return leaf.view;
-      }
+      if (leaf.view instanceof MarkdownView && leaf.view.containerEl.contains(element)) return leaf.view;
     }
-    return active || (this.plugin.app.workspace.getLeavesOfType("markdown")[0]?.view as MarkdownView) || null;
+    return null;
   }
 
-  private updateImageMarkdownSyntax(
+  private codeMirror(view: MarkdownView): CodeMirrorEditorView | null {
+    return ((view.editor as unknown as { cm?: CodeMirrorEditorView }).cm) ?? null;
+  }
+
+  private findScroller(view: MarkdownView): HTMLElement | null {
+    return view.containerEl.querySelector<HTMLElement>(".cm-scroller")
+      ?? view.containerEl.querySelector<HTMLElement>(".markdown-preview-view");
+  }
+
+  private availableContentWidth(embedEl: HTMLElement): number {
+    const content = embedEl.closest<HTMLElement>(".cm-content, .markdown-preview-section")
+      ?? embedEl.parentElement;
+    const width = content?.getBoundingClientRect().width ?? 700;
+    return Math.max(MIN_IMAGE_WIDTH, Math.floor(width));
+  }
+
+  private applyTransientPreview(
     embedEl: HTMLElement,
-    options: { width?: number; height?: number; alignment?: "left" | "center" | "right"; reset?: boolean },
+    imgEl: HTMLImageElement,
+    width: number,
+    height?: number,
   ): void {
-    const targetView = this.findMarkdownViewForElement(embedEl);
-    if (!targetView) return;
-
-    const src = embedEl.getAttribute("src") || "";
-    if (!src) return;
-
-    const filename = src.split("/").pop() || src;
-    const cleanFilename = filename.split("#")[0] || filename;
-
-    const editor = targetView.editor;
-    const docText = editor.getValue();
-    const lines = docText.split("\n");
-
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (!line || !line.includes(cleanFilename)) continue;
-
-      // Match wikilink: ![[target|...]]
-      const wikiMatch = line.match(/!\[\[([^\]\n]+)\]\]/);
-      if (wikiMatch) {
-        const full = wikiMatch[0];
-        const inner = wikiMatch[1] ?? "";
-        const parts = inner.split("|");
-        const baseTarget = (parts[0] ?? src).split("#")[0] ?? src;
-
-        let alignTag = "";
-        if (options.alignment) {
-          alignTag = `#${options.alignment}`;
-        } else if (!options.reset && src.includes("#")) {
-          const existingAlign = src.match(/#(left|center|right)/)?.[1];
-          if (existingAlign) alignTag = `#${existingAlign}`;
-        }
-
-        let newLink = `![[${baseTarget}${alignTag}]]`;
-        if (!options.reset) {
-          const sizePart = options.width
-            ? (options.height ? `${options.width}x${options.height}` : `${options.width}`)
-            : parts.find((p) => /^\d+(x\d+)?$/.test(p.trim()));
-
-          if (sizePart) {
-            newLink = `![[${baseTarget}${alignTag}|${sizePart}]]`;
-          }
-        }
-
-        const newLine = line.replace(full, newLink);
-        if (newLine !== line) {
-          editor.setLine(i, newLine);
-        }
-        return;
-      }
-
-      // Match markdown link: ![alt](url)
-      const mdMatch = line.match(/!\[([^\]\n]*)\]\(([^)\n]+)\)/);
-      if (mdMatch) {
-        const full = mdMatch[0];
-        const currentAlt = mdMatch[1] ?? "";
-        let targetUrl = (mdMatch[2] ?? src).split("#")[0] ?? src;
-
-        if (options.alignment) {
-          targetUrl = `${targetUrl}#${options.alignment}`;
-        } else if (!options.reset && src.includes("#")) {
-          const existingAlign = src.match(/#(left|center|right)/)?.[1];
-          if (existingAlign) targetUrl = `${targetUrl}#${existingAlign}`;
-        }
-
-        let newLink = `![${currentAlt}](${targetUrl})`;
-        if (options.width && !options.reset) {
-          const cleanAlt = currentAlt.replace(/\|\d+(x\d+)?/g, "").replace(/\|(left|center|right)/g, "").trim();
-          const sizePart = `|${options.width}`;
-          newLink = `![${cleanAlt}${sizePart}](${targetUrl})`;
-        } else if (options.reset) {
-          const cleanAlt = currentAlt.replace(/\|\d+(x\d+)?/g, "").replace(/\|(left|center|right)/g, "").trim();
-          newLink = `![${cleanAlt}](${targetUrl})`;
-        }
-
-        const newLine = line.replace(full, newLink);
-        if (newLine !== line) {
-          editor.setLine(i, newLine);
-        }
-        return;
-      }
+    embedEl.classList.add("knowgrove-image-resizing");
+    const widthPx = `${Math.round(width)}px`;
+    embedEl.style.setProperty("width", widthPx);
+    imgEl.style.setProperty("width", widthPx);
+    if (height) imgEl.style.setProperty("height", `${Math.round(height)}px`);
+    else imgEl.style.removeProperty("height");
+    const wrapper = embedEl.querySelector<HTMLElement>(".image-wrapper");
+    if (wrapper) {
+      wrapper.style.setProperty("width", widthPx);
     }
+  }
+
+  private applyImageDimensionsToDom(
+    embedEl: HTMLElement,
+    imgEl: HTMLImageElement,
+    width: number,
+    height?: number,
+  ): void {
+    embedEl.classList.add("knowgrove-image-resizing");
+    embedEl.style.setProperty("width", `${Math.round(width)}px`, "important");
+    imgEl.style.setProperty("width", `${Math.round(width)}px`, "important");
+    if (height) imgEl.style.setProperty("height", `${Math.round(height)}px`, "important");
+    else imgEl.style.removeProperty("height");
+    const wrapper = embedEl.querySelector<HTMLElement>(".image-wrapper");
+    if (wrapper) {
+      wrapper.style.setProperty("width", `${Math.round(width)}px`, "important");
+    }
+  }
+
+  private restoreInlineStyle(element: HTMLElement, cssText: string): void {
+    if (cssText) element.setAttribute("style", cssText);
+    else element.removeAttribute("style");
+  }
+
+  private restoreLockedScroll(scroller: HTMLElement | null, scrollTop: number): void {
+    if (!scroller) return;
+    if (Math.abs(scroller.scrollTop - scrollTop) > 0.5) scroller.scrollTop = scrollTop;
+  }
+
+  private unlockScrollerSoon(scroller: HTMLElement | null, scrollTop: number): void {
+    if (!scroller) return;
+    scroller.classList.add("knowgrove-scroll-anchor-lock");
+    const win = this.ownerDocument.defaultView;
+    if (!win) {
+      this.restoreLockedScroll(scroller, scrollTop);
+      scroller.classList.remove("knowgrove-scroll-anchor-lock");
+      return;
+    }
+    win.requestAnimationFrame(() => {
+      this.restoreLockedScroll(scroller, scrollTop);
+      win.requestAnimationFrame(() => {
+        this.restoreLockedScroll(scroller, scrollTop);
+        scroller.classList.remove("knowgrove-scroll-anchor-lock");
+      });
+    });
   }
 
   private detectAndGroupImageRows(container: Element): void {
-    const lines = container.querySelectorAll(".cm-line");
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (!line) continue;
-      const images = line.querySelectorAll(".image-embed");
-      if (images.length > 1) {
-        line.classList.add("knowgrove-image-row", "knowgrove-image-row-equal-height");
-      }
-    }
-
-    const paragraphs = container.querySelectorAll(".markdown-preview-view p");
-    for (let i = 0; i < paragraphs.length; i += 1) {
-      const p = paragraphs[i];
-      if (!p) continue;
-      const images = p.querySelectorAll(".image-embed");
-      if (images.length > 1) {
-        p.classList.add("knowgrove-image-row", "knowgrove-image-row-equal-height");
+    const candidates = container.querySelectorAll<HTMLElement>(".cm-line, .markdown-preview-view p");
+    for (const candidate of Array.from(candidates)) {
+      const images = candidate.querySelectorAll(":scope > .image-embed, :scope > span > .image-embed");
+      const hasMultiple = images.length > 1;
+      const visibleText = (candidate.textContent ?? "").trim();
+      if (hasMultiple && !visibleText) {
+        candidate.classList.add("knowgrove-image-row");
+        candidate.classList.remove("knowgrove-image-row-equal-height");
+      } else {
+        candidate.classList.remove("knowgrove-image-row", "knowgrove-image-row-equal-height");
       }
     }
   }
-}
 
+  private cancelAnimationFrames(): void {
+    const win = this.ownerDocument.defaultView;
+    if (!win) return;
+    for (const frame of [this.mutationRaf, this.geometryRaf, this.interactionRaf]) {
+      if (frame !== null) win.cancelAnimationFrame(frame);
+    }
+    this.mutationRaf = null;
+    this.geometryRaf = null;
+    this.interactionRaf = null;
+    this.pendingMoveEvent = null;
+  }
+}

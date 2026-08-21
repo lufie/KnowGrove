@@ -1,10 +1,10 @@
-# 言序 · KnowGrove
+# 言续
 
 [返回 English README](https://github.com/lufie/KnowGrove/blob/main/README.md) · **简体中文** · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-言序（KnowGrove）是一个本地优先的 Obsidian 知识工作台，用来把零散资料转化为相互连接的主题、证据、研究和可复用知识。
+言续是一个本地优先的 Obsidian 知识工作台，用来把零散资料转化为相互连接的主题、证据、研究和可复用知识。
 
-当前源码与 GitHub 发布版本：`2.8.11`
+当前源码与 GitHub 发布版本：`2.8.22`
 
 ## 主要能力
 

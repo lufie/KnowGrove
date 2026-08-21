@@ -17,6 +17,7 @@ import "./reading-menu.test";
 import "./recent-files.test";
 import "./topic-index.test";
 import "./word-like-editing.test";
+import "./image-layout-core.test";
 import "./attachment-cleanup.test";
 import "./document-anchor.test";
 import "./external-markdown-opener.test";

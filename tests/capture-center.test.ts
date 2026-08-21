@@ -122,3 +122,65 @@ test("recording note embeds the vault audio and records interruption recovery", 
   assert.match(note, /麦克风被通话占用，已自动续录/);
   assert.doesNotMatch(note, /file:\/\//);
 });
+
+test("link capture queue lifecycle retains active and session-completed jobs but prunes historical jobs on reopen", () => {
+  type MockJob = { id: string; status: "queued" | "running" | "completed" | "failed"; title: string };
+  const serverJobs: MockJob[] = [
+    { id: "job-1", status: "completed", title: "已完成的历史任务 1" },
+    { id: "job-2", status: "running", title: "正在解析的任务 2" },
+    { id: "job-3", status: "queued", title: "排队中的任务 3" },
+  ];
+
+  // Simulating Modal Session 1: onOpen
+  const prunedHistoricalIds = new Set<string>();
+  for (const job of serverJobs) {
+    if (job.status === "completed" || job.status === "failed") {
+      prunedHistoricalIds.add(job.id);
+    }
+  }
+
+  // Pruned historical jobs should exclude job-1
+  assert.equal(prunedHistoricalIds.has("job-1"), true);
+  assert.equal(prunedHistoricalIds.has("job-2"), false);
+  assert.equal(prunedHistoricalIds.has("job-3"), false);
+
+  let visibleJobs = serverJobs.filter((job) => !prunedHistoricalIds.has(job.id));
+  assert.deepEqual(visibleJobs.map((j) => j.id), ["job-2", "job-3"]);
+
+  // User submits a new link while job-2 is running (non-blocking addition)
+  serverJobs.push({ id: "job-4", status: "queued", title: "新追加的任务 4" });
+  visibleJobs = serverJobs.filter((job) => !prunedHistoricalIds.has(job.id));
+  assert.deepEqual(visibleJobs.map((j) => j.id), ["job-2", "job-3", "job-4"]);
+
+  // While modal 1 is OPEN, job-2 completes
+  const job2 = serverJobs.find((j) => j.id === "job-2")!;
+  job2.status = "completed";
+
+  // In modal 1, job-2 is NOT in prunedHistoricalIds, so it REMAINS VISIBLE as completed!
+  visibleJobs = serverJobs.filter((job) => !prunedHistoricalIds.has(job.id));
+  assert.deepEqual(visibleJobs.map((j) => j.id), ["job-2", "job-3", "job-4"]);
+  assert.equal(visibleJobs.find((j) => j.id === "job-2")?.status, "completed");
+
+  // Next, job-3 becomes running
+  const job3 = serverJobs.find((j) => j.id === "job-3")!;
+  job3.status = "running";
+
+  // Now user closes modal 1 and opens modal 2 (Session 2: onOpen)
+  const session2PrunedIds = new Set<string>();
+  for (const job of serverJobs) {
+    if (job.status === "completed" || job.status === "failed") {
+      session2PrunedIds.add(job.id);
+    }
+  }
+
+  // On reopen: job-1 and job-2 (which completed in the past) are pruned!
+  assert.equal(session2PrunedIds.has("job-1"), true);
+  assert.equal(session2PrunedIds.has("job-2"), true);
+  assert.equal(session2PrunedIds.has("job-3"), false);
+  assert.equal(session2PrunedIds.has("job-4"), false);
+
+  const session2Visible = serverJobs.filter((job) => !session2PrunedIds.has(job.id));
+  assert.deepEqual(session2Visible.map((j) => j.id), ["job-3", "job-4"]);
+  assert.equal(session2Visible[0]?.status, "running");
+  assert.equal(session2Visible[1]?.status, "queued");
+});

@@ -1,5 +1,6 @@
 import { ItemView, Modal, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type KnowGrovePlugin from "./main";
+import type { BrowserCaptureJob } from "./browser-capture-server";
 import {
   extractBatchCaptureUrls,
   formatRecordingDuration,
@@ -15,6 +16,11 @@ export const LINK_CAPTURE_VIEW_TYPE = "knowgrove-link-capture";
 export const DESKTOP_RECORDER_VIEW_TYPE = "knowgrove-desktop-recorder";
 
 export class LinkCaptureModal extends Modal {
+  private unsubscribe?: () => void;
+  private readonly prunedHistoricalIds = new Set<string>();
+  private jobs: BrowserCaptureJob[] = [];
+  private queueContainerEl?: HTMLElement;
+
   constructor(
     private readonly plugin: KnowGrovePlugin,
     private readonly onClosed: () => void,
@@ -24,10 +30,27 @@ export class LinkCaptureModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("knowgrove-capture-modal", "knowgrove-link-capture-modal");
+    // Prune jobs that were already finished BEFORE this modal session was opened
+    const currentJobs = this.plugin.getCaptureJobs();
+    for (const job of currentJobs) {
+      if (job.status === "completed" || job.status === "partial" || job.status === "failed") {
+        this.prunedHistoricalIds.add(job.id);
+      }
+    }
+    this.plugin.pruneFinishedCaptureJobs(this.prunedHistoricalIds);
+
     this.render();
+
+    this.unsubscribe = this.plugin.subscribeCaptureJobs((jobs) => {
+      this.jobs = jobs;
+      this.renderQueue();
+    });
   }
 
   onClose(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    this.queueContainerEl = undefined;
     this.contentEl.empty();
     this.onClosed();
   }
@@ -36,63 +59,173 @@ export class LinkCaptureModal extends Modal {
     const root = this.contentEl;
     root.empty();
     root.addClass("knowgrove-capture-view", "knowgrove-link-capture-view");
+
     root.createEl("p", {
       cls: "knowgrove-capture-help",
-      text: "每行一个链接，可一次粘贴多篇。",
+      text: "每行一个链接，支持单篇或批量添加。点击提交后进入后台排队，单任务串行解析。",
     });
+
     const textarea = root.createEl("textarea", {
       cls: "knowgrove-batch-link-input",
       attr: {
-        rows: "12",
+        rows: "5",
         placeholder: "https://example.com/article\nhttps://www.bilibili.com/video/...",
         "aria-label": "批量链接，每行一个",
       },
     });
+
     const footer = root.createDiv("knowgrove-batch-link-footer");
     const count = footer.createSpan({ text: "0 个链接" });
-    const submit = footer.createEl("button", { cls: "mod-cta", text: "保存并解析" });
-    const progress = root.createDiv("knowgrove-batch-link-progress");
-    const results = root.createDiv("knowgrove-batch-link-results");
+    const submit = footer.createEl("button", { cls: "mod-cta", text: "添加到解析队列" });
     submit.disabled = true;
-    const update = (): void => {
+
+    const updateCount = (): void => {
       const total = extractBatchCaptureUrls(textarea.value).length;
-      count.setText(`${total} 个链接`);
+      count.setText(total > 0 ? `已识别 ${total} 个链接` : "0 个链接");
       submit.disabled = total === 0;
     };
-    textarea.addEventListener("input", update);
-    submit.addEventListener("click", () => {
-      const urls = extractBatchCaptureUrls(textarea.value);
+
+    textarea.addEventListener("input", updateCount);
+
+    const handleSubmit = (): void => {
+      const raw = textarea.value;
+      const urls = extractBatchCaptureUrls(raw);
       if (!urls.length) return;
-      submit.disabled = true;
-      textarea.disabled = true;
-      results.empty();
-      progress.setText(`正在保存 0 / ${urls.length}`);
-      void this.plugin.captureBatchLinks(textarea.value, (completed, total, message) => {
-        progress.setText(`正在保存 ${completed} / ${total}${message ? ` · ${message}` : ""}`);
-      }).then((result) => {
-        progress.setText(`已保存 ${result.created} 篇，${result.queued} 篇进入解析队列${result.failed ? `，${result.failed} 篇失败` : ""}`);
-        for (const file of result.files) {
-          const open = results.createEl("button", {
-            cls: "knowgrove-batch-link-result",
-            attr: { "aria-label": `打开笔记：${file.basename}` },
-          });
-          const icon = open.createSpan("knowgrove-batch-link-result-icon");
-          setIcon(icon, "file-text");
-          open.createSpan({ cls: "knowgrove-batch-link-result-title", text: file.basename });
-          const arrow = open.createSpan("knowgrove-batch-link-result-arrow");
-          setIcon(arrow, "arrow-up-right");
-          open.addEventListener("click", () => void this.plugin.openVaultFile(file.path));
-        }
-        if (!result.failed) textarea.value = "";
-        update();
-      }).catch((error) => {
-        progress.setText(`保存失败：${error instanceof Error ? error.message : String(error)}`);
-      }).finally(() => {
-        textarea.disabled = false;
-        update();
+
+      // Immediately clear textarea so user can continue entering more links
+      textarea.value = "";
+      updateCount();
+      textarea.focus();
+
+      new Notice(`已添加 ${urls.length} 篇链接至后台解析队列`, 4000);
+
+      void this.plugin.captureBatchLinks(raw).catch((error) => {
+        new Notice(`添加链接失败：${error instanceof Error ? error.message : String(error)}`, 7000);
       });
+    };
+
+    textarea.addEventListener("keydown", (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        handleSubmit();
+      }
     });
+
+    submit.addEventListener("click", () => {
+      handleSubmit();
+    });
+
+    this.queueContainerEl = root.createDiv("knowgrove-queue-container");
+    this.renderQueue();
+
     window.setTimeout(() => textarea.focus(), 0);
+  }
+
+  private renderQueue(): void {
+    const container = this.queueContainerEl;
+    if (!container) return;
+    container.empty();
+
+    // Filter out jobs that finished before this modal session opened
+    const visibleJobs = this.jobs.filter((job) => !this.prunedHistoricalIds.has(job.id));
+    if (!visibleJobs.length) {
+      return;
+    }
+
+    const runningJobs = visibleJobs.filter((job) => job.status === "running" || job.status === "cancelling");
+    const queuedJobs = visibleJobs.filter((job) => job.status === "queued");
+    const finishedJobs = visibleJobs.filter((job) => job.status === "completed" || job.status === "partial" || job.status === "failed");
+
+    const header = container.createDiv("knowgrove-queue-header");
+    header.createSpan({ cls: "knowgrove-queue-title", text: "解析队列" });
+    const stats = header.createDiv("knowgrove-queue-stats");
+    if (runningJobs.length) stats.createSpan({ text: `${runningJobs.length} 进行中` });
+    if (queuedJobs.length) stats.createSpan({ text: `${queuedJobs.length} 排队中` });
+    if (finishedJobs.length) stats.createSpan({ text: `${finishedJobs.length} 已完成` });
+
+    const list = container.createDiv("knowgrove-queue-list");
+
+    // 1. Running jobs
+    for (const job of runningJobs) {
+      const item = list.createDiv("knowgrove-queue-item is-running");
+      const main = item.createDiv("knowgrove-queue-item-main");
+      const left = main.createDiv("knowgrove-queue-item-left");
+
+      const tag = left.createSpan({ cls: "knowgrove-queue-tag tag-running" });
+      const tagIcon = tag.createSpan({ cls: "knowgrove-queue-spin" });
+      setIcon(tagIcon, "loader-2");
+      tag.createSpan({ text: " 解析中" });
+
+      left.createSpan({ cls: "knowgrove-queue-item-title", text: job.title || job.url });
+
+      const right = main.createDiv("knowgrove-queue-item-right");
+      right.createSpan({ cls: "knowgrove-queue-percent", text: `${Math.round(job.progress || 0)}%` });
+
+      const cancelBtn = right.createEl("button", { cls: "knowgrove-queue-action-btn", text: "取消" });
+      cancelBtn.addEventListener("click", () => {
+        cancelBtn.disabled = true;
+        void this.plugin.cancelCaptureJob(job.id);
+      });
+
+      const bar = item.createDiv("knowgrove-queue-progress-bar");
+      const fill = bar.createDiv("knowgrove-queue-progress-fill");
+      fill.style.width = `${Math.min(100, Math.max(0, Math.round(job.progress || 0)))}%`;
+
+      const statusEl = item.createDiv("knowgrove-queue-item-status");
+      statusEl.createSpan({ text: job.message || job.phaseLabel || "正在解析..." });
+    }
+
+    // 2. Queued jobs
+    for (let i = 0; i < queuedJobs.length; i += 1) {
+      const job = queuedJobs[i]!;
+      const item = list.createDiv("knowgrove-queue-item is-queued");
+      const main = item.createDiv("knowgrove-queue-item-main");
+      const left = main.createDiv("knowgrove-queue-item-left");
+
+      const tag = left.createSpan({ cls: "knowgrove-queue-tag" });
+      tag.setText(`排队 #${i + 1}`);
+
+      left.createSpan({ cls: "knowgrove-queue-item-title", text: job.title || job.url });
+
+      const right = main.createDiv("knowgrove-queue-item-right");
+      const cancelBtn = right.createEl("button", { cls: "knowgrove-queue-action-btn", text: "取消" });
+      cancelBtn.addEventListener("click", () => {
+        cancelBtn.disabled = true;
+        void this.plugin.cancelCaptureJob(job.id);
+      });
+    }
+
+    // 3. Finished jobs (in this open session)
+    for (const job of finishedJobs) {
+      const isFailed = job.status === "failed";
+      const item = list.createDiv(`knowgrove-queue-item is-${job.status}`);
+      const main = item.createDiv("knowgrove-queue-item-main");
+      const left = main.createDiv("knowgrove-queue-item-left");
+
+      const tag = left.createSpan({ cls: `knowgrove-queue-tag ${isFailed ? "tag-failed" : "tag-completed"}` });
+      const tagIcon = tag.createSpan();
+      setIcon(tagIcon, isFailed ? "alert-circle" : "check");
+      tag.createSpan({ text: isFailed ? " 失败" : " 已完成" });
+
+      const displayTitle = job.result?.title || job.title || job.url;
+      left.createSpan({ cls: "knowgrove-queue-item-title", text: displayTitle });
+
+      const right = main.createDiv("knowgrove-queue-item-right");
+      const filePath = job.result?.relativePath || job.createdNotePath || job.targetPath;
+      if (filePath && !isFailed) {
+        const openBtn = right.createEl("button", { cls: "knowgrove-queue-action-btn mod-cta", text: "打开笔记" });
+        const arrow = openBtn.createSpan("knowgrove-batch-link-result-arrow");
+        setIcon(arrow, "arrow-up-right");
+        openBtn.addEventListener("click", () => {
+          void this.plugin.openVaultFile(filePath);
+        });
+      }
+
+      if (isFailed && job.error) {
+        const statusEl = item.createDiv("knowgrove-queue-item-status");
+        statusEl.createSpan({ text: `错误：${job.error}` });
+      }
+    }
   }
 }
 

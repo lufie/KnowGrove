@@ -28,6 +28,7 @@ import {
   extractStructuredCaptureTextFromScripts,
   formatTranscriptParagraphs,
   formatYtDlpCaptureError,
+  isManagedCaptureMarkdown,
   latestLinkNoteScanFiles,
   normalizeBrowserCaptureAIResult,
   normalizeCaptureSessionCookies,
@@ -50,6 +51,8 @@ import {
   parseRawCookieString,
   parseTikTokHtml,
   parseXiguaHtml,
+  portableSiblingAssetLinkPath,
+  rewriteWikiImageEmbeds,
   extractVimeoVideoId,
   extractTencentVideoVid,
 } from "../src/browser-capture-core";
@@ -71,6 +74,45 @@ function providerSettings(
     timeoutSeconds: 900,
   };
 }
+
+test("captured local image embeds can be normalized without changing body text", () => {
+  const source = [
+    "---",
+    "type: keeprec-capture",
+    "capture_id: abc",
+    "---",
+    "正文",
+    "![[Home/📬输入/assets/cover.jpg|封面]]",
+    "![[Home/📬输入/assets/chart.png]]",
+  ].join("\n");
+  assert.equal(isManagedCaptureMarkdown(source), true);
+  assert.equal(
+    rewriteWikiImageEmbeds(source, (path, alias) => `![[${path.split("/").pop()}${alias ? `|${alias}` : ""}]]`),
+    source
+      .replace("![[Home/📬输入/assets/cover.jpg|封面]]", "![[cover.jpg|封面]]")
+      .replace("![[Home/📬输入/assets/chart.png]]", "![[chart.png]]"),
+  );
+});
+
+test("local image normalization ignores regular notes and block embeds", () => {
+  assert.equal(isManagedCaptureMarkdown("# 普通笔记"), false);
+  const source = "![[note.md#section]]\n![[image.jpg]]";
+  assert.equal(
+    rewriteWikiImageEmbeds(source, (path) => path === "image.jpg" ? "![[image.jpg]]" : "changed"),
+    source,
+  );
+});
+
+test("captured sibling assets use mobile-safe relative wikilinks", () => {
+  assert.equal(
+    portableSiblingAssetLinkPath("Home/📬输入/assets/cover.webp", "Home/📬输入/article.md"),
+    "assets/cover.webp",
+  );
+  assert.equal(
+    portableSiblingAssetLinkPath("Shared/assets/cover.webp", "Home/📬输入/article.md"),
+    undefined,
+  );
+});
 
 test("browser capture hands an in-flight prompt to a newly selected CLI", async () => {
   let current = providerSettings("codex-cli", "gpt-old");
@@ -1029,4 +1071,3 @@ test("formatTranscriptParagraphs strips non-speech noise characters and subtitle
   assert.match(formatted, /你好，请做一个简单的自我介绍/);
   assert.match(formatted, /好的，稍等一分钟/);
 });
-

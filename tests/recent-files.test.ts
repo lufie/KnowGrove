@@ -35,3 +35,18 @@ test("recent virtual folder respects limit and supported extensions", () => {
     ["a.md", "b.md"],
   );
 });
+
+test("recent open history can validate only the requested paths", () => {
+  const checked: string[] = [];
+  const existing = {
+    has(path: string): boolean {
+      checked.push(path);
+      return path !== "deleted.md";
+    },
+  };
+  assert.deepEqual(
+    selectRecentDocumentPaths(["one.md", "deleted.md", "two.md"], existing, 2),
+    ["one.md", "two.md"],
+  );
+  assert.deepEqual(checked, ["one.md", "deleted.md", "two.md"]);
+});
