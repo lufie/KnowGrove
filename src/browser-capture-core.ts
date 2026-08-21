@@ -880,6 +880,31 @@ export function stripCaptureFrontmatter(markdown: string): string {
   return markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
 }
 
+export function isManagedCaptureMarkdown(markdown: string): boolean {
+  return /^(?:capture_id\s*:|type\s*:\s*keeprec-capture\s*$|KnowGrove采集状态\s*:)/m.test(markdown);
+}
+
+export function rewriteWikiImageEmbeds(
+  markdown: string,
+  render: (linkPath: string, alias: string) => string | undefined,
+): string {
+  return markdown.replace(/!\[\[([^\]\n]+)\]\]/g, (raw, inner: string) => {
+    const separator = inner.indexOf("|");
+    const linkPath = (separator >= 0 ? inner.slice(0, separator) : inner).trim();
+    const alias = (separator >= 0 ? inner.slice(separator + 1) : "").trim();
+    if (!linkPath || linkPath.includes("#")) return raw;
+    return render(linkPath, alias) ?? raw;
+  });
+}
+
+export function portableSiblingAssetLinkPath(targetPath: string, sourceNotePath: string): string | undefined {
+  const sourceDirectory = sourceNotePath.split("/").slice(0, -1).join("/");
+  const prefix = sourceDirectory ? `${sourceDirectory}/` : "";
+  if (!targetPath.startsWith(prefix)) return undefined;
+  const relativePath = targetPath.slice(prefix.length);
+  return relativePath && !relativePath.startsWith("../") ? relativePath : undefined;
+}
+
 function normalizedLinkNoteTitle(title: string, url: string): string {
   const cleaned = title
     .replace(/^#+\s*/, "")

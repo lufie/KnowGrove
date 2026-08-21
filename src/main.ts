@@ -7,6 +7,7 @@ import {
   MarkdownView,
   Menu,
   Notice,
+  type ObsidianProtocolHandler,
   Platform,
   Plugin,
   TAbstractFile,
@@ -45,10 +46,14 @@ import { BrowserPairingModal } from "./browser-pairing-modal";
 import {
   detectInterruptedCapture,
   detectLinkNoteCandidate,
+  isManagedCaptureMarkdown,
   latestLinkNoteScanFiles,
+  portableSiblingAssetLinkPath,
+  rewriteWikiImageEmbeds,
 } from "./browser-capture-core";
 import {
   BrowserCaptureServer,
+  type BrowserCaptureJob,
   type BrowserCaptureServerStatus,
 } from "./browser-capture-server";
 import {
@@ -373,6 +378,7 @@ interface AIBatchContext extends AIBatchPromptItem {
 }
 
 const CURRENT_UI_MIGRATION_VERSION = 1;
+const CURRENT_MAINTENANCE_MIGRATION_VERSION = 1;
 
 function emptyRepairSummary(): ReferenceRepairSummary {
   return { checked: 0, healthy: 0, repaired: 0, unresolved: 0, missingSource: 0, recoveredFromContext: 0 };
@@ -391,6 +397,7 @@ export default class KnowGrovePlugin extends Plugin {
   data: KnowGroveData = {
     schemaVersion: PROPERTY_RULE_SCHEMA_VERSION,
     uiMigrationVersion: 0,
+    maintenanceMigrationVersion: CURRENT_MAINTENANCE_MIGRATION_VERSION,
     settings: createDefaultSettings(),
     references: {},
     attachmentUsage: {},
@@ -455,6 +462,8 @@ export default class KnowGrovePlugin extends Plugin {
   private tableResizer?: TableResizer;
   private imageLayoutEnhancer?: ImageLayoutEnhancer;
   private disposeLocalization?: () => void;
+  private readonly normalizingCaptureImageLinks = new Set<string>();
+  private readonly normalizedCaptureImageLinkMtime = new Map<string, number>();
 
   async onload(): Promise<void> {
     await this.loadPluginData();
@@ -501,12 +510,8 @@ export default class KnowGrovePlugin extends Plugin {
     this.documentAnchorManager = new DocumentAnchorManager(this);
     this.tableResizer = new TableResizer(this);
     this.imageLayoutEnhancer = new ImageLayoutEnhancer(this);
-    this.app.workspace.onLayoutReady(() => {
-      this.documentAnchorManager?.refreshAll();
-      this.tableResizer?.scanAndBindTables();
-      this.imageLayoutEnhancer?.scanAndEnhanceImages();
-    });
-    this.registerObsidianProtocolHandler("knowgrove-browser-pair", (params) => {
+    this.app.workspace.onLayoutReady(() => this.documentAnchorManager?.refreshAll());
+    this.registerKnowGroveProtocolHandler("knowgrove-browser-pair", (params) => {
       const nonce = typeof params.nonce === "string" ? params.nonce : "";
       if (!nonce || !this.browserCaptureServer) {
         new Notice("浏览器配对请求无效或已过期");
@@ -518,12 +523,12 @@ export default class KnowGrovePlugin extends Plugin {
         return approved;
       }).open();
     });
-    this.registerObsidianProtocolHandler("knowgrove-settings", (params) => {
+    this.registerKnowGroveProtocolHandler("knowgrove-settings", (params) => {
       const section = typeof params.section === "string" ? params.section : "";
       this.openKnowGroveSettings(section);
     });
     if (Platform.isDesktopApp && this.settings.browserCapture.enabled) {
-      await this.browserCaptureServer.start().catch((error) => {
+      void this.browserCaptureServer.start().catch((error) => {
         console.error("KnowGrove: failed to start browser capture server", error);
         new Notice(`浏览器接收未启动：${error instanceof Error ? error.message : String(error)}`);
       });
@@ -580,11 +585,15 @@ export default class KnowGrovePlugin extends Plugin {
       this.attachmentCleanupManager?.start();
       this.scheduleCoreSidebarMaintenance(600);
       this.scheduleRecentFilesSection(650);
+      const activeFile = this.app.workspace.getActiveFile();
+      if (activeFile) void this.normalizeCapturedImageLinks(activeFile);
     });
     this.registerEvent(this.app.workspace.on("layout-change", () => {
       this.scheduleCoreSidebarMaintenance();
       this.scheduleRecentFilesSection();
       this.syncRecordingOverlay();
+      const activeFile = this.app.workspace.getActiveFile();
+      if (activeFile) void this.normalizeCapturedImageLinks(activeFile);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncRecordingOverlay()));
     this.register(() => window.clearTimeout(this.coreSidebarMaintenanceTimer));
@@ -849,12 +858,14 @@ export default class KnowGrovePlugin extends Plugin {
       if (leaf?.view instanceof MarkdownView && leaf.view.file) {
         this.refreshCommentSidebars(leaf.view.file.path);
         this.documentAnchorManager?.updateView(leaf.view);
+        void this.normalizeCapturedImageLinks(leaf.view.file);
       }
     }));
     this.registerEvent(this.app.workspace.on("file-open", (file) => {
       this.resetAutoCompletionTracking();
       this.hideSelectionCommentButton();
       if (file) this.refreshCommentSidebars(file.path);
+      if (file) void this.normalizeCapturedImageLinks(file);
       const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
       if (activeView) this.documentAnchorManager?.updateView(activeView);
       this.scheduleRecentFilesSection(30);
@@ -920,6 +931,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.imageLayoutEnhancer?.destroy();
     this.disposeLocalization?.();
     this.disposeLocalization = undefined;
+    this.normalizingCaptureImageLinks.clear();
     window.clearTimeout(this.startupRuntimeBootstrapTimer);
     window.clearTimeout(this.refreshTimer);
     window.clearTimeout(this.referenceRepairTimer);
@@ -1465,6 +1477,11 @@ export default class KnowGrovePlugin extends Plugin {
     this.data = {
       schemaVersion: PROPERTY_RULE_SCHEMA_VERSION,
       uiMigrationVersion: typeof saved.uiMigrationVersion === "number" ? saved.uiMigrationVersion : 0,
+      maintenanceMigrationVersion: typeof saved.maintenanceMigrationVersion === "number"
+        ? saved.maintenanceMigrationVersion
+        : legacy
+          ? 0
+          : CURRENT_MAINTENANCE_MIGRATION_VERSION,
       settings: {
         ...defaults,
         ...(savedSettings ?? {}),
@@ -1581,9 +1598,12 @@ export default class KnowGrovePlugin extends Plugin {
 
   private async runStartupMigrations(): Promise<void> {
     await this.migrateLegacySidebarViews();
+    if (this.data.maintenanceMigrationVersion >= CURRENT_MAINTENANCE_MIGRATION_VERSION) return;
     await this.migrateLegacyBrandStorage();
     await this.migrateResearchTopicSourceMetadata();
     await this.repairAllReferenceAnchors(false);
+    this.data.maintenanceMigrationVersion = CURRENT_MAINTENANCE_MIGRATION_VERSION;
+    await this.savePluginData();
   }
 
   private scheduleCoreSidebarMaintenance(delay = 250): void {
@@ -1623,31 +1643,40 @@ export default class KnowGrovePlugin extends Plugin {
       this.recentFilesObserver.observe(filesContainer, { childList: true });
     }
 
-    const allFiles = this.app.vault.getFiles();
-    const existingPaths = new Set(allFiles.map((file) => file.path));
     const workspaceWithHistory = this.app.workspace as typeof this.app.workspace & {
       getLastOpenFiles?: () => string[];
     };
     const mode = this.settings.recentFileMode;
     const limit = Math.max(3, Math.min(20, Math.round(this.settings.recentFileLimit)));
     let history: string[];
+    let existingPaths: Pick<ReadonlySet<string>, "has">;
     if (mode === "created") {
+      const allFiles = this.app.vault.getFiles();
       history = allFiles
         .filter((file) => isRecentDocumentPath(file.path))
         .sort((left, right) => right.stat.ctime - left.stat.ctime)
         .map((file) => file.path);
+      existingPaths = new Set(allFiles.map((file) => file.path));
     } else if (mode === "modified") {
+      const allFiles = this.app.vault.getFiles();
       history = allFiles
         .filter((file) => isRecentDocumentPath(file.path))
         .sort((left, right) => right.stat.mtime - left.stat.mtime)
         .map((file) => file.path);
+      existingPaths = new Set(allFiles.map((file) => file.path));
     } else {
       history = workspaceWithHistory.getLastOpenFiles?.call(this.app.workspace) ?? [];
       if (!history.length) {
+        const allFiles = this.app.vault.getFiles();
         history = allFiles
           .filter((file) => isRecentDocumentPath(file.path))
           .sort((left, right) => right.stat.mtime - left.stat.mtime)
           .map((file) => file.path);
+        existingPaths = new Set(allFiles.map((file) => file.path));
+      } else {
+        existingPaths = {
+          has: (path: string) => Boolean(this.app.vault.getFileByPath(path)),
+        };
       }
     }
     const recentPaths = selectRecentDocumentPaths(history, existingPaths, limit);
@@ -1785,7 +1814,7 @@ export default class KnowGrovePlugin extends Plugin {
       }
     }
 
-    if (readingLeaf) {
+    if (readingLeaf && this.data.uiMigrationVersion !== CURRENT_UI_MIGRATION_VERSION) {
       this.data.uiMigrationVersion = CURRENT_UI_MIGRATION_VERSION;
       await this.savePluginData();
     }
@@ -1808,10 +1837,13 @@ export default class KnowGrovePlugin extends Plugin {
     const referenceTargets = new Set(Object.values(this.data.references)
       .map((record) => record.targetPath)
       .filter((path): path is string => Boolean(path)));
-    const candidates = this.app.vault.getFiles().filter((file) =>
-      file.path.startsWith(`${KNOWGROVE_ROOT}/`)
-      || file.path.startsWith(`${LEGACY_ROOT}/`)
-      || referenceTargets.has(file.path));
+    const candidates = Array.from(new Map([
+      ...this.filesUnderVaultFolder(KNOWGROVE_ROOT),
+      ...this.filesUnderVaultFolder(LEGACY_ROOT),
+      ...Array.from(referenceTargets)
+        .map((path) => this.app.vault.getFileByPath(path))
+        .filter((file): file is TFile => Boolean(file)),
+    ].map((file) => [file.path, file])).values());
 
     for (const original of candidates) {
       let file = original;
@@ -1837,6 +1869,20 @@ export default class KnowGrovePlugin extends Plugin {
       this.refreshReadingViews();
       this.refreshPropertyWorkbenches();
     }
+  }
+
+  private filesUnderVaultFolder(path: string): TFile[] {
+    const root = this.app.vault.getAbstractFileByPath(normalizePath(path));
+    if (!(root instanceof TFolder)) return [];
+    const files: TFile[] = [];
+    const visit = (folder: TFolder): void => {
+      for (const child of folder.children) {
+        if (child instanceof TFile) files.push(child);
+        else if (child instanceof TFolder) visit(child);
+      }
+    };
+    visit(root);
+    return files;
   }
 
   async savePluginData(): Promise<void> {
@@ -2311,6 +2357,23 @@ export default class KnowGrovePlugin extends Plugin {
     await this.browserCaptureServer?.resetPairing();
   }
 
+  subscribeCaptureJobs(listener: (jobs: BrowserCaptureJob[]) => void): () => void {
+    if (!this.browserCaptureServer) return () => undefined;
+    return this.browserCaptureServer.subscribe(listener);
+  }
+
+  getCaptureJobs(): BrowserCaptureJob[] {
+    return this.browserCaptureServer?.getJobs() ?? [];
+  }
+
+  async cancelCaptureJob(id: string): Promise<void> {
+    await this.browserCaptureServer?.cancelJob(id);
+  }
+
+  pruneFinishedCaptureJobs(idsToPrune?: Set<string>): void {
+    this.browserCaptureServer?.pruneFinishedJobs(idsToPrune);
+  }
+
   private async parseLinkNote(file: TFile, source: "manual" | "auto"): Promise<boolean> {
     if (!this.browserCaptureServer) return false;
     try {
@@ -2401,7 +2464,7 @@ export default class KnowGrovePlugin extends Plugin {
     const scan = async (): Promise<number> => {
       const folder = this.automaticLinkNoteFolder();
       const recent = latestLinkNoteScanFiles(
-        this.app.vault.getMarkdownFiles().map((file) => ({
+        this.filesUnderVaultFolder(folder).filter((file) => file.extension === "md").map((file) => ({
           path: file.path,
           mtime: file.stat.mtime,
         })),
@@ -3009,6 +3072,51 @@ export default class KnowGrovePlugin extends Plugin {
     return error instanceof Error ? error.message : String(error);
   }
 
+  private registerKnowGroveProtocolHandler(action: string, handler: ObsidianProtocolHandler): void {
+    type ProtocolRegistry = {
+      handlers?: Map<string, ObsidianProtocolHandler>;
+      unregister: (registeredAction: string, registeredHandler?: ObsidianProtocolHandler) => void;
+    };
+    const workspace = this.app.workspace as typeof this.app.workspace & { protocolHandler?: ProtocolRegistry };
+    const registry = workspace.protocolHandler;
+    const previousHandler = registry?.handlers?.get(action);
+    if (previousHandler) registry?.unregister(action, previousHandler);
+    this.registerObsidianProtocolHandler(action, handler);
+  }
+
+  private async normalizeCapturedImageLinks(file: TFile): Promise<void> {
+    if (
+      file.extension !== "md"
+      || this.normalizingCaptureImageLinks.has(file.path)
+      || this.normalizedCaptureImageLinkMtime.get(file.path) === file.stat.mtime
+    ) return;
+    this.normalizingCaptureImageLinks.add(file.path);
+    try {
+      const source = await this.app.vault.cachedRead(file);
+      if (!isManagedCaptureMarkdown(source) || !source.includes("![[")) return;
+      const imageExtensions = new Set(["avif", "bmp", "gif", "jpeg", "jpg", "png", "svg", "webp"]);
+      const normalized = rewriteWikiImageEmbeds(source, (linkPath, alias) => {
+        const target = this.app.metadataCache.getFirstLinkpathDest(linkPath, file.path)
+          ?? this.app.vault.getFileByPath(normalizePath(linkPath));
+        if (!(target instanceof TFile) || !imageExtensions.has(target.extension.toLowerCase())) return undefined;
+        const portablePath = portableSiblingAssetLinkPath(target.path, file.path);
+        const markdownLink = portablePath
+          ? `[[${portablePath}${alias ? `|${alias}` : ""}]]`
+          : this.app.fileManager.generateMarkdownLink(target, file.path, undefined, alias || undefined);
+        return markdownLink.includes("file://") ? undefined : `!${markdownLink}`;
+      });
+      if (normalized !== source) await this.app.vault.modify(file, normalized);
+    } catch (error) {
+      console.warn(`KnowGrove: failed to normalize captured image links for ${file.path}`, error);
+    } finally {
+      this.normalizingCaptureImageLinks.delete(file.path);
+      const currentFile = this.app.vault.getFileByPath(file.path);
+      if (currentFile instanceof TFile) {
+        this.normalizedCaptureImageLinkMtime.set(file.path, currentFile.stat.mtime);
+      }
+    }
+  }
+
   refreshReadingViews(): void {
     window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
@@ -3121,6 +3229,7 @@ export default class KnowGrovePlugin extends Plugin {
     }
     if (!existing) await leaf.setViewState({ type: PROPERTY_WORKBENCH_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof PropertyWorkbenchView) await leaf.view.ensureScanned();
   }
 
   private async activateTopicIndexOnce(): Promise<void> {
@@ -3135,6 +3244,7 @@ export default class KnowGrovePlugin extends Plugin {
     }
     if (!existing) await leaf.setViewState({ type: TOPIC_INDEX_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof TopicIndexView) await leaf.view.ensureScanned();
   }
 
   async setTopicIndexEnabled(enabled: boolean): Promise<void> {
@@ -3668,7 +3778,9 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   private async migrateResearchTopicSourceMetadata(): Promise<void> {
-    const files = this.app.vault.getMarkdownFiles()
+    const managedRootFiles = this.filesUnderVaultFolder(KNOWGROVE_ROOT)
+      .filter((file) => file.extension === "md");
+    const files = managedRootFiles
       .filter((file) => file.path.startsWith(`${RESEARCH_TOPIC_WORKSPACE_ROOT}/`));
     let migrated = 0;
     for (const file of files) {
@@ -3688,7 +3800,7 @@ export default class KnowGrovePlugin extends Plugin {
         console.warn(`KnowGrove: failed to migrate research source metadata for ${file.path}`, error);
       }
     }
-    const managedFiles = this.app.vault.getMarkdownFiles()
+    const managedFiles = managedRootFiles
       .filter((file) => file.path.startsWith("_KnowGrove/") && !file.path.startsWith(`${RESEARCH_TOPIC_WORKSPACE_ROOT}/`));
     for (const file of managedFiles) {
       const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;

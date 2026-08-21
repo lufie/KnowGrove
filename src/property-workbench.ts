@@ -37,7 +37,13 @@ export class PropertyWorkbenchView extends ItemView {
   async onOpen(): Promise<void> {
     this.registerEvent(this.app.workspace.on("file-open", () => this.updateActiveFileHighlight()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateActiveFileHighlight()));
+    this.registerDomEvent(this.contentEl, "pointerdown", () => void this.ensureScanned(), { once: true });
+    this.registerDomEvent(this.contentEl, "focusin", () => void this.ensureScanned(), { once: true });
     this.render();
+  }
+
+  async ensureScanned(): Promise<void> {
+    if (this.snapshot || this.scanning) return;
     await this.scan();
   }
 

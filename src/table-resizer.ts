@@ -1,24 +1,65 @@
 import { MarkdownView, Menu } from "obsidian";
 import type KnowGrovePlugin from "./main";
 
+interface TableLineRange {
+  startLine: number;
+  endLine: number;
+  lines: string[];
+}
+
 interface TableColumnDragState {
   table: HTMLTableElement;
   th: HTMLTableCellElement;
   colIndex: number;
+  pointerId: number;
   startX: number;
   startWidths: number[];
   handle: HTMLElement;
   guideEl: HTMLElement;
+  scroller: HTMLElement | null;
+  lockedScrollTop: number;
 }
 
 export class TableResizer {
+  private readonly workspaceRoot: HTMLElement;
+  private readonly ownerDocument: Document;
   private activeDrag: TableColumnDragState | null = null;
-  private pointerMoveListener: ((event: PointerEvent) => void) | null = null;
-  private pointerUpListener: ((event: PointerEvent) => void) | null = null;
   private observer: MutationObserver | null = null;
-  private boundTables = new WeakSet<HTMLTableElement>();
+  private mutationRaf: number | null = null;
+  private dragRaf: number | null = null;
+  private pendingPointerX: number | null = null;
+  private readonly boundTables = new WeakSet<HTMLTableElement>();
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (!this.activeDrag || event.pointerId !== this.activeDrag.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.pendingPointerX = event.clientX;
+    if (this.dragRaf !== null) return;
+    this.dragRaf = this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+      this.dragRaf = null;
+      const clientX = this.pendingPointerX;
+      this.pendingPointerX = null;
+      if (clientX !== null) this.applyColumnDrag(clientX);
+    }) ?? null;
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (!this.activeDrag || event.pointerId !== this.activeDrag.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      this.activeDrag.handle.releasePointerCapture(event.pointerId);
+    } catch {
+      // Best effort across Electron versions.
+    }
+    this.saveTableColumnWidths(this.activeDrag.table);
+    this.cleanupActiveDrag();
+  };
 
   constructor(private readonly plugin: KnowGrovePlugin) {
+    this.workspaceRoot = plugin.app.workspace.containerEl;
+    this.ownerDocument = this.workspaceRoot.ownerDocument;
     this.setupGlobalListeners();
     this.startObserving();
   }
@@ -27,152 +68,79 @@ export class TableResizer {
     this.stopObserving();
     this.cleanupActiveDrag();
     this.removeGlobalListeners();
-    document.querySelectorAll(".knowgrove-table-col-handle, .knowgrove-table-col-guide").forEach((el) => el.remove());
+    this.cancelAnimationFrames();
+    this.workspaceRoot.querySelectorAll(".knowgrove-table-col-handle, .knowgrove-table-col-guide")
+      .forEach((element) => element.remove());
+    this.ownerDocument.querySelectorAll(".knowgrove-table-col-guide").forEach((element) => element.remove());
   }
 
   private setupGlobalListeners(): void {
-    this.pointerMoveListener = (event: PointerEvent) => {
-      if (!this.activeDrag) return;
-      event.preventDefault();
-      event.stopPropagation();
-
-      const deltaX = event.clientX - this.activeDrag.startX;
-      const initialColWidth = this.activeDrag.startWidths[this.activeDrag.colIndex] ?? 100;
-      const newColWidth = Math.max(40, initialColWidth + deltaX);
-
-      // Compute all column widths
-      const currentWidths = [...this.activeDrag.startWidths];
-      currentWidths[this.activeDrag.colIndex] = newColWidth;
-
-      const totalWidth = currentWidths.reduce((sum, w) => sum + w, 0);
-
-      // Set table layout & width
-      this.activeDrag.table.classList.add("knowgrove-table-fixed-layout");
-      this.activeDrag.table.style.setProperty("width", `${totalWidth}px`, "important");
-      this.activeDrag.table.style.setProperty("min-width", `${totalWidth}px`, "important");
-
-      const ths = Array.from(this.activeDrag.table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"));
-      for (let i = 0; i < ths.length; i += 1) {
-        const th = ths[i];
-        const w = currentWidths[i] ?? 100;
-        if (th) {
-          th.style.setProperty("width", `${w}px`, "important");
-          th.style.setProperty("min-width", `${w}px`, "important");
-          th.style.setProperty("max-width", `${w}px`, "important");
-        }
-      }
-
-      const rows = Array.from(this.activeDrag.table.querySelectorAll<HTMLTableRowElement>("tbody tr, tr"));
-      for (const row of rows) {
-        const tds = Array.from(row.querySelectorAll<HTMLTableCellElement>("td"));
-        for (let i = 0; i < tds.length; i += 1) {
-          const td = tds[i];
-          const w = currentWidths[i] ?? 100;
-          if (td) {
-            td.style.setProperty("width", `${w}px`, "important");
-            td.style.setProperty("min-width", `${w}px`, "important");
-            td.style.setProperty("max-width", `${w}px`, "important");
-          }
-        }
-      }
-
-      // Update guide position
-      const tableRect = this.activeDrag.table.getBoundingClientRect();
-      const targetTh = ths[this.activeDrag.colIndex];
-      if (targetTh) {
-        const thRect = targetTh.getBoundingClientRect();
-        this.activeDrag.guideEl.style.setProperty("left", `${thRect.right}px`);
-        this.activeDrag.guideEl.style.setProperty("top", `${tableRect.top}px`);
-        this.activeDrag.guideEl.style.setProperty("height", `${tableRect.height}px`);
-      }
-    };
-
-    this.pointerUpListener = (event: PointerEvent) => {
-      if (!this.activeDrag) return;
-      event.preventDefault();
-      event.stopPropagation();
-      try {
-        this.activeDrag.handle.releasePointerCapture(event.pointerId);
-      } catch {
-        // Best effort
-      }
-      this.saveTableColumnWidths(this.activeDrag.table);
-      this.cleanupActiveDrag();
-    };
-
-    window.addEventListener("pointermove", this.pointerMoveListener, { passive: false });
-    window.addEventListener("pointerup", this.pointerUpListener, { passive: false });
-    window.addEventListener("pointercancel", this.pointerUpListener, { passive: false });
+    this.ownerDocument.defaultView?.addEventListener("pointermove", this.onPointerMove, { passive: false });
+    this.ownerDocument.defaultView?.addEventListener("pointerup", this.onPointerUp, { passive: false });
+    this.ownerDocument.defaultView?.addEventListener("pointercancel", this.onPointerUp, { passive: false });
   }
 
   private removeGlobalListeners(): void {
-    if (this.pointerMoveListener) {
-      window.removeEventListener("pointermove", this.pointerMoveListener);
-      this.pointerMoveListener = null;
-    }
-    if (this.pointerUpListener) {
-      window.removeEventListener("pointerup", this.pointerUpListener);
-      window.removeEventListener("pointercancel", this.pointerUpListener);
-      this.pointerUpListener = null;
-    }
+    this.ownerDocument.defaultView?.removeEventListener("pointermove", this.onPointerMove);
+    this.ownerDocument.defaultView?.removeEventListener("pointerup", this.onPointerUp);
+    this.ownerDocument.defaultView?.removeEventListener("pointercancel", this.onPointerUp);
   }
 
   private startObserving(): void {
     this.scanAndBindTables();
-    this.observer = new MutationObserver(() => {
-      this.scanAndBindTables();
+    const pendingContainers = new Set<Element>();
+    this.observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        const container = target?.closest(".markdown-source-view, .markdown-preview-view");
+        if (container) pendingContainers.add(container);
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (!(node instanceof Element)) continue;
+          if (node.matches(".markdown-source-view, .markdown-preview-view")) pendingContainers.add(node);
+          const own = node.closest(".markdown-source-view, .markdown-preview-view");
+          if (own) pendingContainers.add(own);
+          node.querySelectorAll(".markdown-source-view, .markdown-preview-view").forEach((item) => pendingContainers.add(item));
+        }
+      }
+      if (!pendingContainers.size || this.mutationRaf !== null) return;
+      this.mutationRaf = this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+        this.mutationRaf = null;
+        const containers = Array.from(pendingContainers);
+        pendingContainers.clear();
+        for (const container of containers) this.scanContainer(container);
+      }) ?? null;
     });
-
-    this.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    this.observer.observe(this.workspaceRoot, { childList: true, subtree: true });
   }
 
   private stopObserving(): void {
-    if (this.observer) {
-      this.observer.disconnect();
-      this.observer = null;
-    }
+    this.observer?.disconnect();
+    this.observer = null;
   }
 
   public scanAndBindTables(): void {
-    const markdownContainers = document.querySelectorAll(".markdown-source-view, .markdown-preview-view");
-    for (let i = 0; i < markdownContainers.length; i += 1) {
-      const container = markdownContainers[i];
-      if (!container) continue;
-      const tables = container.querySelectorAll("table");
-      for (let j = 0; j < tables.length; j += 1) {
-        const table = tables[j];
-        if (table instanceof HTMLTableElement) {
-          this.bindTable(table);
-        }
-      }
-    }
+    this.workspaceRoot.querySelectorAll(".markdown-source-view, .markdown-preview-view")
+      .forEach((container) => this.scanContainer(container));
+  }
+
+  private scanContainer(container: Element): void {
+    container.querySelectorAll("table").forEach((table) => {
+      if (table instanceof HTMLTableElement) this.bindTable(table);
+    });
   }
 
   private bindTable(table: HTMLTableElement): void {
     if (table.closest(".x-color-picker-wrapper") || table.classList.contains("x-color-picker-table")) return;
-
     table.classList.add("knowgrove-resizable-table");
-
     const ths = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"));
     if (!ths.length) return;
-
-    for (let i = 0; i < ths.length; i += 1) {
-      const th = ths[i];
-      if (!th) continue;
-      this.attachHandleToTh(table, th, i);
-    }
-
-    if (!this.boundTables.has(table)) {
-      this.boundTables.add(table);
-      this.setupTableCellInteractions(table);
-    }
+    ths.forEach((th, index) => this.attachHandleToTh(table, th, index));
+    if (this.boundTables.has(table)) return;
+    this.boundTables.add(table);
+    this.setupTableCellInteractions(table);
   }
 
   private setupTableCellInteractions(table: HTMLTableElement): void {
-    // Prevent Enter from inserting newlines that break Markdown tables
     table.addEventListener("keydown", (event: KeyboardEvent) => {
       if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
         event.preventDefault();
@@ -180,253 +148,177 @@ export class TableResizer {
       }
     });
 
-    // Context Menu for Word-like table row/col manipulation
     table.addEventListener("contextmenu", (event: MouseEvent) => {
       const cell = (event.target as HTMLElement).closest<HTMLTableCellElement>("th, td");
-      if (!cell) return;
-      const tr = cell.closest<HTMLTableRowElement>("tr");
-      if (!tr) return;
-
+      const row = cell?.closest<HTMLTableRowElement>("tr");
+      if (!cell || !row) return;
       event.preventDefault();
       event.stopPropagation();
-
-      const cellsInRow = Array.from(tr.querySelectorAll<HTMLTableCellElement>("th, td"));
-      const colIndex = cellsInRow.indexOf(cell);
-
-      const allRows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tr"));
-      const rowIndex = allRows.indexOf(tr);
-
+      const cells = Array.from(row.querySelectorAll<HTMLTableCellElement>("th, td"));
+      const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tr"));
+      const colIndex = cells.indexOf(cell);
+      const rowIndex = rows.indexOf(row);
       const menu = new Menu();
-
-      menu.addItem((item) => {
-        item.setTitle("🗑️ 删除当前行")
-          .setIcon("trash")
-          .setDisabled(allRows.length <= 2 && rowIndex === 0)
-          .onClick(() => this.deleteTableRow(table, rowIndex));
-      });
-
-      menu.addItem((item) => {
-        item.setTitle("🗑️ 删除当前列")
-          .setIcon("trash")
-          .setDisabled(cellsInRow.length <= 1)
-          .onClick(() => this.deleteTableColumn(table, colIndex));
-      });
-
+      menu.addItem((item) => item
+        .setTitle("🗑️ 删除当前行")
+        .setIcon("trash")
+        .setDisabled(rows.length <= 2 && rowIndex === 0)
+        .onClick(() => this.deleteTableRow(table, rowIndex)));
+      menu.addItem((item) => item
+        .setTitle("🗑️ 删除当前列")
+        .setIcon("trash")
+        .setDisabled(cells.length <= 1)
+        .onClick(() => this.deleteTableColumn(table, colIndex)));
       menu.addSeparator();
-
-      menu.addItem((item) => {
-        item.setTitle("➕ 在上方插入行")
-          .setIcon("arrow-up")
-          .onClick(() => this.insertTableRow(table, rowIndex, "above"));
-      });
-
-      menu.addItem((item) => {
-        item.setTitle("➕ 在下方插入行")
-          .setIcon("arrow-down")
-          .onClick(() => this.insertTableRow(table, rowIndex, "below"));
-      });
-
+      menu.addItem((item) => item.setTitle("➕ 在上方插入行").setIcon("arrow-up")
+        .onClick(() => this.insertTableRow(table, rowIndex, "above")));
+      menu.addItem((item) => item.setTitle("➕ 在下方插入行").setIcon("arrow-down")
+        .onClick(() => this.insertTableRow(table, rowIndex, "below")));
       menu.addSeparator();
-
-      menu.addItem((item) => {
-        item.setTitle("➕ 在左侧插入列")
-          .setIcon("arrow-left")
-          .onClick(() => this.insertTableColumn(table, colIndex, "left"));
-      });
-
-      menu.addItem((item) => {
-        item.setTitle("➕ 在右侧插入列")
-          .setIcon("arrow-right")
-          .onClick(() => this.insertTableColumn(table, colIndex, "right"));
-      });
-
+      menu.addItem((item) => item.setTitle("➕ 在左侧插入列").setIcon("arrow-left")
+        .onClick(() => this.insertTableColumn(table, colIndex, "left")));
+      menu.addItem((item) => item.setTitle("➕ 在右侧插入列").setIcon("arrow-right")
+        .onClick(() => this.insertTableColumn(table, colIndex, "right")));
       menu.addSeparator();
-
-      menu.addItem((item) => {
-        item.setTitle("🔄 恢复表格自适应列宽")
-          .setIcon("rotate-ccw")
-          .onClick(() => this.resetTableWidths(table));
-      });
-
+      menu.addItem((item) => item.setTitle("🔄 恢复表格自适应列宽").setIcon("rotate-ccw")
+        .onClick(() => this.resetTableWidths(table)));
       menu.showAtPosition({ x: event.pageX, y: event.pageY });
     });
   }
 
   private findMarkdownViewForTable(table: HTMLTableElement): MarkdownView | null {
-    const active = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
-    if (active && active.containerEl.contains(table)) return active;
-
     for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
-      if (leaf.view instanceof MarkdownView && leaf.view.containerEl.contains(table)) {
-        return leaf.view;
-      }
+      if (leaf.view instanceof MarkdownView && leaf.view.containerEl.contains(table)) return leaf.view;
     }
-    return active || (this.plugin.app.workspace.getLeavesOfType("markdown")[0]?.view as MarkdownView) || null;
+    return null;
   }
 
-  private findTableLineRange(docText: string, table: HTMLTableElement): { startLine: number; endLine: number; lines: string[] } | null {
+  private findTableLineRange(docText: string, table: HTMLTableElement): TableLineRange | null {
     const firstTh = table.querySelector("th");
     const thText = firstTh?.textContent?.trim() || "";
     const allDocLines = docText.split("\n");
-
     for (let i = 0; i < allDocLines.length; i += 1) {
       const line = allDocLines[i];
       if (!line || !line.trim().startsWith("|")) continue;
-
-      if (!thText || line.includes(thText)) {
-        // Collect all consecutive table lines
-        const tableLines: string[] = [];
-        let j = i;
-        while (j < allDocLines.length && (allDocLines[j]?.trim().startsWith("|") || false)) {
-          tableLines.push(allDocLines[j] ?? "");
-          j += 1;
-        }
-
-        if (tableLines.length >= 2) {
-          return { startLine: i, endLine: j - 1, lines: tableLines };
-        }
+      if (thText && !line.includes(thText)) continue;
+      const tableLines: string[] = [];
+      let cursor = i;
+      while (cursor < allDocLines.length && Boolean(allDocLines[cursor]?.trim().startsWith("|"))) {
+        tableLines.push(allDocLines[cursor] ?? "");
+        cursor += 1;
       }
+      if (tableLines.length >= 2) return { startLine: i, endLine: cursor - 1, lines: tableLines };
     }
     return null;
+  }
+
+  private replaceTableRange(view: MarkdownView, range: TableLineRange, lines: string[]): void {
+    const editor = view.editor;
+    const from = { line: range.startLine, ch: 0 };
+    const endText = editor.getLine(range.endLine) ?? "";
+    const to = { line: range.endLine, ch: endText.length };
+    const scroller = view.containerEl.querySelector<HTMLElement>(".cm-scroller");
+    const scrollTop = scroller?.scrollTop ?? 0;
+    scroller?.classList.add("knowgrove-scroll-anchor-lock");
+    editor.replaceRange(lines.join("\n"), from, to);
+    const win = this.ownerDocument.defaultView;
+    if (scroller && win) {
+      win.requestAnimationFrame(() => {
+        scroller.scrollTop = scrollTop;
+        win.requestAnimationFrame(() => {
+          scroller.scrollTop = scrollTop;
+          scroller.classList.remove("knowgrove-scroll-anchor-lock");
+        });
+      });
+    } else {
+      scroller?.classList.remove("knowgrove-scroll-anchor-lock");
+    }
   }
 
   private deleteTableRow(table: HTMLTableElement, rowIndex: number): void {
     const view = this.findMarkdownViewForTable(table);
     if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const range = this.findTableLineRange(docText, table);
+    const range = this.findTableLineRange(view.editor.getValue(), table);
     if (!range) return;
-
-    const { startLine, lines } = range;
+    const lines = [...range.lines];
     if (rowIndex === 0) {
       if (lines.length > 2 && lines[2]) {
-        // Promote first data row to header
         lines[0] = lines[2];
         lines.splice(2, 1);
       }
     } else {
-      const targetLineInTable = 1 + rowIndex;
-      if (targetLineInTable < lines.length) {
-        lines.splice(targetLineInTable, 1);
-      }
+      const index = 1 + rowIndex;
+      if (index < lines.length) lines.splice(index, 1);
     }
-
-    const allDocLines = docText.split("\n");
-    allDocLines.splice(startLine, range.endLine - startLine + 1, ...lines);
-    editor.setValue(allDocLines.join("\n"));
+    this.replaceTableRange(view, range, lines);
   }
 
   private deleteTableColumn(table: HTMLTableElement, colIndex: number): void {
     const view = this.findMarkdownViewForTable(table);
     if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const range = this.findTableLineRange(docText, table);
+    const range = this.findTableLineRange(view.editor.getValue(), table);
     if (!range) return;
-
-    const { startLine, lines } = range;
-    const updatedLines = lines.map((line) => {
+    const lines = range.lines.map((line) => {
       const parts = line.split("|");
-      if (parts.length > colIndex + 1) {
-        parts.splice(colIndex + 1, 1);
-      }
+      if (parts.length > colIndex + 1) parts.splice(colIndex + 1, 1);
       return parts.join("|");
     });
-
-    const allDocLines = docText.split("\n");
-    allDocLines.splice(startLine, range.endLine - startLine + 1, ...updatedLines);
-    editor.setValue(allDocLines.join("\n"));
+    this.replaceTableRange(view, range, lines);
   }
 
   private insertTableRow(table: HTMLTableElement, rowIndex: number, position: "above" | "below"): void {
     const view = this.findMarkdownViewForTable(table);
     if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const range = this.findTableLineRange(docText, table);
+    const range = this.findTableLineRange(view.editor.getValue(), table);
     if (!range) return;
-
-    const { startLine, lines } = range;
-    const ths = table.querySelectorAll("th");
-    const colCount = Math.max(1, ths.length);
+    const lines = [...range.lines];
+    const colCount = Math.max(1, table.querySelectorAll("th").length);
     const blankRow = `| ${Array(colCount).fill(" ").join(" | ")} |`;
-
     let insertIndex = position === "above" ? Math.max(2, 1 + rowIndex) : 2 + rowIndex;
     if (rowIndex === 0 && position === "above") insertIndex = 2;
-
-    lines.splice(insertIndex, 0, blankRow);
-
-    const allDocLines = docText.split("\n");
-    allDocLines.splice(startLine, range.endLine - startLine + 1, ...lines);
-    editor.setValue(allDocLines.join("\n"));
+    lines.splice(Math.min(insertIndex, lines.length), 0, blankRow);
+    this.replaceTableRange(view, range, lines);
   }
 
   private insertTableColumn(table: HTMLTableElement, colIndex: number, position: "left" | "right"): void {
     const view = this.findMarkdownViewForTable(table);
     if (!view) return;
-
-    const editor = view.editor;
-    const docText = editor.getValue();
-    const range = this.findTableLineRange(docText, table);
+    const range = this.findTableLineRange(view.editor.getValue(), table);
     if (!range) return;
-
-    const { startLine, lines } = range;
-    const targetIdx = position === "left" ? colIndex + 1 : colIndex + 2;
-
-    const updatedLines = lines.map((line, idx) => {
+    const targetIndex = position === "left" ? colIndex + 1 : colIndex + 2;
+    const lines = range.lines.map((line, rowIndex) => {
       const parts = line.split("|");
-      const fill = idx === 0 ? " 新列 " : idx === 1 ? " --- " : " ";
-      parts.splice(targetIdx, 0, fill);
+      const fill = rowIndex === 0 ? " 新列 " : rowIndex === 1 ? " --- " : " ";
+      parts.splice(targetIndex, 0, fill);
       return parts.join("|");
     });
-
-    const allDocLines = docText.split("\n");
-    allDocLines.splice(startLine, range.endLine - startLine + 1, ...updatedLines);
-    editor.setValue(allDocLines.join("\n"));
+    this.replaceTableRange(view, range, lines);
   }
 
   private attachHandleToTh(table: HTMLTableElement, th: HTMLTableCellElement, colIndex: number): void {
     th.classList.add("knowgrove-table-th");
-
     if (th.querySelector(".knowgrove-table-col-handle")) return;
-
-    const handle = createDiv({ cls: "knowgrove-table-col-handle" });
+    const handle = this.ownerDocument.createElement("div");
+    handle.className = "knowgrove-table-col-handle";
     handle.setAttribute("aria-label", "拖动调整列宽，双击自适应");
     handle.dataset.colIndex = colIndex.toString();
-
-    // Block CodeMirror selection & image/text dragstart
-    const stopEvent = (event: Event): void => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-    };
-
-    handle.addEventListener("mousedown", stopEvent);
-    handle.addEventListener("dragstart", stopEvent);
-    handle.addEventListener("click", stopEvent);
-
-    handle.addEventListener("pointerdown", (event: PointerEvent) => {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
       try {
         handle.setPointerCapture(event.pointerId);
       } catch {
-        // Best effort
+        // Best effort.
       }
-      this.startDragging(table, th, colIndex, event.clientX, handle);
+      this.startDragging(table, th, colIndex, event, handle);
     });
-
     handle.addEventListener("dblclick", (event) => {
       event.preventDefault();
       event.stopPropagation();
       this.resetTableWidths(table);
     });
-
     th.appendChild(handle);
   }
 
@@ -434,47 +326,74 @@ export class TableResizer {
     table: HTMLTableElement,
     th: HTMLTableCellElement,
     colIndex: number,
-    clientX: number,
+    event: PointerEvent,
     handle: HTMLElement,
   ): void {
     this.cleanupActiveDrag();
-
     const ths = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"));
-    const startWidths = ths.map((t) => Math.round(t.getBoundingClientRect().width || 100));
-    const totalWidth = startWidths.reduce((sum, w) => sum + w, 0);
-
+    const startWidths = ths.map((cell) => Math.round(cell.getBoundingClientRect().width || 100));
+    const totalWidth = startWidths.reduce((sum, width) => sum + width, 0);
     table.classList.add("knowgrove-table-fixed-layout");
     table.style.setProperty("width", `${totalWidth}px`, "important");
     table.style.setProperty("min-width", `${totalWidth}px`, "important");
-
-    for (let i = 0; i < ths.length; i += 1) {
-      const t = ths[i];
-      const w = startWidths[i] ?? 100;
-      if (t) {
-        t.style.setProperty("width", `${w}px`, "important");
-        t.style.setProperty("min-width", `${w}px`, "important");
-        t.style.setProperty("max-width", `${w}px`, "important");
-      }
-    }
-
+    ths.forEach((cell, index) => this.setCellWidth(cell, startWidths[index] ?? 100));
     const thRect = th.getBoundingClientRect();
     const tableRect = table.getBoundingClientRect();
-
-    const guideEl = createDiv({ cls: "knowgrove-table-col-guide" });
-    guideEl.style.setProperty("left", `${thRect.right}px`);
-    guideEl.style.setProperty("top", `${tableRect.top}px`);
-    guideEl.style.setProperty("height", `${tableRect.height}px`);
-    document.body.appendChild(guideEl);
-
+    const guideEl = this.ownerDocument.createElement("div");
+    guideEl.className = "knowgrove-table-col-guide";
+    guideEl.style.left = `${thRect.right}px`;
+    guideEl.style.top = `${tableRect.top}px`;
+    guideEl.style.height = `${tableRect.height}px`;
+    this.ownerDocument.body.appendChild(guideEl);
+    const view = this.findMarkdownViewForTable(table);
+    const scroller = view?.containerEl.querySelector<HTMLElement>(".cm-scroller") ?? null;
     this.activeDrag = {
       table,
       th,
       colIndex,
-      startX: clientX,
+      pointerId: event.pointerId,
+      startX: event.clientX,
       startWidths,
       handle,
       guideEl,
+      scroller,
+      lockedScrollTop: scroller?.scrollTop ?? 0,
     };
+    scroller?.classList.add("knowgrove-scroll-anchor-lock");
+  }
+
+  private applyColumnDrag(clientX: number): void {
+    const state = this.activeDrag;
+    if (!state) return;
+    const deltaX = clientX - state.startX;
+    const currentWidths = [...state.startWidths];
+    currentWidths[state.colIndex] = Math.max(40, (state.startWidths[state.colIndex] ?? 100) + deltaX);
+    const totalWidth = currentWidths.reduce((sum, width) => sum + width, 0);
+    state.table.style.setProperty("width", `${totalWidth}px`, "important");
+    state.table.style.setProperty("min-width", `${totalWidth}px`, "important");
+    const ths = Array.from(state.table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"));
+    ths.forEach((cell, index) => this.setCellWidth(cell, currentWidths[index] ?? 100));
+    for (const row of Array.from(state.table.querySelectorAll<HTMLTableRowElement>("tbody tr, tr"))) {
+      Array.from(row.querySelectorAll<HTMLTableCellElement>("td"))
+        .forEach((cell, index) => this.setCellWidth(cell, currentWidths[index] ?? 100));
+    }
+    const targetTh = ths[state.colIndex];
+    if (targetTh) {
+      const thRect = targetTh.getBoundingClientRect();
+      const tableRect = state.table.getBoundingClientRect();
+      state.guideEl.style.left = `${thRect.right}px`;
+      state.guideEl.style.top = `${tableRect.top}px`;
+      state.guideEl.style.height = `${tableRect.height}px`;
+    }
+    if (state.scroller && Math.abs(state.scroller.scrollTop - state.lockedScrollTop) > 0.5) {
+      state.scroller.scrollTop = state.lockedScrollTop;
+    }
+  }
+
+  private setCellWidth(cell: HTMLTableCellElement, width: number): void {
+    cell.style.setProperty("width", `${Math.round(width)}px`, "important");
+    cell.style.setProperty("min-width", `${Math.round(width)}px`, "important");
+    cell.style.setProperty("max-width", `${Math.round(width)}px`, "important");
   }
 
   private resetTableWidths(table: HTMLTableElement): void {
@@ -482,27 +401,38 @@ export class TableResizer {
     table.style.removeProperty("width");
     table.style.removeProperty("min-width");
     table.classList.remove("knowgrove-table-fixed-layout");
-
-    const cells = Array.from(table.querySelectorAll<HTMLTableCellElement>("th, td"));
-    for (const cell of cells) {
+    table.querySelectorAll<HTMLElement>("th, td").forEach((cell) => {
       cell.style.removeProperty("width");
       cell.style.removeProperty("min-width");
       cell.style.removeProperty("max-width");
-    }
-
+    });
     delete table.dataset.knowgroveColWidths;
   }
 
   private cleanupActiveDrag(): void {
-    if (this.activeDrag) {
-      this.activeDrag.guideEl.remove();
-      this.activeDrag = null;
+    const state = this.activeDrag;
+    if (!state) return;
+    state.guideEl.remove();
+    if (state.scroller) {
+      state.scroller.scrollTop = state.lockedScrollTop;
+      state.scroller.classList.remove("knowgrove-scroll-anchor-lock");
     }
+    this.activeDrag = null;
   }
 
   private saveTableColumnWidths(table: HTMLTableElement): void {
-    const ths = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"));
-    const widths = ths.map((th) => th.style.width || "auto");
+    const widths = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th, tr:first-child th"))
+      .map((th) => th.style.width || "auto");
     table.dataset.knowgroveColWidths = widths.join(",");
+  }
+
+  private cancelAnimationFrames(): void {
+    const win = this.ownerDocument.defaultView;
+    if (!win) return;
+    if (this.mutationRaf !== null) win.cancelAnimationFrame(this.mutationRaf);
+    if (this.dragRaf !== null) win.cancelAnimationFrame(this.dragRaf);
+    this.mutationRaf = null;
+    this.dragRaf = null;
+    this.pendingPointerX = null;
   }
 }

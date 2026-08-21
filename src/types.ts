@@ -246,6 +246,7 @@ export interface CommentSelectionDraft {
 export interface KnowGroveData {
   schemaVersion: number;
   uiMigrationVersion: number;
+  maintenanceMigrationVersion: number;
   settings: KnowGroveSettings;
   references: Record<string, ReferenceRecord>;
   attachmentUsage: Record<string, AttachmentUsageRecord>;
