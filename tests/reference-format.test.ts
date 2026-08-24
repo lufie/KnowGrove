@@ -19,7 +19,7 @@ import {
   repairReferenceAnchor,
 } from "../src/reference-repair";
 import type { ReferenceRecord } from "../src/types";
-import { cleanMarkdownBlankLines } from "../src/blank-line-cleanup";
+import { cleanMarkdownBlankLines, removeSelectedMarkdownBlankLines } from "../src/blank-line-cleanup";
 
 const baseRecord: ReferenceRecord = {
   id: "ref-test-1",
@@ -310,4 +310,75 @@ test("does not rewrite protected math, comments, or raw HTML blocks", () => {
   assert.match(result.content, /注释\n\n\n仍是注释/);
   assert.match(result.content, /raw\n\n\ntext/);
   assert.equal(result.removedBlankLines, 1);
+});
+
+test("removes every ordinary blank line fully contained in the selection", () => {
+  const source = "选区外前文\n\n第一段\n \n\n第二段\n\n选区外后文";
+  const start = source.indexOf("第一段");
+  const end = source.indexOf("选区外后文");
+  const result = removeSelectedMarkdownBlankLines(source, start, end);
+  assert.equal(result.replacement, "第一段\n第二段\n");
+  assert.equal(result.removedBlankLines, 3);
+  assert.equal(result.changed, true);
+  assert.equal(`${source.slice(0, start)}${result.replacement}${source.slice(end)}`, "选区外前文\n\n第一段\n第二段\n选区外后文");
+});
+
+test("preserves CRLF and ignores partially selected blank lines", () => {
+  const crlf = "第一段\r\n\r\n第二段\r\n";
+  const cleaned = removeSelectedMarkdownBlankLines(crlf, 0, crlf.length);
+  assert.equal(cleaned.replacement, "第一段\r\n第二段\r\n");
+  assert.equal(cleaned.removedBlankLines, 1);
+
+  const partial = "前文\n  \n后文";
+  const start = partial.indexOf("  ");
+  const unchanged = removeSelectedMarkdownBlankLines(partial, start, start + 2);
+  assert.equal(unchanged.replacement, "  ");
+  assert.equal(unchanged.changed, false);
+});
+
+test("keeps selected blank lines inside protected Markdown regions", () => {
+  const source = [
+    "---",
+    "title: 测试",
+    "",
+    "meta: true",
+    "---",
+    "正文",
+    "",
+    "```text",
+    "第一行",
+    "",
+    "",
+    "第二行",
+    "```",
+    "",
+    "结尾",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+  assert.match(result.replacement, /title: 测试\n\nmeta: true/);
+  assert.match(result.replacement, /正文\n```text/);
+  assert.match(result.replacement, /第一行\n\n\n第二行/);
+  assert.match(result.replacement, /```\n结尾$/);
+  assert.equal(result.removedBlankLines, 2);
+
+  const fencedSelectionStart = source.indexOf("第一行");
+  const fencedSelectionEnd = source.indexOf("第二行") + "第二行".length;
+  assert.equal(
+    removeSelectedMarkdownBlankLines(source, fencedSelectionStart, fencedSelectionEnd).changed,
+    false,
+  );
+});
+
+test("does nothing for an empty selection or a selection without removable blank lines", () => {
+  const source = "第一段\n第二段";
+  assert.deepEqual(removeSelectedMarkdownBlankLines(source, 3, 3), {
+    replacement: "",
+    removedBlankLines: 0,
+    changed: false,
+  });
+  assert.deepEqual(removeSelectedMarkdownBlankLines(source, 0, source.length), {
+    replacement: source,
+    removedBlankLines: 0,
+    changed: false,
+  });
 });

@@ -43,6 +43,8 @@ test("localized UI uses native labels and English fallback for untranslated deta
   );
   assert.equal(translateKnowGroveText("14 篇", "es"), "14 notas");
   assert.equal(knownEnglishTranslation("模型选择"), "Model provider");
+  assert.equal(translateKnowGroveText("删除选中内容的空行", "en"), "Remove blank lines from selection");
+  assert.equal(translateKnowGroveText("删除选中内容的空行", "zh-TW"), "刪除所選內容的空行");
 });
 
 test("user content without a catalog entry is never machine-translated", () => {
