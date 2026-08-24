@@ -13,11 +13,6 @@ Each platform receives `yt-dlp`, `ffmpeg`, `ffprobe`, and a statically linked
 `whisper-cli`. The Whisper model, Skill Pack, and third-party notices are shared
 across platforms.
 
-Runtime `1.0.2` pins whisper.cpp `v1.9.3` at commit
-`371b5a7561823ab2bb32142d2751e35e7534727b`. Runtime upgrades do not silently
-replace the shared `ggml-small.bin` model or change the plugin's transcription
-language and output contracts.
-
 ## Release inputs
 
 The release workflow builds `whisper.cpp` from its tagged source, downloads

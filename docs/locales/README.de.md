@@ -4,7 +4,7 @@
 
 KnowGrove ist ein lokal ausgerichteter Wissensarbeitsbereich für Obsidian. Er verwandelt verstreute Materialien in verknüpfte Themen, Belege, Recherchen und wiederverwendbares Wissen.
 
-Aktueller Quellcode-Release-Kandidat: `2.8.23`
+Aktueller Quellcode-Release-Kandidat: `2.8.24`
 
 ## Hauptfunktionen
 

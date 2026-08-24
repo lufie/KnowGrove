@@ -5,9 +5,17 @@ export interface BlankLineCleanupResult {
   changed: boolean;
 }
 
+export interface SelectedBlankLineRemovalResult {
+  replacement: string;
+  removedBlankLines: number;
+  changed: boolean;
+}
+
 interface LineToken {
   text: string;
   ending: string;
+  start: number;
+  end: number;
 }
 
 type ProtectedMode =
@@ -24,7 +32,12 @@ function tokenizeLines(content: string): LineToken[] {
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(content)) !== null) {
     if (!match[0]) break;
-    lines.push({ text: match[1] ?? "", ending: match[2] ?? "" });
+    lines.push({
+      text: match[1] ?? "",
+      ending: match[2] ?? "",
+      start: match.index,
+      end: match.index + match[0].length,
+    });
     if (!match[2]) break;
   }
   return lines;
@@ -132,7 +145,7 @@ export function cleanMarkdownBlankLines(content: string): BlankLineCleanupResult
         continue;
       }
       if (line.text) normalizedBlankLines += 1;
-      pendingBlank = { text: "", ending: line.ending };
+      pendingBlank = { text: "", ending: line.ending, start: line.start, end: line.end };
       continue;
     }
 
@@ -151,5 +164,39 @@ export function cleanMarkdownBlankLines(content: string): BlankLineCleanupResult
     removedBlankLines,
     normalizedBlankLines,
     changed: cleaned !== content,
+  };
+}
+
+export function removeSelectedMarkdownBlankLines(
+  content: string,
+  selectionStart: number,
+  selectionEnd: number,
+): SelectedBlankLineRemovalResult {
+  const start = Math.max(0, Math.min(content.length, Math.min(selectionStart, selectionEnd)));
+  const end = Math.max(start, Math.min(content.length, Math.max(selectionStart, selectionEnd)));
+  if (start === end) {
+    return { replacement: content.slice(start, end), removedBlankLines: 0, changed: false };
+  }
+
+  const lines = tokenizeLines(content);
+  const protectedFlags = protectedLines(lines);
+  const output: string[] = [];
+  let cursor = start;
+  let removedBlankLines = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line || protectedFlags[index] || line.text.trim()) continue;
+    if (line.start < start || line.end > end) continue;
+    output.push(content.slice(cursor, line.start));
+    cursor = line.end;
+    removedBlankLines += 1;
+  }
+
+  output.push(content.slice(cursor, end));
+  return {
+    replacement: output.join(""),
+    removedBlankLines,
+    changed: removedBlankLines > 0,
   };
 }

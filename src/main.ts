@@ -107,6 +107,7 @@ import {
 } from "./block-drag";
 import {
   cleanMarkdownBlankLines,
+  removeSelectedMarkdownBlankLines,
 } from "./blank-line-cleanup";
 import { DocumentAnchorManager } from "./document-anchor-navigator";
 import {
@@ -188,7 +189,7 @@ import {
   repairReferenceAnchor,
 } from "./reference-repair";
 import { KnowGroveSettingTab } from "./settings";
-import { installKnowGroveLocalization, setKnowGroveLanguage } from "./i18n";
+import { installKnowGroveLocalization, setKnowGroveLanguage, translateKnowGroveText } from "./i18n";
 import { KnowGroveRuntimeManager, type RuntimeInstallProgress } from "./runtime-manager";
 import {
   formatRuntimeBytes,
@@ -894,7 +895,14 @@ export default class KnowGrovePlugin extends Plugin {
     }));
     this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, context) => {
       if (!(context instanceof MarkdownView) || !context.file) return;
-      if (editor.getSelection().trim()) {
+      const selection = editor.getSelection();
+      if (selection.length > 0) {
+        menu.addItem((item) => item
+          .setTitle(translateKnowGroveText("删除选中内容的空行"))
+          .setIcon("eraser")
+          .onClick(() => this.removeSelectedBlankLines(editor)));
+      }
+      if (selection.trim()) {
         if (this.settings.enableComments) {
           menu.addItem((item) => item
             .setTitle("评论并引用")
@@ -3066,6 +3074,21 @@ export default class KnowGrovePlugin extends Plugin {
       return result.content;
     });
     return { changed, removedBlankLines };
+  }
+
+  private removeSelectedBlankLines(editor: Editor): void {
+    const positions = orderedPositions(editor);
+    const selectionStart = editor.posToOffset(positions.from);
+    const selectionEnd = editor.posToOffset(positions.to);
+    const result = removeSelectedMarkdownBlankLines(editor.getValue(), selectionStart, selectionEnd);
+    if (!result.changed) {
+      new Notice(translateKnowGroveText("选中内容中没有可删除的空行"));
+      return;
+    }
+
+    editor.replaceRange(result.replacement, positions.from, positions.to);
+    editor.setSelection(positions.from, editor.offsetToPos(selectionStart + result.replacement.length));
+    new Notice(translateKnowGroveText("已删除选中内容的空行"));
   }
 
   private errorMessage(error: unknown): string {
