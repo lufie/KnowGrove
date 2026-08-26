@@ -91,11 +91,11 @@ export class TableResizer {
     const pendingContainers = new Set<Element>();
     this.observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        const target = mutation.target.instanceOf(Element) ? mutation.target : mutation.target.parentElement;
         const container = target?.closest(".markdown-source-view, .markdown-preview-view");
         if (container) pendingContainers.add(container);
         for (const node of Array.from(mutation.addedNodes)) {
-          if (!(node instanceof Element)) continue;
+          if (!node.instanceOf(Element)) continue;
           if (node.matches(".markdown-source-view, .markdown-preview-view")) pendingContainers.add(node);
           const own = node.closest(".markdown-source-view, .markdown-preview-view");
           if (own) pendingContainers.add(own);
@@ -125,7 +125,7 @@ export class TableResizer {
 
   private scanContainer(container: Element): void {
     container.querySelectorAll("table").forEach((table) => {
-      if (table instanceof HTMLTableElement) this.bindTable(table);
+      if (table.instanceOf(HTMLTableElement)) this.bindTable(table);
     });
   }
 
@@ -298,8 +298,7 @@ export class TableResizer {
   private attachHandleToTh(table: HTMLTableElement, th: HTMLTableCellElement, colIndex: number): void {
     th.classList.add("knowgrove-table-th");
     if (th.querySelector(".knowgrove-table-col-handle")) return;
-    const handle = this.ownerDocument.createElement("div");
-    handle.className = "knowgrove-table-col-handle";
+    const handle = th.createDiv({ cls: "knowgrove-table-col-handle" });
     handle.setAttribute("aria-label", "拖动调整列宽，双击自适应");
     handle.dataset.colIndex = colIndex.toString();
     handle.addEventListener("pointerdown", (event) => {
@@ -319,7 +318,6 @@ export class TableResizer {
       event.stopPropagation();
       this.resetTableWidths(table);
     });
-    th.appendChild(handle);
   }
 
   private startDragging(
@@ -339,12 +337,10 @@ export class TableResizer {
     ths.forEach((cell, index) => this.setCellWidth(cell, startWidths[index] ?? 100));
     const thRect = th.getBoundingClientRect();
     const tableRect = table.getBoundingClientRect();
-    const guideEl = this.ownerDocument.createElement("div");
-    guideEl.className = "knowgrove-table-col-guide";
+    const guideEl = this.ownerDocument.body.createDiv({ cls: "knowgrove-table-col-guide" });
     guideEl.style.left = `${thRect.right}px`;
     guideEl.style.top = `${tableRect.top}px`;
     guideEl.style.height = `${tableRect.height}px`;
-    this.ownerDocument.body.appendChild(guideEl);
     const view = this.findMarkdownViewForTable(table);
     const scroller = view?.containerEl.querySelector<HTMLElement>(".cm-scroller") ?? null;
     this.activeDrag = {

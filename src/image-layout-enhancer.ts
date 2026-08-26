@@ -84,7 +84,6 @@ export class ImageLayoutEnhancer {
   private readonly workspaceRoot: HTMLElement;
   private adornerEl: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
-  private styleEl: HTMLStyleElement | null = null;
   private currentTarget: { embedEl: HTMLElement; imgEl: HTMLImageElement } | null = null;
   private pendingReorder: PendingReorderState | null = null;
   private activeResize: ImageResizeState | null = null;
@@ -209,7 +208,6 @@ export class ImageLayoutEnhancer {
   constructor(private readonly plugin: KnowGrovePlugin) {
     this.workspaceRoot = plugin.app.workspace.containerEl;
     this.ownerDocument = this.workspaceRoot.ownerDocument;
-    this.installRuntimeStyles();
     this.createRootAdorner();
     this.setupGlobalListeners();
     this.startObserving();
@@ -227,53 +225,17 @@ export class ImageLayoutEnhancer {
     this.adornerEl?.remove();
     this.adornerEl = null;
     this.badgeEl = null;
-    this.styleEl?.remove();
-    this.styleEl = null;
     this.ownerDocument.body.classList.remove("knowgrove-image-dragging", "knowgrove-reorder-dragging");
     this.ownerDocument.querySelectorAll(".knowgrove-image-drop-indicator, .knowgrove-image-drag-ghost")
       .forEach((element) => element.remove());
   }
 
-  private installRuntimeStyles(): void {
-    if (this.styleEl) return;
-    const style = this.ownerDocument.createElement("style");
-    style.dataset.knowgroveImageLayout = "true";
-    style.textContent = `
-      .knowgrove-image-row,
-      .knowgrove-image-row-equal-height {
-        display: flex !important;
-        flex-direction: row !important;
-        flex-wrap: wrap !important;
-        align-items: flex-start !important;
-        gap: 12px !important;
-      }
-      .knowgrove-image-row .image-embed,
-      .knowgrove-image-row-equal-height .image-embed {
-        flex: 0 0 auto !important;
-        height: auto !important;
-        max-width: 100% !important;
-      }
-      .knowgrove-image-row .image-embed img,
-      .knowgrove-image-row-equal-height .image-embed img {
-        object-fit: contain !important;
-        max-width: 100% !important;
-      }
-      .knowgrove-scroll-anchor-lock {
-        overflow-anchor: none !important;
-      }
-      .knowgrove-image-drag-ghost {
-        transform: translate(10px, -50%) !important;
-      }
-    `;
-    this.ownerDocument.head.appendChild(style);
-    this.styleEl = style;
-  }
-
   private createRootAdorner(): void {
     if (this.adornerEl) return;
-    const adorner = this.ownerDocument.createElement("div");
-    adorner.className = "knowgrove-image-adorner";
-    adorner.setAttribute("aria-hidden", "true");
+    const adorner = this.ownerDocument.body.createDiv({
+      cls: "knowgrove-image-adorner",
+      attr: { "aria-hidden": "true" },
+    });
 
     const handleDefs: Array<{ type: ResizeHandle; cls: string }> = [
       { type: "nw", cls: "knowgrove-adorner-handle-nw" },
@@ -286,8 +248,7 @@ export class ImageLayoutEnhancer {
       { type: "s", cls: "knowgrove-adorner-handle-s" },
     ];
     for (const definition of handleDefs) {
-      const handle = this.ownerDocument.createElement("div");
-      handle.className = `knowgrove-adorner-handle ${definition.cls}`;
+      const handle = adorner.createDiv({ cls: `knowgrove-adorner-handle ${definition.cls}` });
       handle.dataset.handleType = definition.type;
       handle.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
@@ -301,45 +262,36 @@ export class ImageLayoutEnhancer {
         }
         this.startResize(definition.type, event, handle);
       });
-      adorner.appendChild(handle);
     }
 
-    const toolbar = this.ownerDocument.createElement("div");
-    toolbar.className = "knowgrove-adorner-toolbar";
+    const toolbar = adorner.createDiv({ cls: "knowgrove-adorner-toolbar" });
     const createButton = (text: string, title: string, action: () => void): HTMLButtonElement => {
-      const button = this.ownerDocument.createElement("button");
-      button.className = "knowgrove-adorner-btn";
-      button.textContent = text;
-      button.title = title;
+      const button = toolbar.createEl("button", {
+        cls: "knowgrove-adorner-btn",
+        text,
+        attr: { title },
+      });
       button.addEventListener("pointerdown", (event) => event.stopPropagation());
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         action();
       });
-      toolbar.appendChild(button);
       return button;
     };
 
     createButton("⫷ 靠左", "靠左独占排版（文字上下分布，不环绕）", () => this.applyAlignment("left"));
     createButton("≡ 居中", "居中独占排版", () => this.applyAlignment("center"));
     createButton("⫸ 靠右", "靠右独占排版", () => this.applyAlignment("right"));
-    const separator = this.ownerDocument.createElement("span");
-    separator.className = "knowgrove-adorner-sep";
-    toolbar.appendChild(separator);
+    toolbar.createSpan({ cls: "knowgrove-adorner-sep" });
     createButton("50%", "设为当前编辑区宽度的 50%", () => this.applyPresetWidth(0.5));
     createButton("100%", "设为当前编辑区最大可用宽度", () => this.applyPresetWidth(1));
     createButton("↺ 还原", "还原默认尺寸与对齐", () => this.resetCurrentImage());
-    adorner.appendChild(toolbar);
-
-    const badge = this.ownerDocument.createElement("div");
-    badge.className = "knowgrove-adorner-badge";
-    adorner.appendChild(badge);
+    const badge = adorner.createDiv({ cls: "knowgrove-adorner-badge" });
     this.badgeEl = badge;
 
     adorner.addEventListener("pointerenter", () => this.cancelHideAdorner());
     adorner.addEventListener("pointerleave", () => this.scheduleHideAdorner());
-    this.ownerDocument.body.appendChild(adorner);
     this.adornerEl = adorner;
   }
 
@@ -373,11 +325,11 @@ export class ImageLayoutEnhancer {
       if (this.mutationRaf !== null) return;
       const affected = new Set<Element>();
       for (const mutation of mutations) {
-        const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        const target = mutation.target.instanceOf(Element) ? mutation.target : mutation.target.parentElement;
         const container = target?.closest(".markdown-source-view, .markdown-preview-view");
         if (container) affected.add(container);
         for (const node of Array.from(mutation.addedNodes)) {
-          if (!(node instanceof Element)) continue;
+          if (!node.instanceOf(Element)) continue;
           const ownContainer = node.matches(".markdown-source-view, .markdown-preview-view")
             ? node
             : node.closest(".markdown-source-view, .markdown-preview-view");
@@ -612,27 +564,16 @@ export class ImageLayoutEnhancer {
   private startReorderDrag(embedEl: HTMLElement, imgEl: HTMLImageElement, event: PointerEvent): void {
     const resolved = this.resolveOccurrence(embedEl, imgEl);
     if (!resolved) return;
-    const ghostEl = this.ownerDocument.createElement("div");
-    ghostEl.className = "knowgrove-image-drag-ghost";
-    const ghostImg = this.ownerDocument.createElement("img");
+    const ghostEl = this.ownerDocument.body.createDiv({ cls: "knowgrove-image-drag-ghost" });
+    const ghostImg = ghostEl.createEl("img");
     ghostImg.src = imgEl.src;
-    ghostEl.appendChild(ghostImg);
-    const label = this.ownerDocument.createElement("span");
-    label.className = "knowgrove-ghost-label";
-    label.textContent = "移动图片";
-    ghostEl.appendChild(label);
+    ghostEl.createSpan({ cls: "knowgrove-ghost-label", text: "移动图片" });
     ghostEl.style.left = `${event.clientX}px`;
     ghostEl.style.top = `${event.clientY}px`;
-    this.ownerDocument.body.appendChild(ghostEl);
-
-    const indicator = this.ownerDocument.createElement("div");
-    indicator.className = "knowgrove-image-drop-indicator is-active";
+    const indicator = this.ownerDocument.body.createDiv({ cls: "knowgrove-image-drop-indicator is-active" });
     for (const side of ["left", "right"]) {
-      const dot = this.ownerDocument.createElement("div");
-      dot.className = `knowgrove-drop-indicator-dot ${side}`;
-      indicator.appendChild(dot);
+      indicator.createDiv({ cls: `knowgrove-drop-indicator-dot ${side}` });
     }
-    this.ownerDocument.body.appendChild(indicator);
 
     const scroller = this.findScroller(resolved.view);
     scroller?.classList.add("knowgrove-scroll-anchor-lock");
