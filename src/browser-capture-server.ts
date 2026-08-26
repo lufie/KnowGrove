@@ -75,7 +75,17 @@ import {
   type BrowserCaptureMediaCandidate,
   type BrowserCapturePageType,
   type BrowserCaptureSessionCookie,
+  type WhisperInvocation,
 } from "./browser-capture-core";
+import {
+  alignRecordingMarkers,
+  appendPreservedRecordingMarkerBlock,
+  parseRecordingMarkers,
+  parseTimedTranscriptSrt,
+  recordingMarkerHeading,
+  renderAlignedRecordingMarkers,
+  type TimedTranscriptSegment,
+} from "./recording-markers";
 
 export type BrowserCaptureJobStatus = "queued" | "running" | "cancelling" | "completed" | "partial" | "failed";
 
@@ -148,6 +158,7 @@ interface BrowserCaptureHost {
 interface ExtractedSource {
   title: string;
   source: string;
+  recordingMarkerBlock?: string;
   author?: string;
   publishedAt?: string;
   mediaPath?: string;
@@ -450,6 +461,36 @@ function replaceGeneratedFrontmatter(generated: string, current: string): string
   const frontmatter = current.match(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0]?.trimEnd();
   const body = generated.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").replace(/^\s+/, "");
   return frontmatter ? `${frontmatter}\n\n${body}` : generated;
+}
+
+async function readWhisperTranscript(
+  directory: string,
+  invocation: WhisperInvocation,
+): Promise<{ transcript: string; segments: TimedTranscriptSegment[] }> {
+  let transcriptPath = invocation.transcriptPath;
+  if (transcriptPath) {
+    try {
+      await access(transcriptPath);
+    } catch {
+      transcriptPath = undefined;
+    }
+  }
+  if (!transcriptPath) {
+    const files = await readdir(directory);
+    const transcriptFile = files.find((name) => name.toLowerCase().endsWith(".srt"))
+      ?? files.find((name) => name.toLowerCase().endsWith(".txt"));
+    if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
+    transcriptPath = join(directory, transcriptFile);
+  }
+  const raw = await readFile(transcriptPath, "utf8");
+  const segments = transcriptPath.toLowerCase().endsWith(".srt")
+    ? parseTimedTranscriptSrt(raw)
+    : [];
+  const transcript = formatTranscriptParagraphs(
+    segments.length ? segments.map((segment) => segment.text).join("\n") : raw,
+  );
+  if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+  return { transcript, segments };
 }
 
 function captureBodyForConflictCheck(content: string): string {
@@ -1349,7 +1390,7 @@ export class BrowserCaptureServer {
           );
           noteFile = await this.renameArticleToTitle(noteFile, extracted.title, id);
         }
-        const rawNote = buildRawCaptureNote({
+        const generatedRawNote = buildRawCaptureNote({
           pageType: job.pageType,
           title: extracted.title,
           fileName: noteFile.basename,
@@ -1363,6 +1404,10 @@ export class BrowserCaptureServer {
           mediaPath: extracted.mediaPath,
           outputLocale,
         });
+        const rawNote = appendPreservedRecordingMarkerBlock(
+          generatedRawNote,
+          extracted.recordingMarkerBlock ?? "",
+        );
         if (job.targetPath) {
           await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter: Record<string, unknown>) => {
             frontmatter["文件名"] = noteFile!.basename;
@@ -2256,21 +2301,7 @@ export class BrowserCaptureServer {
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
-      let transcriptPath = invocation.transcriptPath;
-      if (transcriptPath) {
-        try {
-          await access(transcriptPath);
-        } catch {
-          transcriptPath = undefined;
-        }
-      }
-      if (!transcriptPath) {
-        const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
-        if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
-        transcriptPath = join(directory, transcriptFile);
-      }
-      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
-      if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+      const { transcript } = await readWhisperTranscript(directory, invocation);
       return { title: title || "未命名视频", source: transcript };
     } finally {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
@@ -2320,6 +2351,15 @@ export class BrowserCaptureServer {
           : undefined;
     if (!mediaFile || !LOCAL_MEDIA_EXTENSION.test(mediaFile.path)) {
       throw new Error(`找不到本地音视频文件：${linkPath}`);
+    }
+
+    const sourceNote = this.host.app.vault.getAbstractFileByPath(sourceNotePath);
+    const sourceMarkdown = sourceNote instanceof TFile
+      ? await this.host.app.vault.read(sourceNote)
+      : "";
+    const markerData = parseRecordingMarkers(sourceMarkdown);
+    if (markerData?.diagnostics.length) {
+      console.warn(`KnowGrove: recording marker diagnostics for ${sourceNotePath}`, markerData.diagnostics);
     }
 
     const settings = this.host.getSettings().browserCapture;
@@ -2382,25 +2422,16 @@ export class BrowserCaptureServer {
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
-      let transcriptPath = invocation.transcriptPath;
-      if (transcriptPath) {
-        try {
-          await access(transcriptPath);
-        } catch {
-          transcriptPath = undefined;
-        }
-      }
-      if (!transcriptPath) {
-        const transcriptFile = (await readdir(directory))
-          .find((name) => name.endsWith(".txt"));
-        if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
-        transcriptPath = join(directory, transcriptFile);
-      }
-      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
-      if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+      const { transcript, segments } = await readWhisperTranscript(directory, invocation);
+      const alignedMarkers = alignRecordingMarkers(markerData?.markers ?? [], segments);
+      const markerSection = renderAlignedRecordingMarkers(
+        alignedMarkers,
+        recordingMarkerHeading(outputLocale ?? "zh-CN"),
+      );
       return {
         title: job.title || mediaFile.basename || (job.pageType === "video" ? "视频记录" : "语音记录"),
-        source: transcript,
+        source: [markerSection, transcript].filter(Boolean).join("\n\n"),
+        recordingMarkerBlock: markerData?.rawBlock,
         mediaPath: mediaFile.path,
       };
     } finally {
@@ -2548,21 +2579,7 @@ export class BrowserCaptureServer {
       if (whisperResult.exitCode !== 0) {
         throw new Error(whisperResult.stderr.trim() || "Whisper 转录失败");
       }
-      let transcriptPath = invocation.transcriptPath;
-      if (transcriptPath) {
-        try {
-          await access(transcriptPath);
-        } catch {
-          transcriptPath = undefined;
-        }
-      }
-      if (!transcriptPath) {
-        const transcriptFile = (await readdir(directory)).find((name) => name.endsWith(".txt"));
-        if (!transcriptFile) throw new Error("Whisper 完成后没有生成逐字稿");
-        transcriptPath = join(directory, transcriptFile);
-      }
-      const transcript = formatTranscriptParagraphs(await readFile(transcriptPath, "utf8"));
-      if (!transcript) throw new Error("Whisper 生成的逐字稿为空");
+      const { transcript } = await readWhisperTranscript(directory, invocation);
       return {
         title: title || job.title || "未命名音频",
         source: transcript,

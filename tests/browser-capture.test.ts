@@ -678,10 +678,11 @@ test("video transcription supports both Whisper CLIs", () => {
       "--task",
       "transcribe",
       "--output_format",
-      "txt",
+      "srt",
       "--output_dir",
       "/tmp/output",
     ],
+    transcriptFormat: "srt",
   });
   assert.deepEqual(buildWhisperInvocation({
     implementation: "whisper-cpp",
@@ -701,12 +702,13 @@ test("video transcription supports both Whisper CLIs", () => {
       "-nf",
       "-mc",
       "0",
-      "-otxt",
+      "-osrt",
       "-of",
       "/tmp/output/transcript",
       "-np",
     ],
-    transcriptPath: "/tmp/output/transcript.txt",
+    transcriptPath: "/tmp/output/transcript.srt",
+    transcriptFormat: "srt",
   });
 });
 
@@ -1010,6 +1012,69 @@ test("detectLocalMediaNoteCandidate matches mixed short and full media paths", (
   assert.equal(candidate.title, "朝阳区");
 });
 
+test("local media detection ignores localized human-readable marker lists and protocol data", () => {
+  const note = [
+    "---",
+    'audio: "[[Recordings/interview.m4a]]"',
+    "---",
+    "",
+    "# Interview",
+    "",
+    "## Important moments",
+    "",
+    "- 00:03 · Product decision",
+    "- 00:18 · Follow-up",
+    "",
+    "%%",
+    "knowgrove-markers-v1",
+    '{"markers":[{"created_at":"2026-08-25T01:02:03Z","id":"m1","offset_ms":3000,"sequence":1,"source":"future_source","title":"Product decision"}],"schema":"knowgrove-markers-v1"}',
+    "%%",
+    "",
+    "![[interview.m4a]]",
+  ].join("\n");
+  const candidate = detectLinkNoteCandidate(note, "fallback");
+  assert.ok(candidate);
+  assert.equal(candidate.pageType, "audio");
+  assert.equal(candidate.mediaPath, "interview.m4a");
+  assert.equal(candidate.title, "Interview");
+});
+
+test("AI-enhanced capture notes preserve the original marker protocol block", () => {
+  const markerBlock = [
+    "%%",
+    "knowgrove-markers-v1",
+    '{"markers":[{"created_at":"2026-08-25T01:02:03Z","id":"m1","offset_ms":3000,"sequence":1,"source":"app","title":null}],"schema":"knowgrove-markers-v1"}',
+    "%%",
+  ].join("\n");
+  const raw = [
+    "---",
+    '标题: "访谈"',
+    'KnowGrove采集状态: "处理中"',
+    "---",
+    "",
+    "# 访谈",
+    "",
+    "## 完整转录",
+    "",
+    "### 关键时刻",
+    "",
+    "- [00:03 · 标记 1](#knowgrove-marker-3000)",
+    "",
+    "转录正文",
+    "",
+    markerBlock,
+  ].join("\n");
+  const enhanced = buildEnhancedCaptureNote(raw, "audio", {
+    summary: "摘要",
+    keyPoints: ["要点"],
+    mode: "single-speaker",
+    bodyMarkdown: "### 整理正文\n\n内容",
+  }, "zh-CN");
+  assert.ok(enhanced.includes(markerBlock));
+  assert.equal(enhanced.split(markerBlock).length - 1, 1);
+  assert.match(enhanced, /KnowGrove采集状态: "已完成"/);
+});
+
 test("whisperLanguageFromLocale maps locale to correct whisper language code", () => {
   assert.equal(whisperLanguageFromLocale("zh-CN"), "zh");
   assert.equal(whisperLanguageFromLocale("zh-TW"), "zh");
@@ -1041,11 +1106,13 @@ test("buildWhisperInvocation configures explicit language and non-speech suppres
     "-nf",
     "-mc",
     "0",
-    "-otxt",
+    "-osrt",
     "-of",
     "/tmp/out/transcript",
     "-np",
   ]);
+  assert.equal(cppInvocation.transcriptPath, "/tmp/out/transcript.srt");
+  assert.equal(cppInvocation.transcriptFormat, "srt");
 
   const pythonInvocation = buildWhisperInvocation({
     implementation: "whisper",
@@ -1063,10 +1130,11 @@ test("buildWhisperInvocation configures explicit language and non-speech suppres
     "--task",
     "transcribe",
     "--output_format",
-    "txt",
+    "srt",
     "--output_dir",
     "/tmp/out",
   ]);
+  assert.equal(pythonInvocation.transcriptFormat, "srt");
 });
 
 test("formatTranscriptParagraphs strips non-speech noise characters and subtitle noise", () => {

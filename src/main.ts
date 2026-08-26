@@ -81,6 +81,7 @@ import {
   type DesktopRecordingSnapshot,
   type LocalMediaImportProgress,
 } from "./capture-center-core";
+import { recordingMarkerOffsetFromHref } from "./recording-markers";
 import { DesktopRecorderController } from "./desktop-recorder";
 import {
   inspectExternalMarkdownOpener,
@@ -6806,6 +6807,7 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   private decorateReadingView(container: HTMLElement, sourcePath: string): void {
+    this.decorateRecordingMarkerLinks(container, sourcePath);
     if (!this.settings.enableComments) return;
     const records = Object.values(this.data.references).filter((record) => record.sourcePath === sourcePath);
     const grouped = new Map<string, ReferenceRecord[]>();
@@ -6828,6 +6830,38 @@ export default class KnowGrovePlugin extends Plugin {
         event.preventDefault();
         event.stopPropagation();
         void this.openCommentsForBlock(blockId);
+      });
+    }
+  }
+
+  private decorateRecordingMarkerLinks(container: HTMLElement, sourcePath: string): void {
+    const links = Array.from(
+      container.querySelectorAll<HTMLAnchorElement>('a[href^="#knowgrove-marker-"]'),
+    );
+    for (const link of links) {
+      if (link.dataset.knowgroveRecordingMarker === "true") continue;
+      const offsetMs = recordingMarkerOffsetFromHref(link.getAttribute("href"));
+      if (offsetMs === undefined) continue;
+      link.dataset.knowgroveRecordingMarker = "true";
+      link.setAttribute("role", "button");
+      link.setAttribute(
+        "aria-label",
+        `${link.textContent?.trim() || translateKnowGroveText("关键时刻")} · ${translateKnowGroveText("跳转到录音位置")}`,
+      );
+      link.addEventListener("click", (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const leaf = this.app.workspace.getLeavesOfType("markdown")
+          .find((candidate) => candidate.view instanceof MarkdownView && candidate.view.file?.path === sourcePath);
+        const media = leaf?.view instanceof MarkdownView
+          ? leaf.view.containerEl.querySelector<HTMLMediaElement>("audio, video")
+          : null;
+        if (!media) {
+          new Notice(translateKnowGroveText("当前阅读视图中没有可跳转的音频或视频播放器"));
+          return;
+        }
+        media.currentTime = offsetMs / 1_000;
+        void media.play().catch(() => undefined);
       });
     }
   }
