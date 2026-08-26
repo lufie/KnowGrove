@@ -1,6 +1,11 @@
 import type { AIProviderId } from "./types";
 
 import type { KnowGroveLocale } from "./i18n";
+import {
+  normalizeGeneratedMarkdownPreservingMarkers,
+  parseRecordingMarkers,
+  stripRecordingMarkerBlocks,
+} from "./recording-markers";
 
 export type BrowserCapturePageType = "article" | "video" | "audio";
 
@@ -126,6 +131,7 @@ export type WhisperImplementation = "openai-whisper" | "whisper-cpp";
 export interface WhisperInvocation {
   args: string[];
   transcriptPath?: string;
+  transcriptFormat: "srt";
 }
 
 const VIDEO_HOSTS = [
@@ -968,14 +974,15 @@ function detectLocalMediaNoteCandidate(
   const uniqueNames = new Set(embeddedMedia.map((p) => p.split("/").pop()?.toLowerCase() || p.toLowerCase()));
   if (uniqueNames.size !== 1) return null;
 
-  const withoutTemplate = body
+  const withoutMarkers = stripRecordingMarkerBlocks(body);
+  const withoutTemplate = withoutMarkers
     .replace(/!\[\[[^\]]+]]/g, " ")
     .replace(/^#{1,6}\s+.*$/gm, " ")
     .replace(/^\s*[-*]\s+(?:无|没有|暂无)\s*$/gim, " ")
     .replace(/^(?:中断记录|整理记录|语音记录|视频记录)\s*$/gim, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/\s+/g, "");
-  if (withoutTemplate.length > 120 || body.length > 1_500) return null;
+  if (withoutTemplate.length > 120 || withoutMarkers.length > 1_500) return null;
 
   const heading = body.match(/^#{1,6}\s+(.+)$/m)?.[1]?.trim() ?? "";
   const mediaPath = embeddedMedia[0]!;
@@ -1126,12 +1133,13 @@ export function buildWhisperInvocation(input: {
         "-nf",
         "-mc",
         "0",
-        "-otxt",
+        "-osrt",
         "-of",
         transcriptStem,
         "-np",
       ],
-      transcriptPath: `${transcriptStem}.txt`,
+      transcriptPath: `${transcriptStem}.srt`,
+      transcriptFormat: "srt",
     };
   }
   return {
@@ -1144,10 +1152,11 @@ export function buildWhisperInvocation(input: {
       "--task",
       "transcribe",
       "--output_format",
-      "txt",
+      "srt",
       "--output_dir",
       input.outputDirectory,
     ],
+    transcriptFormat: "srt",
   };
 }
 
@@ -1949,7 +1958,8 @@ export function buildEnhancedCaptureNote(
       .slice(0, nextHeadingOffset >= 0 ? mediaHeading[0].length + nextHeadingOffset : undefined)
       .trim();
   }
-  return [
+  const markerBlock = parseRecordingMarkers(rawNote)?.rawBlock ?? "";
+  const generated = [
     completedFrontmatter,
     "",
     `# ${title}`,
@@ -1971,5 +1981,7 @@ export function buildEnhancedCaptureNote(
     "",
     source,
     "",
-  ].join("\n").replace(/\n{3,}/g, "\n\n");
+    ...(markerBlock && !source.includes(markerBlock) ? [markerBlock, ""] : []),
+  ].join("\n");
+  return normalizeGeneratedMarkdownPreservingMarkers(generated);
 }
