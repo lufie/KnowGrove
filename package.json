@@ -1,13 +1,13 @@
 {
   "name": "obsidian-knowgrove",
-  "version": "2.8.25",
+  "version": "2.8.26",
   "description": "KnowGrove turns an Obsidian vault into a self-growing knowledge research workspace.",
   "main": "main.js",
   "type": "module",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
-    "check": "tsc --noEmit --skipLibCheck",
+    "build": "tsc --noEmit --skipLibCheck && node scripts/check-review-compliance.mjs && node esbuild.config.mjs production",
+    "check": "tsc --noEmit --skipLibCheck && node scripts/check-review-compliance.mjs",
     "lint": "eslint . --max-warnings 0",
     "test": "node scripts/run-tests.mjs",
     "test:capture-compat": "node scripts/run-capture-compatibility.mjs",

@@ -5314,9 +5314,9 @@ button.knowgrove-recording-restore:focus-visible {
 }
 
 .knowgrove-anchor-node.is-hovered {
-  background: var(--text-normal, #ffffff) !important;
-  opacity: 1 !important;
-  height: 3.5px !important;
+  background: var(--text-normal, #ffffff);
+  opacity: 1;
+  height: 3.5px;
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
 }
 
@@ -5361,7 +5361,7 @@ button.knowgrove-recording-restore:focus-visible {
 }
 
 .knowgrove-anchor-actions.is-hidden {
-  display: none !important;
+  display: none;
 }
 
 .knowgrove-anchor-locate-btn {
@@ -5410,15 +5410,15 @@ button.knowgrove-recording-restore:focus-visible {
 
 @keyframes knowgrove-file-pulse {
   0% {
-    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.4)) !important;
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.4));
     box-shadow: 0 0 10px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.45));
   }
   30% {
-    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.45)) !important;
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.45));
     box-shadow: 0 0 12px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.5));
   }
   70% {
-    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.2)) !important;
+    background-color: var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.2));
     box-shadow: 0 0 6px var(--knowgrove-brand-soft, rgba(242, 75, 63, 0.25));
   }
   100% {
@@ -5428,7 +5428,7 @@ button.knowgrove-recording-restore:focus-visible {
 }
 
 .knowgrove-file-reveal-pulse {
-  animation: knowgrove-file-pulse 1.8s ease-out forwards !important;
+  animation: knowgrove-file-pulse 1.8s ease-out forwards;
   border-radius: 4px;
 }
 
@@ -5441,11 +5441,11 @@ button.knowgrove-recording-restore:focus-visible {
 }
 
 .knowgrove-table-fixed-layout {
-  table-layout: fixed !important;
+  table-layout: fixed;
 }
 
 .knowgrove-table-th {
-  position: relative !important;
+  position: relative;
 }
 
 .knowgrove-table-col-handle {
@@ -5487,18 +5487,18 @@ button.knowgrove-recording-restore:focus-visible {
 }
 
 .knowgrove-enhanced-image-embed img {
-  user-drag: none !important;
-  -webkit-user-drag: none !important;
-  user-select: none !important;
-  -webkit-user-select: none !important;
+  user-drag: none;
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .knowgrove-image-resizing {
-  display: inline-block !important;
+  display: inline-block;
 }
 
 .knowgrove-image-resizing img {
-  max-width: none !important;
+  max-width: none;
 }
 
 .knowgrove-enhanced-image-embed:hover {
@@ -5510,40 +5510,41 @@ button.knowgrove-recording-restore:focus-visible {
 /* 快速对齐：靠左、居中、靠右 (独占整行，文字上下分布，绝不环绕) */
 .knowgrove-align-left,
 .knowgrove-enhanced-image-embed.knowgrove-align-left {
-  display: block !important;
-  float: none !important;
-  clear: both !important;
-  margin: 12px auto 12px 0 !important;
+  display: block;
+  float: none;
+  clear: both;
+  margin: 12px auto 12px 0;
 }
 
 .knowgrove-align-center,
 .knowgrove-enhanced-image-embed.knowgrove-align-center {
-  display: block !important;
-  float: none !important;
-  clear: both !important;
-  margin: 12px auto !important;
+  display: block;
+  float: none;
+  clear: both;
+  margin: 12px auto;
 }
 
 .knowgrove-align-right,
 .knowgrove-enhanced-image-embed.knowgrove-align-right {
-  display: block !important;
-  float: none !important;
-  clear: both !important;
-  margin: 12px 0 12px auto !important;
+  display: block;
+  float: none;
+  clear: both;
+  margin: 12px 0 12px auto;
 }
 
 /* 被拖拽中的原始图片样式 */
 .knowgrove-image-being-dragged {
-  opacity: 0.35 !important;
-  filter: grayscale(40%) !important;
-  outline: 2px dashed var(--kg-primary, #8b5cf6) !important;
-  outline-offset: 4px !important;
+  opacity: 0.35;
+  filter: grayscale(40%);
+  outline: 2px dashed var(--kg-primary, #8b5cf6);
+  outline-offset: 4px;
 }
 
 /* 随光标移动的微缩预览卡片 (Drag Ghost) */
 .knowgrove-image-drag-ghost {
   position: fixed;
-  z-index: 100005 !important;
+  z-index: 100005;
+  transform: translate(10px, -50%);
   pointer-events: none;
   display: flex;
   align-items: center;
@@ -5582,13 +5583,13 @@ button.knowgrove-recording-restore:focus-visible {
   border-radius: 2px;
   box-shadow: 0 0 10px var(--kg-primary-glow, rgba(139, 92, 246, 0.9)), 0 0 4px #ffffff;
   pointer-events: none;
-  z-index: 100004 !important;
+  z-index: 100004;
   display: none;
-  transition: none !important;
+  transition: none;
 }
 
 .knowgrove-image-drop-indicator.is-active {
-  display: block !important;
+  display: block;
 }
 
 .knowgrove-drop-indicator-dot {
@@ -5612,9 +5613,9 @@ button.knowgrove-recording-restore:focus-visible {
 
 body.knowgrove-reorder-dragging,
 body.knowgrove-reorder-dragging * {
-  cursor: grabbing !important;
-  user-select: none !important;
-  -webkit-user-select: none !important;
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ==========================================================================
@@ -5625,9 +5626,9 @@ body.knowgrove-reorder-dragging * {
   position: fixed;
   /* The body-sized overlay must not become the wheel target. Direct image
      pointer handling still starts reordering; only the controls opt back in. */
-  pointer-events: none !important;
-  cursor: default !important;
-  z-index: 99999 !important;
+  pointer-events: none;
+  cursor: default;
+  z-index: 99999;
   box-sizing: border-box;
   border: 2px solid var(--kg-primary, #8b5cf6);
   border-radius: 4px;
@@ -5652,12 +5653,12 @@ body.knowgrove-reorder-dragging * {
 /* 8 方位手柄 */
 .knowgrove-adorner-handle {
   position: absolute;
-  pointer-events: auto !important;
+  pointer-events: auto;
   box-sizing: border-box;
   background: var(--kg-surface-card, #ffffff);
   border: 2px solid var(--kg-primary, #8b5cf6);
   border-radius: 50%;
-  z-index: 100000 !important;
+  z-index: 100000;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -5673,7 +5674,7 @@ body.knowgrove-reorder-dragging * {
   width: 28px;
   height: 28px;
   background: transparent;
-  z-index: 100001 !important;
+  z-index: 100001;
 }
 
 .knowgrove-adorner-handle:hover {
@@ -5688,7 +5689,7 @@ body.knowgrove-reorder-dragging * {
   height: 12px;
   top: -6px;
   left: -6px;
-  cursor: nwse-resize !important;
+  cursor: nwse-resize;
 }
 
 .knowgrove-adorner-handle-ne {
@@ -5696,7 +5697,7 @@ body.knowgrove-reorder-dragging * {
   height: 12px;
   top: -6px;
   right: -6px;
-  cursor: nesw-resize !important;
+  cursor: nesw-resize;
 }
 
 .knowgrove-adorner-handle-se {
@@ -5704,7 +5705,7 @@ body.knowgrove-reorder-dragging * {
   height: 12px;
   bottom: -6px;
   right: -6px;
-  cursor: nwse-resize !important;
+  cursor: nwse-resize;
 }
 
 .knowgrove-adorner-handle-sw {
@@ -5712,7 +5713,7 @@ body.knowgrove-reorder-dragging * {
   height: 12px;
   bottom: -6px;
   left: -6px;
-  cursor: nesw-resize !important;
+  cursor: nesw-resize;
 }
 
 /* 4 个边手柄 (药丸型 / 椭圆) */
@@ -5723,7 +5724,7 @@ body.knowgrove-reorder-dragging * {
   top: 50%;
   right: -4px;
   transform: translateY(-50%);
-  cursor: ew-resize !important;
+  cursor: ew-resize;
 }
 
 .knowgrove-adorner-handle-w {
@@ -5733,7 +5734,7 @@ body.knowgrove-reorder-dragging * {
   top: 50%;
   left: -4px;
   transform: translateY(-50%);
-  cursor: ew-resize !important;
+  cursor: ew-resize;
 }
 
 .knowgrove-adorner-handle-n {
@@ -5743,7 +5744,7 @@ body.knowgrove-reorder-dragging * {
   left: 50%;
   top: -4px;
   transform: translateX(-50%);
-  cursor: ns-resize !important;
+  cursor: ns-resize;
 }
 
 .knowgrove-adorner-handle-s {
@@ -5753,7 +5754,7 @@ body.knowgrove-reorder-dragging * {
   left: 50%;
   bottom: -4px;
   transform: translateX(-50%);
-  cursor: ns-resize !important;
+  cursor: ns-resize;
 }
 
 .knowgrove-adorner-handle-e:hover,
@@ -5772,7 +5773,7 @@ body.knowgrove-reorder-dragging * {
   top: -40px;
   left: 50%;
   transform: translateX(-50%);
-  pointer-events: auto !important;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -5783,7 +5784,7 @@ body.knowgrove-reorder-dragging * {
   border: 1px solid var(--kg-border-subtle, rgba(255, 255, 255, 0.15));
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-  z-index: 100002 !important;
+  z-index: 100002;
   white-space: nowrap;
 }
 
@@ -5826,7 +5827,7 @@ body.knowgrove-reorder-dragging * {
   border-radius: 5px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   pointer-events: none;
-  z-index: 100002 !important;
+  z-index: 100002;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s ease, visibility 0.12s ease;
@@ -5846,7 +5847,7 @@ body.knowgrove-reorder-dragging * {
   background: var(--kg-surface-card, #ffffff);
   border: 2.5px solid var(--kg-primary, #8b5cf6);
   border-radius: 50%;
-  z-index: 10000 !important;
+  z-index: 10000;
   opacity: 0;
   transition: opacity 0.15s ease, transform 0.15s ease;
   box-sizing: border-box;
@@ -5864,12 +5865,12 @@ body.knowgrove-reorder-dragging * {
   width: 28px;
   height: 28px;
   background: transparent;
-  z-index: 10001 !important;
+  z-index: 10001;
 }
 
 .knowgrove-enhanced-image-embed:hover .knowgrove-image-handle,
 .knowgrove-enhanced-image-embed.is-resizing .knowgrove-image-handle {
-  opacity: 1 !important;
+  opacity: 1;
 }
 
 .knowgrove-image-handle:hover {
@@ -5881,19 +5882,19 @@ body.knowgrove-reorder-dragging * {
 .knowgrove-image-handle-nw {
   left: -7px;
   top: -7px;
-  cursor: nwse-resize !important;
+  cursor: nwse-resize;
 }
 
 .knowgrove-image-handle-ne {
   right: -7px;
   top: -7px;
-  cursor: nesw-resize !important;
+  cursor: nesw-resize;
 }
 
 .knowgrove-image-handle-se {
   right: -7px;
   bottom: -7px;
-  cursor: nwse-resize !important;
+  cursor: nwse-resize;
 }
 
 .knowgrove-image-handle-sw {
@@ -6001,30 +6002,33 @@ body.knowgrove-reorder-dragging * {
 
 /* 同行多图并排与等高画廊网格 (Multi-Image Equal-Height Grid) */
 .knowgrove-image-row {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: wrap !important;
-  gap: 12px !important;
-  align-items: stretch !important;
-  margin: 14px 0 !important;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+  margin: 14px 0;
 }
 
 .knowgrove-image-row-equal-height .image-embed {
   flex: 1 1 auto;
-  display: flex !important;
+  display: flex;
   justify-content: center;
-  height: var(--knowgrove-row-height, 240px) !important;
-  width: auto !important;
-  max-width: 100% !important;
+  height: var(--knowgrove-row-height, 240px);
+  width: auto;
+  max-width: 100%;
 }
 
 .knowgrove-image-row-equal-height .image-embed img {
-  height: 100% !important;
-  width: auto !important;
-  max-width: 100% !important;
-  object-fit: cover !important;
-  border-radius: 8px !important;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: cover;
+  border-radius: 8px;
 }
 
+.knowgrove-scroll-anchor-lock {
+  overflow-anchor: none;
+}
 
 

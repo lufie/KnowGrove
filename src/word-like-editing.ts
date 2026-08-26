@@ -816,7 +816,8 @@ function dispatchEdit(view: EditorView, edit: WordLikeEdit, userEvent: string): 
 }
 
 function selectedMediaLine(view: EditorView, event: MouseEvent): boolean {
-  const target = event.target instanceof Element ? event.target : null;
+  const targetNode = event.target as Node | null;
+  const target = targetNode?.instanceOf(Element) ? targetNode : null;
   if (!target?.closest(".cm-line")) return false;
   if (target.closest(".embed-actions, .image-resize-corner, a, button, audio, video, input, select, textarea")) {
     return false;

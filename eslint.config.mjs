@@ -29,8 +29,8 @@ export default defineConfig([
       "@typescript-eslint/no-unsafe-member-access": "error",
       "@typescript-eslint/no-unsafe-return": "error",
       "@typescript-eslint/prefer-promise-reject-errors": "error",
-      "obsidianmd/prefer-create-el": "off",
-      "obsidianmd/prefer-instanceof": "off",
+      "obsidianmd/prefer-create-el": "error",
+      "obsidianmd/prefer-instanceof": "error",
       "obsidianmd/ui/sentence-case": ["warn", {
         mode: "loose",
         brands: [

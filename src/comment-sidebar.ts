@@ -68,7 +68,7 @@ export class CommentsSidebarView extends ItemView {
   focusRecord(sourcePath: string, recordId: string): void {
     if (this.draft || (this.sourcePath === sourcePath && this.activeRecordId === recordId)) return;
     const focused = this.contentEl.ownerDocument.activeElement;
-    if (focused instanceof HTMLElement
+    if (focused?.instanceOf(HTMLElement)
       && this.contentEl.contains(focused)
       && focused.matches("input, textarea, select")) return;
     this.sourcePath = sourcePath;
