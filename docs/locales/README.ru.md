@@ -2,9 +2,17 @@
 
 [English](https://github.com/lufie/KnowGrove/blob/main/README.md) · [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · **Русский**
 
-KnowGrove — локальное рабочее пространство знаний для Obsidian. Оно превращает разрозненные материалы в связанные темы, доказательства, исследования и повторно используемые знания.
+KnowGrove — локальный рабочий процесс для тех, кто собирает материалы быстрее, чем успевает их организовать. Исходники остаются в хранилище Obsidian, получают структуру, связываются с темами и доказательствами и превращаются в повторно используемые результаты.
 
-Текущая версия исходного кода: `2.8.29`
+Текущая версия исходного кода: `2.8.30`
+
+## Один процесс от источника до результата
+
+| Сбор | Обработка | Организация | Создание |
+| --- | --- | --- | --- |
+| Сохраняйте статьи, ссылки, локальные аудио/видео, записи и изображения. | Извлекайте веб-текст, преобразуйте изображения в структурированный Markdown и расшифровывайте аудио или видео. | Читайте позже, управляйте свойствами и связывайте темы, комментарии, блоки и доказательства. | Создавайте планы, отчёты, длинные тексты и версии для разных каналов из выбранных источников. |
+
+Хранилище остаётся источником истины. KnowGrove не собирает клиентскую телеметрию; соответствующие материалы обрабатывают только выбранные вами локальные инструменты или совместимые провайдеры.
 
 ## Основные возможности
 

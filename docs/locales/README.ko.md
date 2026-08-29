@@ -2,9 +2,17 @@
 
 [English](https://github.com/lufie/KnowGrove/blob/main/README.md) · [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · **한국어** · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-KnowGrove는 흩어진 자료를 주제, 근거, 연구, 재사용 가능한 지식으로 연결하는 로컬 우선 Obsidian 지식 작업 공간입니다.
+KnowGrove는 수집 속도가 정리 속도보다 빠른 사용자를 위한 로컬 우선 Obsidian 지식 워크플로입니다. 원본 자료를 Vault에 보존하고 구조를 추출해 주제와 근거로 연결한 뒤 재사용 가능한 결과물로 만듭니다.
 
-현재 소스 버전: `2.8.29`
+현재 소스 버전: `2.8.30`
+
+## 자료에서 결과물까지 하나의 흐름으로
+
+| 수집 | 처리 | 정리 | 작성 |
+| --- | --- | --- | --- |
+| 글, 링크, 로컬 오디오·동영상, 녹음, 이미지를 저장합니다. | 웹 본문을 추출하고 이미지를 구조화된 Markdown으로 변환하며 오디오·동영상을 전사합니다. | 나중에 읽기, 속성, 주제, 댓글, 블록 참조, 근거를 연결합니다. | 선택한 자료로 개요, 보고서, 장문, 채널별 원고를 만듭니다. |
+
+Vault가 항상 단일 진실 공급원입니다. KnowGrove는 클라이언트 텔레메트리를 수집하지 않으며, 사용자가 선택한 로컬 도구 또는 호환 제공자만 해당 콘텐츠를 처리합니다.
 
 ## 주요 기능
 

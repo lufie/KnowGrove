@@ -1,12 +1,20 @@
 # KnowGrove
 
-> Grow scattered notes into connected topics, evidence, research, and reusable knowledge inside Obsidian.
+> Turn articles, images, recordings, videos, and notes into searchable, connected knowledge—without giving up control of your vault.
 
 [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · **English** · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-KnowGrove (言续 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
+KnowGrove (言续 in Chinese) is a local-first knowledge workflow for people who collect more than they can organize. It keeps the original material in your Obsidian vault, helps extract useful structure, connects it to topics and evidence, and turns it into work you can reuse.
 
-Current source version: `2.8.29`. Obsidian community updates follow the matching GitHub release.
+Current source version: `2.8.30`. Obsidian community updates follow the matching GitHub release.
+
+## One workflow from source to output
+
+| Capture | Process | Organize | Create |
+| --- | --- | --- | --- |
+| Save articles, links, local audio/video, recordings, and images. | Extract article content, convert images to structured Markdown, and transcribe audio/video. | Read later, manage properties, connect topics, comments, block references, and evidence. | Build outlines, reports, long-form drafts, and channel-ready versions from selected sources. |
+
+Your vault remains the source of truth. KnowGrove has no client telemetry; AI work runs only through the local tools or compatible providers you choose.
 
 ## What KnowGrove does
 
@@ -104,7 +112,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public. Version `2.8.29` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public. Version `2.8.30` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 

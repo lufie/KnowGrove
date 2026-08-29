@@ -2,9 +2,17 @@
 
 [English](https://github.com/lufie/KnowGrove/blob/main/README.md) · [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · **日本語** · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-KnowGrove は、散在する資料をトピック、根拠、調査、再利用可能な知識へ育てる、ローカルファーストの Obsidian ナレッジワークスペースです。
+KnowGrove は、収集した資料を整理しきれない人のための、ローカルファーストな Obsidian ナレッジワークフローです。原資料を Vault に保ち、構造を抽出し、トピックや根拠へ結び付け、再利用できる成果へ変えます。
 
-現在のソースバージョン：`2.8.29`
+現在のソースバージョン：`2.8.30`
+
+## 資料から成果までを一つの流れで
+
+| 収集 | 処理 | 整理 | 作成 |
+| --- | --- | --- | --- |
+| 記事、リンク、ローカル音声・動画、録音、画像を保存します。 | Web 本文を抽出し、画像を構造化 Markdown に変換し、音声・動画を文字起こしします。 | あとで読む、プロパティ、トピック、コメント、ブロック参照、根拠をまとめます。 | 選んだ資料からアウトライン、レポート、長文、媒体別原稿を作成します。 |
+
+Vault が常に唯一の正本です。KnowGrove はクライアント側のテレメトリを収集せず、選択したローカルツールまたは互換プロバイダーだけが対象コンテンツを処理します。
 
 ## 主な機能
 

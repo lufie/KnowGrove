@@ -2,9 +2,17 @@
 
 [English](https://github.com/lufie/KnowGrove/blob/main/README.md) · [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · **Deutsch** · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-KnowGrove ist ein lokal ausgerichteter Wissensarbeitsbereich für Obsidian. Er verwandelt verstreute Materialien in verknüpfte Themen, Belege, Recherchen und wiederverwendbares Wissen.
+KnowGrove ist ein lokaler Wissensworkflow für alle, die schneller sammeln als ordnen. Originalmaterial bleibt im Obsidian-Vault, wird strukturiert, mit Themen und Belegen verknüpft und in wiederverwendbare Ergebnisse verwandelt.
 
-Aktuelle Quellcodeversion: `2.8.29`
+Aktuelle Quellcodeversion: `2.8.30`
+
+## Ein Workflow von der Quelle zum Ergebnis
+
+| Erfassen | Verarbeiten | Ordnen | Erstellen |
+| --- | --- | --- | --- |
+| Artikel, Links, lokale Audio-/Videodateien, Aufnahmen und Bilder speichern. | Webseiteninhalte extrahieren, Bilder in strukturiertes Markdown umwandeln und Audio/Video transkribieren. | Später lesen, Eigenschaften verwalten und Themen, Kommentare, Blockverweise und Belege verbinden. | Aus ausgewählten Quellen Gliederungen, Berichte, Langtexte und kanalbezogene Fassungen erstellen. |
+
+Der Vault bleibt die maßgebliche Datenquelle. KnowGrove erfasst keine Client-Telemetrie; nur die von Ihnen gewählten lokalen Werkzeuge oder kompatiblen Anbieter verarbeiten die jeweiligen Inhalte.
 
 ## Hauptfunktionen
 

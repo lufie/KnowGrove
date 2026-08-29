@@ -2,9 +2,17 @@
 
 [返回 English README](https://github.com/lufie/KnowGrove/blob/main/README.md) · **简体中文** · [繁體中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-TW.md) · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-言续是一个本地优先的 Obsidian 知识工作台，用来把零散资料转化为相互连接的主题、证据、研究和可复用知识。
+言续是一套本地优先的 Obsidian 知识工作流，面向“收集速度快于整理速度”的用户。它保留原始资料，提取有用结构，把内容连接到主题与证据，再沉淀成可复用的成果。
 
-当前源码版本：`2.8.29`
+当前源码版本：`2.8.30`
+
+## 从资料到成果的一条工作流
+
+| 收集 | 处理 | 组织 | 创作 |
+| --- | --- | --- | --- |
+| 保存文章、链接、本地音视频、录音与图片。 | 提取网页正文，把图片转成结构化 Markdown，转录音频与视频。 | 稍后阅读，管理属性，连接主题、评论、块引用与证据。 | 基于选定资料生成大纲、报告、长文和渠道版本。 |
+
+Vault 始终是唯一事实源。言续不收集客户端遥测；只有你选择的本地工具或兼容模型服务才会处理相应内容。
 
 ## 主要能力
 
