@@ -84,6 +84,41 @@ function delimitedMarkdownRanges(content: string, opening: string, closing: stri
   return ranges;
 }
 
+function inlineCodeRanges(content: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const opening = content.indexOf("`", cursor);
+    if (opening < 0) break;
+    if (isEscaped(content, opening)) {
+      cursor = opening + 1;
+      continue;
+    }
+    let openingLength = 1;
+    while (content[opening + openingLength] === "`") openingLength += 1;
+    let search = opening + openingLength;
+    let closing = -1;
+    while (search < content.length) {
+      const candidate = content.indexOf("`", search);
+      if (candidate < 0) break;
+      let candidateLength = 1;
+      while (content[candidate + candidateLength] === "`") candidateLength += 1;
+      if (!isEscaped(content, candidate) && candidateLength === openingLength) {
+        closing = candidate + candidateLength;
+        break;
+      }
+      search = candidate + candidateLength;
+    }
+    if (closing < 0) {
+      cursor = opening + openingLength;
+      continue;
+    }
+    ranges.push({ from: opening, to: closing });
+    cursor = closing;
+  }
+  return ranges;
+}
+
 function isWikiImageTarget(target: string): boolean {
   const clean = target.split(/[?#]/, 1)[0] ?? target;
   const extension = clean.split(".").pop()?.toLowerCase() ?? "";
@@ -98,10 +133,10 @@ function protectedMarkdownRanges(content: string): ProtectedRange[] {
   ranges.push(...delimitedMarkdownRanges(content, "<!-- knowgrove:image-text v=1 -->", "<!-- /knowgrove:image-text -->"));
   ranges.push(...delimitedMarkdownRanges(content, "%%", "%%"));
   ranges.push(...delimitedMarkdownRanges(content, "<!--", "-->"));
+  ranges.push(...inlineCodeRanges(content));
   const patterns = [
     /\$\$[\s\S]*?\$\$/g,
     /<(?:pre|code|script|style)\b[^>]*>[\s\S]*?<\/(?:pre|code|script|style)>/gi,
-    /`[^`\n]*`/g,
     /(^|[^\\])\$[^$\n]+\$/gm,
   ];
   for (const pattern of patterns) {

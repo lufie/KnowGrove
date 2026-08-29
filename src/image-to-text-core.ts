@@ -211,9 +211,33 @@ function attachImageReference(
 function normalizedResult(markdown: string): string {
   const trimmed = markdown.trim();
   const wrapper = trimmed.match(/^```(?:markdown|md)[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i);
-  const result = (wrapper?.[1] ?? trimmed).trim();
+  const result = (wrapper?.[1] ?? trimmed).trim().replace(
+    /<!--[ \t]*(?:knowgrove:image-text[ \t]+v=1|\/knowgrove:image-text|knowgrove:image-text-ref\b[^>\r\n]*)[ \t]*-->/gi,
+    (marker) => marker.replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
+  );
   if (!result) throw new Error("模型没有返回可写入的图片识别结果，请重新转换");
   return result;
+}
+
+export function resolveLocalImageTarget<T>(
+  target: string,
+  resolveLink: (decodedTarget: string) => T | undefined,
+  resolveVaultAbsolute: (vaultPath: string) => T | undefined,
+  vaultPaths: string[],
+): T | undefined {
+  const cleanTarget = target.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
+  let decoded = cleanTarget;
+  try { decoded = decodeURIComponent(cleanTarget); } catch { /* Keep source form. */ }
+  const linked = resolveLink(decoded);
+  if (linked) return linked;
+  if (decoded.startsWith("/")) {
+    const absolute = resolveVaultAbsolute(decoded.replace(/^\/+/, ""));
+    if (absolute) return absolute;
+  }
+  if (isAmbiguousBareImageTarget(decoded, vaultPaths)) {
+    throw new Error(`图片名称不唯一：${decoded}，请改用包含目录的链接`);
+  }
+  return undefined;
 }
 
 export function renderImageTextBlock(markdown: string, reference?: string): string {

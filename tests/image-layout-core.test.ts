@@ -107,6 +107,11 @@ test("unfinished Obsidian and HTML comments protect image examples through EOF",
   assert.deepEqual(parseImageOccurrences("正文\n<!-- 尚未写完\n![示例](comment.jpg)"), []);
 });
 
+test("variable-length inline code spans protect literal image syntax", () => {
+  const content = "Use ``![alt](image.png)`` and ```![[wiki.png]]``` as examples.\n![[real.png]]";
+  assert.deepEqual(parseImageOccurrences(content).map((item) => item.target), ["real.png"]);
+});
+
 test("CRLF frontmatter protects image-like YAML from conversion and removal", () => {
   const content = "---\r\ncover: '![[cover.png]]'\r\n---\r\n![[body.png]]\r\n";
   assert.ok(frontmatterEndOffset(content) > 0);

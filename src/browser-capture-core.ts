@@ -498,6 +498,18 @@ export function initialCaptureNotePath(input: {
     || undefined;
 }
 
+export function activeCaptureNotePath(input: {
+  currentPath?: string;
+  targetPath?: string;
+  createdNotePath?: string;
+  resultPath?: string;
+  resultStorageVerified?: boolean;
+}): string | undefined {
+  return input.currentPath?.trim()
+    || (input.resultStorageVerified ? input.resultPath?.trim() : "")
+    || initialCaptureNotePath(input);
+}
+
 export function nextCapturePlaceholderPath(
   folder: string,
   baseName: string,

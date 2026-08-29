@@ -62,7 +62,7 @@ import {
   ytDlpSubtitleArgs,
   extractRootDomain,
   matchDomainSessionCookies,
-  initialCaptureNotePath,
+  activeCaptureNotePath,
   isTikTokCaptureUrl,
   isXiguaCaptureUrl,
   isVimeoCaptureUrl,
@@ -1319,10 +1319,12 @@ export class BrowserCaptureServer {
       if (!job.resumeFromRaw && !job.mediaPath && !this.capturedSources.has(id)) {
         await this.probeCaptureTarget(job);
       }
-      const initialNotePath = initialCaptureNotePath({
+      const initialNotePath = activeCaptureNotePath({
+        currentPath: this.currentNotePaths.get(job.id),
         targetPath: job.targetPath,
         createdNotePath: job.createdNotePath,
         resultPath: job.result?.relativePath,
+        resultStorageVerified: job.result?.storageVerified,
       });
       const target = initialNotePath
         ? this.host.app.vault.getAbstractFileByPath(initialNotePath)
@@ -1686,10 +1688,12 @@ export class BrowserCaptureServer {
 
   private async prepareQueuedNote(job: BrowserCaptureJob): Promise<TFile> {
     const current = this.jobs.get(job.id) ?? job;
-    const targetPath = initialCaptureNotePath({
+    const targetPath = activeCaptureNotePath({
+      currentPath: this.currentNotePaths.get(current.id),
       targetPath: current.targetPath,
       createdNotePath: current.createdNotePath,
       resultPath: current.result?.relativePath,
+      resultStorageVerified: current.result?.storageVerified,
     });
     const target = targetPath
       ? this.host.app.vault.getAbstractFileByPath(targetPath)

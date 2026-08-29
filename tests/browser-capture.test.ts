@@ -49,6 +49,7 @@ import {
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
   extractRootDomain,
+  activeCaptureNotePath,
   initialCaptureNotePath,
   matchDomainSessionCookies,
   parseRawCookieString,
@@ -533,6 +534,25 @@ test("capture initial note selection survives restart and preserves user targets
     createdNotePath: "Home/输入/不应优先.md",
   }), "Home/输入/用户原有笔记.md");
   assert.equal(initialCaptureNotePath({ resultPath: "Home/输入/任务结果.md" }), "Home/输入/任务结果.md");
+});
+
+test("active captures reuse their renamed live or verified result path before a stale target", () => {
+  assert.equal(activeCaptureNotePath({
+    currentPath: "Home/输入/新标题.md",
+    targetPath: "Home/输入/旧标题.md",
+    resultPath: "Home/输入/较早结果.md",
+    resultStorageVerified: true,
+  }), "Home/输入/新标题.md");
+  assert.equal(activeCaptureNotePath({
+    targetPath: "Home/输入/旧标题.md",
+    resultPath: "Home/输入/新标题.md",
+    resultStorageVerified: true,
+  }), "Home/输入/新标题.md");
+  assert.equal(activeCaptureNotePath({
+    targetPath: "Home/输入/用户目标.md",
+    resultPath: "Home/输入/未验证结果.md",
+    resultStorageVerified: false,
+  }), "Home/输入/用户目标.md");
 });
 
 test("capture placeholder naming remains deterministic when titles collide", () => {

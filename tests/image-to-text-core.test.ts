@@ -20,6 +20,7 @@ import {
   isAmbiguousBareImageTarget,
   removeConfirmedImageReferences,
   removeAllImageReferences,
+  resolveLocalImageTarget,
   renderImageTextBlock,
   upsertImageTextBlock,
 } from "../src/image-to-text-core";
@@ -40,6 +41,30 @@ test("ignores image-like syntax in protected Markdown regions", () => {
   assert.deepEqual(parseImageOccurrences(content).map((item) => item.target), ["real.png"]);
 });
 
+test("relative image resolution uses the source-note link before a vault-root duplicate", () => {
+  const calls: string[] = [];
+  const resolved = resolveLocalImageTarget(
+    "images/a.png",
+    (target) => {
+      calls.push(`link:${target}`);
+      return "Notes/images/a.png";
+    },
+    (path) => {
+      calls.push(`root:${path}`);
+      return "images/a.png";
+    },
+    ["images/a.png", "Notes/images/a.png"],
+  );
+  assert.equal(resolved, "Notes/images/a.png");
+  assert.deepEqual(calls, ["link:images/a.png"]);
+  assert.equal(resolveLocalImageTarget(
+    "/images/a.png",
+    () => undefined,
+    (path) => path,
+    ["images/a.png"],
+  ), "images/a.png");
+});
+
 test("inserts and then replaces one managed image text block", () => {
   const original = "上文\n![[table.png]]\n下文";
   const occurrence = parseImageOccurrences(original)[0]!;
@@ -55,6 +80,27 @@ test("inserts and then replaces one managed image text block", () => {
   assert.equal(second.content.match(new RegExp(IMAGE_TEXT_BLOCK_START, "g"))?.length, 1);
   assert.equal(second.content.match(new RegExp(IMAGE_TEXT_BLOCK_END, "g"))?.length, 1);
   assert.doesNotMatch(second.content, /收入/);
+});
+
+test("reserved managed markers in OCR output are escaped and remain replaceable", () => {
+  const original = "![[markers.png]]";
+  const occurrence = parseImageOccurrences(original)[0]!;
+  const first = upsertImageTextBlock(original, occurrence, [
+    "识别到源码示例：",
+    IMAGE_TEXT_BLOCK_START,
+    "<!-- knowgrove:image-text-ref ref=fake -->",
+    IMAGE_TEXT_BLOCK_END,
+    "尾部内容",
+  ].join("\n"));
+  assert.equal(first.content.match(new RegExp(IMAGE_TEXT_BLOCK_START, "g"))?.length, 1);
+  assert.equal(first.content.match(new RegExp(IMAGE_TEXT_BLOCK_END, "g"))?.length, 1);
+  assert.match(first.content, /&lt;!-- knowgrove:image-text v=1 --&gt;/);
+  assert.match(first.content, /&lt;!-- \/knowgrove:image-text --&gt;/);
+  const current = parseImageOccurrences(first.content)[0]!;
+  const second = upsertImageTextBlock(first.content, current, "重新识别结果");
+  assert.equal(second.replaced, true);
+  assert.doesNotMatch(second.content, /尾部内容/);
+  assert.match(second.content, /重新识别结果/);
 });
 
 test("rerunning a legacy adjacent managed block restores Live Preview block boundaries", () => {
@@ -85,16 +131,15 @@ test("managed marker ranges belong only to real image blocks and preserve fenced
     "| 列 |",
     "| --- |",
     "| 值 |",
-    "",
+  ].join("\n")).content;
+  const content = [
+    written,
     "```md",
     IMAGE_TEXT_BLOCK_START,
     "<!-- knowgrove:image-text-ref ref=example -->",
     "代码示例",
     IMAGE_TEXT_BLOCK_END,
     "```",
-  ].join("\n")).content;
-  const content = [
-    written,
     "<!-- 用户自己的注释 -->",
   ].join("\n");
   const markerText = imageTextManagedMarkerRanges(content)

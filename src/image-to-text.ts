@@ -12,8 +12,7 @@ import {
   type AIImageExecutionPlan,
 } from "./image-provider-core";
 import { createPinnedImageLookup, normalizedImageHostname, resolvePublicImageAddresses } from "./image-network-core";
-import { buildImageTextPrompt } from "./image-to-text-core";
-import { isAmbiguousBareImageTarget } from "./image-to-text-core";
+import { buildImageTextPrompt, resolveLocalImageTarget } from "./image-to-text-core";
 import type { ImageTextTaskPhase } from "./image-text-progress-core";
 import type { ImageOccurrence } from "./image-layout-core";
 
@@ -197,15 +196,13 @@ export class ImageToTextService {
 
   private async loadImage(file: TFile, target: string, signal?: AbortSignal): Promise<AIImageInput> {
     if (/^https?:\/\//i.test(target)) return fetchRemoteImage(target, signal);
-    const cleanTarget = target.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
-    let decoded = cleanTarget;
-    try { decoded = decodeURIComponent(cleanTarget); } catch { /* Keep source form. */ }
     const vaultFiles = this.plugin.app.vault.getFiles();
-    if (isAmbiguousBareImageTarget(decoded, vaultFiles.map((candidate) => candidate.path))) {
-      throw new Error(`图片名称不唯一：${decoded}，请改用包含目录的链接`);
-    }
-    const exact = this.plugin.app.vault.getFileByPath(normalizePath(decoded));
-    const resolved = exact ?? this.plugin.app.metadataCache.getFirstLinkpathDest(decoded, file.path);
+    const resolved = resolveLocalImageTarget(
+      target,
+      (decoded) => this.plugin.app.metadataCache.getFirstLinkpathDest(decoded, file.path) ?? undefined,
+      (path) => this.plugin.app.vault.getFileByPath(normalizePath(path)) ?? undefined,
+      vaultFiles.map((candidate) => candidate.path),
+    );
     if (!resolved) throw new Error(`找不到图片文件：${target}`);
     const extension = extensionFromTarget(resolved.path);
     const mediaType = IMAGE_TYPES.get(extension as "png" | "jpg" | "jpeg" | "webp" | "gif");
