@@ -110,3 +110,23 @@ test("document anchor locate action has a native accessible label in every local
     }
   }
 });
+
+test("image-to-text progress and recovery controls have native labels in every locale", () => {
+  const labels = [
+    "图片转文字后台任务",
+    "正在安全停止当前图片…",
+    "正在调用模型识别",
+    "正在写入图片下方",
+    "正在回读验证结果",
+    "定位转换位置",
+    "转到后台",
+  ];
+  for (const locale of ["ja", "ko", "de", "fr", "es", "pt-BR", "ru"] as const) {
+    for (const sourceLabel of labels) {
+      const label = translateKnowGroveText(sourceLabel, locale);
+      assert.ok(label.length > 0);
+      assert.notEqual(label, sourceLabel, `${locale} should not expose the untranslated Chinese label`);
+      assert.notEqual(label, knownEnglishTranslation(sourceLabel), `${locale} should not fall back to English`);
+    }
+  }
+});

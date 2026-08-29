@@ -112,6 +112,114 @@ function protectedLines(lines: LineToken[]): boolean[] {
   return protectedFlags;
 }
 
+function splitUnescapedTableCells(text: string): string[] | null {
+  if (/^(?: {4,}|\t)/.test(text)) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const cells: string[] = [];
+  let cell = "";
+  let sawPipe = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+    if (character === "\\" && index + 1 < trimmed.length) {
+      cell += character + trimmed[index + 1];
+      index += 1;
+      continue;
+    }
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      sawPipe = true;
+      continue;
+    }
+    cell += character;
+  }
+  cells.push(cell.trim());
+
+  if (!sawPipe) return null;
+  if (trimmed.startsWith("|")) cells.shift();
+  if (trimmed.endsWith("|")) cells.pop();
+  return cells.length > 0 ? cells : null;
+}
+
+function isTableDelimiterCell(cell: string): boolean {
+  return /^:?-{3,}:?$/.test(cell.trim());
+}
+
+interface StructuralBlankLineInsertion {
+  offset: number;
+  ending: string;
+}
+
+interface TableBoundaryNormalization {
+  preservedBlankLines: boolean[];
+  insertions: StructuralBlankLineInsertion[];
+}
+
+function tableBoundaryNormalization(
+  lines: LineToken[],
+  protectedFlags: boolean[],
+  selectionStart: number,
+  selectionEnd: number,
+): TableBoundaryNormalization {
+  const boundaryFlags = Array.from({ length: lines.length }, () => false);
+  const insertions: StructuralBlankLineInsertion[] = [];
+
+  for (let delimiterIndex = 1; delimiterIndex < lines.length; delimiterIndex += 1) {
+    if (protectedFlags[delimiterIndex] || protectedFlags[delimiterIndex - 1]) continue;
+
+    const headerCells = splitUnescapedTableCells(lines[delimiterIndex - 1]?.text ?? "");
+    const delimiterCells = splitUnescapedTableCells(lines[delimiterIndex]?.text ?? "");
+    if (
+      !headerCells ||
+      !delimiterCells ||
+      headerCells.length !== delimiterCells.length ||
+      !delimiterCells.every(isTableDelimiterCell)
+    ) {
+      continue;
+    }
+
+    let lastTableRow = delimiterIndex;
+    for (let rowIndex = delimiterIndex + 1; rowIndex < lines.length; rowIndex += 1) {
+      const row = lines[rowIndex];
+      if (!row || protectedFlags[rowIndex] || !row.text.trim()) break;
+      if (!splitUnescapedTableCells(row.text)) break;
+      lastTableRow = rowIndex;
+    }
+
+    const headerIndex = delimiterIndex - 1;
+    const header = lines[headerIndex];
+    const lastRow = lines[lastTableRow];
+    const tableIsFullySelected = Boolean(
+      header
+      && lastRow
+      && header.start >= selectionStart
+      && lastRow.end <= selectionEnd,
+    );
+    if (!tableIsFullySelected) continue;
+
+    const beforeTable = headerIndex - 1;
+    const precedingLine = lines[beforeTable];
+    if (beforeTable >= 0 && precedingLine && !precedingLine.text.trim()) {
+      if (!protectedFlags[beforeTable]) boundaryFlags[beforeTable] = true;
+    } else if (beforeTable >= 0 && header) {
+      insertions.push({ offset: header.start, ending: header.ending || "\n" });
+    }
+
+    const afterTable = lastTableRow + 1;
+    const followingLine = lines[afterTable];
+    if (afterTable < lines.length && followingLine && !followingLine.text.trim()) {
+      if (!protectedFlags[afterTable]) boundaryFlags[afterTable] = true;
+    } else if (afterTable < lines.length && followingLine && followingLine.start <= selectionEnd) {
+      const lastRowEnding = lastRow?.ending;
+      insertions.push({ offset: followingLine.start, ending: lastRowEnding || header?.ending || "\n" });
+    }
+  }
+
+  return { preservedBlankLines: boundaryFlags, insertions };
+}
+
 export function cleanMarkdownBlankLines(content: string): BlankLineCleanupResult {
   const lines = tokenizeLines(content);
   const protectedFlags = protectedLines(lines);
@@ -180,13 +288,33 @@ export function removeSelectedMarkdownBlankLines(
 
   const lines = tokenizeLines(content);
   const protectedFlags = protectedLines(lines);
+  const tableBoundaries = tableBoundaryNormalization(lines, protectedFlags, start, end);
   const output: string[] = [];
   let cursor = start;
   let removedBlankLines = 0;
+  let insertedStructuralBlankLines = 0;
+
+  const insertionByOffset = new Map<number, string>();
+  for (const insertion of tableBoundaries.insertions) {
+    if (!insertionByOffset.has(insertion.offset)) {
+      insertionByOffset.set(insertion.offset, insertion.ending);
+    }
+  }
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!line || protectedFlags[index] || line.text.trim()) continue;
+    if (!line) continue;
+    const insertion = insertionByOffset.get(line.start);
+    if (insertion && line.start >= cursor && line.start <= end) {
+      output.push(content.slice(cursor, line.start), insertion);
+      cursor = line.start;
+      insertedStructuralBlankLines += 1;
+    }
+    if (
+      protectedFlags[index]
+      || tableBoundaries.preservedBlankLines[index]
+      || line.text.trim()
+    ) continue;
     if (line.start < start || line.end > end) continue;
     output.push(content.slice(cursor, line.start));
     cursor = line.end;
@@ -197,6 +325,6 @@ export function removeSelectedMarkdownBlankLines(
   return {
     replacement: output.join(""),
     removedBlankLines,
-    changed: removedBlankLines > 0,
+    changed: removedBlankLines > 0 || insertedStructuralBlankLines > 0,
   };
 }

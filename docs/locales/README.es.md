@@ -4,13 +4,17 @@
 
 KnowGrove es un espacio de conocimiento local para Obsidian. Convierte materiales dispersos en temas conectados, evidencias, investigaciones y conocimiento reutilizable.
 
-Versión candidata actual del código fuente: `2.8.28`
+Versión actual del código fuente: `2.8.29`
 
 ## Funciones principales
 
 - **Leer más tarde:** una bandeja de entrada, filtros de no leído/leído y marcado opcional al llegar al final de la nota.
 - **Captura desde navegador y móvil:** guarda artículos, vídeos, enlaces y notas de voz breves en el vault.
 - **Procesamiento de contenido:** conserva las imágenes de los artículos, prioriza los subtítulos y usa transcripción local cuando no hay subtítulos.
+- **Imagen a texto con IA:** convierte una imagen o todas las imágenes de una nota y coloca tablas y texto estructurado debajo de la imagen original. El proceso en segundo plano muestra fases reales, permite cancelar con seguridad y localizar el resultado.
+- **Edición en vista previa como en Word:** mantiene el formato de títulos, listas, tareas, imágenes, bloques de código y tablas. Al eliminar líneas vacías de una selección, conserva o repara los límites de las tablas GFM para que sigan renderizándose en la vista previa y en lectura.
+- **Captura rápida y recuperable:** crea y vuelve a leer una nota Markdown mínima que se puede abrir antes de entrar en la cola de procesamiento; la IA y los medios continúan en segundo plano.
+- **Navegación en documentos largos:** mantiene accesibles el primer y el último encabezado y visible la acción para localizar el archivo, sin interceptar el desplazamiento del documento.
 - **Gestión de propiedades:** revisa los cambios sugeridos antes de aplicarlos por lotes y no sobrescribe campos desconocidos.
 - **Temas e investigación:** explora todos los temas y sus fuentes y organiza áreas, temas y preguntas de investigación.
 - **Comentarios y referencias de bloques:** comenta el texto seleccionado y reutilízalo con las incrustaciones de bloques nativas de Obsidian.
@@ -23,7 +27,7 @@ KnowGrove utiliza el idioma seleccionado en Obsidian. Nunca traduce ni modifica 
 
 ## Instalación
 
-Cuando esté disponible en el catálogo, busca KnowGrove en **Ajustes → Complementos de la comunidad → Explorar**.
+Busca e instala KnowGrove en **Ajustes → Complementos de la comunidad → Explorar**.
 
 Para instalarlo manualmente, descarga `main.js`, `manifest.json` y `styles.css` de la última versión de GitHub, cópialos en `<vault>/.obsidian/plugins/knowgrove/`, recarga Obsidian y activa KnowGrove. No copies el `data.json` de otra persona.
 
