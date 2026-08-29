@@ -336,6 +336,195 @@ test("preserves CRLF and ignores partially selected blank lines", () => {
   assert.equal(unchanged.changed, false);
 });
 
+test("preserves one structural blank line around selected Markdown tables", () => {
+  const source = [
+    "正文",
+    "",
+    "",
+    "表格说明",
+    "",
+    "| 名称 | 数量 |",
+    "| --- | ---: |",
+    "| 苹果 | 2 |",
+    "| 香蕉 | 3 |",
+    "",
+    "后文",
+    "",
+    "",
+    "结尾",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(
+    result.replacement,
+    [
+      "正文",
+      "表格说明",
+      "",
+      "| 名称 | 数量 |",
+      "| --- | ---: |",
+      "| 苹果 | 2 |",
+      "| 香蕉 | 3 |",
+      "",
+      "后文",
+      "结尾",
+    ].join("\n"),
+  );
+  assert.equal(result.removedBlankLines, 4);
+});
+
+test("collapses repeated Markdown table boundary blank lines to one", () => {
+  const source = [
+    "前文",
+    "",
+    "",
+    "| A | B |",
+    "| :---: | --- |",
+    "| 1 | 2 |",
+    "",
+    "",
+    "后文",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(
+    result.replacement,
+    ["前文", "", "| A | B |", "| :---: | --- |", "| 1 | 2 |", "", "后文"].join("\n"),
+  );
+  assert.equal(result.removedBlankLines, 2);
+});
+
+test("keeps managed image-text comments separated from an empty-header table", () => {
+  const source = [
+    "原图",
+    "",
+    "<!-- knowgrove:image-text v=1 -->",
+    "<!-- knowgrove:image-text-ref ref=img.001 -->",
+    "",
+    "|  |  |  |",
+    "| --- | --- | --- |",
+    "| US$2,008.90 | 191,438 | US$10.49 |",
+    "| US$1,775.03 | 179,573 | US$9.88 |",
+    "| US$1,666.50 | 178,725 | US$9.32 |",
+    "",
+    "<!-- /knowgrove:image-text -->",
+    "",
+    "后文",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(
+    result.replacement,
+    [
+      "原图",
+      "<!-- knowgrove:image-text v=1 -->",
+      "<!-- knowgrove:image-text-ref ref=img.001 -->",
+      "",
+      "|  |  |  |",
+      "| --- | --- | --- |",
+      "| US$2,008.90 | 191,438 | US$10.49 |",
+      "| US$1,775.03 | 179,573 | US$9.88 |",
+      "| US$1,666.50 | 178,725 | US$9.32 |",
+      "",
+      "<!-- /knowgrove:image-text -->",
+      "后文",
+    ].join("\n"),
+  );
+  assert.equal(result.removedBlankLines, 2);
+});
+
+test("repairs table boundaries removed by an earlier cleanup", () => {
+  const source = [
+    "## 原文",
+    "<!-- knowgrove:image-text v=1 -->",
+    "<!-- knowgrove:image-text-ref ref=img-3iphu001c07lo -->",
+    "|  |  |  |",
+    "|---|---|---|",
+    "| US$2,008.90 | 191,438 | US$10.49 |",
+    "| US$1,775.03 | 179,573 | US$9.88 |",
+    "| US$1,666.50 | 178,725 | US$9.32 |",
+    "<!-- /knowgrove:image-text -->",
+    "### 出海AI SEO",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(
+    result.replacement,
+    [
+      "## 原文",
+      "<!-- knowgrove:image-text v=1 -->",
+      "<!-- knowgrove:image-text-ref ref=img-3iphu001c07lo -->",
+      "",
+      "|  |  |  |",
+      "|---|---|---|",
+      "| US$2,008.90 | 191,438 | US$10.49 |",
+      "| US$1,775.03 | 179,573 | US$9.88 |",
+      "| US$1,666.50 | 178,725 | US$9.32 |",
+      "",
+      "<!-- /knowgrove:image-text -->",
+      "### 出海AI SEO",
+    ].join("\n"),
+  );
+  assert.equal(result.removedBlankLines, 0);
+  assert.equal(result.changed, true);
+  assert.equal(
+    removeSelectedMarkdownBlankLines(result.replacement, 0, result.replacement.length).changed,
+    false,
+  );
+});
+
+test("recognizes Markdown tables without outer pipes and preserves CRLF", () => {
+  const source = "前文\r\n\r\n名称 | 数量\r\n--- | ---:\r\n苹果 | 2\r\n\r\n后文\r\n\r\n尾声";
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(
+    result.replacement,
+    "前文\r\n\r\n名称 | 数量\r\n--- | ---:\r\n苹果 | 2\r\n\r\n后文\r\n尾声",
+  );
+  assert.equal(result.removedBlankLines, 1);
+  assert.doesNotMatch(result.replacement, /(?<!\r)\n/);
+});
+
+test("does not preserve blank lines around pipe-like prose", () => {
+  const source = "前文\n\n这不是 | 表格\n也没有 | 分隔行\n\n后文";
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(result.replacement, "前文\n这不是 | 表格\n也没有 | 分隔行\n后文");
+  assert.equal(result.removedBlankLines, 2);
+});
+
+test("does not change an unselected table when the selection ends at its header", () => {
+  const source = "前文\n| A | B |\n| --- | --- |\n| 1 | 2 |\n后文";
+  const selectionEnd = source.indexOf("| A | B |");
+  const result = removeSelectedMarkdownBlankLines(source, 0, selectionEnd);
+
+  assert.equal(result.replacement, "前文\n");
+  assert.equal(result.changed, false);
+});
+
+test("does not change a preceding table when the selection starts after it", () => {
+  const source = "前文\n| A | B |\n| --- | --- |\n| 1 | 2 |\n后文";
+  const selectionStart = source.indexOf("后文");
+  const result = removeSelectedMarkdownBlankLines(source, selectionStart, source.length);
+
+  assert.equal(result.replacement, "后文");
+  assert.equal(result.changed, false);
+});
+
+test("does not classify four-space-indented pipe code as a Markdown table", () => {
+  const source = [
+    "前文",
+    "    | A | B |",
+    "    | --- | --- |",
+    "    | 1 | 2 |",
+    "后文",
+  ].join("\n");
+  const result = removeSelectedMarkdownBlankLines(source, 0, source.length);
+
+  assert.equal(result.replacement, source);
+  assert.equal(result.changed, false);
+});
+
 test("keeps selected blank lines inside protected Markdown regions", () => {
   const source = [
     "---",

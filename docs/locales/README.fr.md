@@ -4,13 +4,17 @@
 
 KnowGrove est un espace de connaissances local pour Obsidian. Il transforme des sources dispersées en sujets reliés, preuves, recherches et connaissances réutilisables.
 
-Version candidate actuelle du code source : `2.8.28`
+Version actuelle du code source : `2.8.29`
 
 ## Fonctions principales
 
 - **À lire plus tard :** une seule boîte de réception, filtres non lu/lu et marquage facultatif à la fin de la note.
 - **Capture navigateur et mobile :** enregistrez articles, vidéos, liens et courtes notes vocales dans le coffre.
 - **Traitement du contenu :** conserve les images des articles, privilégie les sous-titres vidéo et utilise la transcription locale seulement si nécessaire.
+- **Image vers texte par IA :** convertissez une image ou toutes les images d’une note ; les tableaux et le texte structuré sont ajoutés sous l’image d’origine. Le traitement en arrière-plan affiche les étapes réelles, peut être annulé en toute sécurité et permet de localiser le résultat.
+- **Édition en aperçu instantané comme dans Word :** conservez la mise en forme des titres, listes, tâches, images, blocs de code et tableaux. La suppression des lignes vides sélectionnées préserve ou répare les limites des tableaux GFM afin qu’ils restent rendus dans l’aperçu instantané et le mode lecture.
+- **Capture rapide et récupérable :** une note Markdown minimale et ouvrable est créée puis relue avant l’entrée dans la file de traitement ; l’IA et les médias continuent en arrière-plan.
+- **Navigation dans les longs documents :** le début et la fin de l’index restent accessibles, l’action de localisation du fichier reste visible et le défilement du document n’est pas intercepté.
 - **Gestion des propriétés :** prévisualisez les propositions avant de les appliquer en lot, sans écraser les champs inconnus.
 - **Sujets et recherche :** parcourez tous les sujets et leurs sources, puis organisez domaines, sujets et questions de recherche.
 - **Commentaires et références de blocs :** commentez une sélection et réutilisez-la avec les inclusions de blocs natives d’Obsidian.
@@ -23,7 +27,7 @@ KnowGrove suit la langue d’Obsidian. Les titres, chemins, commentaires, domain
 
 ## Installation
 
-Après validation dans le catalogue communautaire, recherchez KnowGrove dans **Réglages → Modules complémentaires → Parcourir**.
+Recherchez et installez KnowGrove dans **Réglages → Modules complémentaires → Parcourir**.
 
 Pour une installation manuelle, téléchargez `main.js`, `manifest.json` et `styles.css` depuis la dernière version GitHub, copiez-les dans `<coffre>/.obsidian/plugins/knowgrove/`, rechargez Obsidian puis activez KnowGrove. Ne copiez jamais le fichier `data.json` d’une autre personne.
 
