@@ -6,7 +6,7 @@
 
 KnowGrove (言续 in Chinese) is a local-first knowledge workspace for Obsidian. It brings capture, reading, property management, topic research, block references, comments, and evidence-based writing into one workflow.
 
-Current source release candidate: `2.8.26`. Obsidian community updates follow the matching GitHub release.
+Current source release candidate: `2.8.28`. Obsidian community updates follow the matching GitHub release.
 
 ## What KnowGrove does
 
@@ -100,7 +100,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public, and version `2.8.26` is prepared for distribution through [GitHub Releases](https://github.com/lufie/KnowGrove/releases). Obsidian community updates follow the matching GitHub release after the catalog refreshes. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public, and version `2.8.28` is the current local release candidate. Distribution requires the matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); Obsidian community updates follow only after the catalog refreshes. Current review status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 

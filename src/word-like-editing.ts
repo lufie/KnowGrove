@@ -9,6 +9,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import type KnowGrovePlugin from "./main";
+import { imageTextManagedMarkerRanges } from "./image-to-text-core";
 
 export interface WordLikeEdit {
   from: number;
@@ -78,9 +79,16 @@ function mergedMarkerRanges(ranges: HiddenMarkerRange[]): HiddenMarkerRange[] {
   return merged;
 }
 
-function hiddenFormattingMarkers(view: EditorView): HiddenMarkerRange[] {
+function hiddenFormattingMarkers(
+  view: EditorView,
+  includeWordLikeFormatting = true,
+  managedMarkerRanges = imageTextManagedMarkerRanges(view.state.doc.toString()),
+): HiddenMarkerRange[] {
   if (!isLivePreview(view)) return [];
-  const ranges: HiddenMarkerRange[] = [];
+  const ranges: HiddenMarkerRange[] = managedMarkerRanges
+    .filter((marker) => view.visibleRanges.some((visible) => marker.to >= visible.from && marker.from <= visible.to))
+    .map((marker) => ({ ...marker, side: "open" }));
+  if (!includeWordLikeFormatting) return mergedMarkerRanges(ranges);
   syntaxTree(view.state).iterate({
     enter(node) {
       const line = view.state.doc.lineAt(node.from);
@@ -214,12 +222,16 @@ function visibleTaskMarkerDecorations(view: EditorView): Array<Range<Decoration>
   return ranges;
 }
 
-function markerDecorations(view: EditorView): DecorationSet {
+function markerDecorations(
+  view: EditorView,
+  includeWordLikeFormatting: boolean,
+  managedMarkerRanges = imageTextManagedMarkerRanges(view.state.doc.toString()),
+): DecorationSet {
   const ranges: Array<Range<Decoration>> = [
-    ...hiddenFormattingMarkers(view).map((range) => Decoration.replace({
+    ...hiddenFormattingMarkers(view, includeWordLikeFormatting, managedMarkerRanges).map((range) => Decoration.replace({
       attributes: { "data-knowgrove-marker-side": range.side },
     }).range(range.from, range.to)),
-    ...visibleTaskMarkerDecorations(view),
+    ...(includeWordLikeFormatting ? visibleTaskMarkerDecorations(view) : []),
   ];
   return Decoration.set(ranges, true);
 }
@@ -841,6 +853,7 @@ function selectionIsEmpty(selection: EditorSelection): boolean {
 export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
   const markerPlugin = ViewPlugin.fromClass(class {
     decorations: DecorationSet;
+    private managedMarkerRanges: ReturnType<typeof imageTextManagedMarkerRanges>;
     private readonly modeObserver = new MutationObserver(() => {
       this.view.dispatch({ effects: refreshWordLikeEditingEffect.of() });
     });
@@ -854,7 +867,8 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
     };
 
     constructor(private readonly view: EditorView) {
-      this.decorations = markerDecorations(view);
+      this.managedMarkerRanges = imageTextManagedMarkerRanges(view.state.doc.toString());
+      this.decorations = markerDecorations(view, plugin.settings.enableWordLikeEditing, this.managedMarkerRanges);
       view.dom.classList.toggle("knowgrove-word-like-editing", plugin.settings.enableWordLikeEditing);
       view.dom.addEventListener("pointerdown", this.handleMediaPointer, { capture: true });
       view.dom.addEventListener("mousedown", this.handleMediaPointer, { capture: true });
@@ -863,8 +877,11 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
     }
 
     update(update: ViewUpdate): void {
+      if (update.docChanged) {
+        this.managedMarkerRanges = imageTextManagedMarkerRanges(update.state.doc.toString());
+      }
       if (!plugin.settings.enableWordLikeEditing) {
-        this.decorations = Decoration.none;
+        this.decorations = markerDecorations(update.view, false, this.managedMarkerRanges);
         this.view.dom.classList.remove("knowgrove-word-like-editing");
         return;
       }
@@ -872,7 +889,7 @@ export function createWordLikeEditingExtension(plugin: KnowGrovePlugin) {
       const forced = update.transactions.some((transaction) =>
         transaction.effects.some((effect) => effect.is(refreshWordLikeEditingEffect)));
       if (forced || update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged) {
-        this.decorations = markerDecorations(update.view);
+        this.decorations = markerDecorations(update.view, true, this.managedMarkerRanges);
       }
       if (!update.selectionSet || !selectionIsEmpty(update.state.selection)) return;
       const position = update.state.selection.main.head;

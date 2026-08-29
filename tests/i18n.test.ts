@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  formatImageTextElapsedLabel,
+  formatImageTextTaskCounts,
   isKnowGroveUiElement,
   KNOWGROVE_UI_ROOT_SELECTOR,
   knowGroveDisplayName,
   knownEnglishTranslation,
   normalizeKnowGroveLocale,
+  SUPPORTED_LOCALES,
   translateKnowGroveText,
 } from "../src/i18n";
 
@@ -45,6 +48,18 @@ test("localized UI uses native labels and English fallback for untranslated deta
   assert.equal(knownEnglishTranslation("模型选择"), "Model provider");
   assert.equal(translateKnowGroveText("删除选中内容的空行", "en"), "Remove blank lines from selection");
   assert.equal(translateKnowGroveText("删除选中内容的空行", "zh-TW"), "刪除所選內容的空行");
+  assert.equal(translateKnowGroveText("转换本文全部图片", "en"), "Convert all images in this note");
+  assert.equal(translateKnowGroveText("AI 图片转文字", "ja"), "AI画像をテキスト化");
+  assert.equal(formatImageTextElapsedLabel("1:05", "zh-TW"), "已耗時 1:05");
+  assert.equal(formatImageTextElapsedLabel("1:05", "en"), "Elapsed 1:05");
+  assert.equal(
+    formatImageTextTaskCounts(2, 4, 1, 0, 1, "ja"),
+    "2/4 枚目 · 完了 1 · スキップ 0 · 失敗 1",
+  );
+  assert.equal(
+    formatImageTextTaskCounts(2, 4, 1, 0, 1, "en"),
+    "Image 2/4 · Completed 1 · Skipped 0 · Failed 1",
+  );
 });
 
 test("user content without a catalog entry is never machine-translated", () => {
@@ -82,5 +97,16 @@ test("primary workflows use native labels in every supported non-Chinese locale"
     assert.notEqual(translateKnowGroveText("阅读列表", locale), "阅读列表");
     assert.notEqual(translateKnowGroveText("主题列表", locale), "主题列表");
     assert.notEqual(translateKnowGroveText("知识工作台", locale), "知识工作台");
+  }
+});
+
+test("document anchor locate action has a native accessible label in every locale", () => {
+  const sourceLabel = "在文件列表中定位此文档";
+  for (const locale of SUPPORTED_LOCALES) {
+    const label = translateKnowGroveText(sourceLabel, locale);
+    assert.ok(label.length > 0);
+    if (locale !== "zh-CN" && locale !== "zh-TW") {
+      assert.notEqual(label, sourceLabel, `${locale} should not expose the untranslated Chinese label`);
+    }
   }
 });

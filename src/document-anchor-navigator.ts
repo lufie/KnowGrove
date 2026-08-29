@@ -4,6 +4,7 @@ import type {
   MarkdownView,
 } from "obsidian";
 import type KnowGrovePlugin from "./main";
+import { translateKnowGroveText } from "./i18n";
 
 export interface HeadingAnchorItem {
   level: number;
@@ -42,6 +43,40 @@ export function findActiveHeadingIndex(
     }
   }
   return activeIndex;
+}
+
+export function calculateAnchorRailScrollTop(
+  clientY: number,
+  railTop: number,
+  railHeight: number,
+  scrollHeight: number,
+  clientHeight: number,
+): number {
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+  if (maxScrollTop === 0 || railHeight <= 0) return 0;
+
+  const pointerRatio = Math.min(1, Math.max(0, (clientY - railTop) / railHeight));
+  return Math.round(pointerRatio * maxScrollTop);
+}
+
+export function calculateVisibleAnchorScrollTop(
+  currentScrollTop: number,
+  railTop: number,
+  railBottom: number,
+  nodeTop: number,
+  nodeBottom: number,
+  edgePadding = 8,
+): number {
+  const visibleTop = railTop + edgePadding;
+  const visibleBottom = railBottom - edgePadding;
+
+  if (nodeTop < visibleTop) {
+    return Math.max(0, currentScrollTop - (visibleTop - nodeTop));
+  }
+  if (nodeBottom > visibleBottom) {
+    return currentScrollTop + (nodeBottom - visibleBottom);
+  }
+  return currentScrollTop;
 }
 
 export function createCrosshairIcon(parent: HTMLElement): SVGSVGElement {
@@ -97,6 +132,8 @@ export class DocumentAnchorWidget {
   private railPointerDownListener: ((e: PointerEvent) => void) | null = null;
   private railClickListener: ((e: MouseEvent) => void) | null = null;
   private rafHandle: number | null = null;
+  private resizeRafHandle: number | null = null;
+  private railResizeObserver: ResizeObserver | null = null;
   private scrollCorrectionRaf: number | null = null;
   private isNavigating = false;
   private navigationTimer: number | null = null;
@@ -110,8 +147,12 @@ export class DocumentAnchorWidget {
     this.containerEl = parent.createDiv({ cls: "knowgrove-anchor-container" });
     this.railEl = this.containerEl.createDiv({ cls: "knowgrove-anchor-rail" });
     this.actionContainerEl = this.containerEl.createDiv({ cls: "knowgrove-anchor-actions" });
-    this.locateBtnEl = this.actionContainerEl.createDiv({
+    this.locateBtnEl = this.actionContainerEl.createEl("button", {
       cls: "knowgrove-anchor-locate-btn",
+      attr: {
+        type: "button",
+        "aria-label": translateKnowGroveText("在文件列表中定位此文档"),
+      },
     });
     createCrosshairIcon(this.locateBtnEl);
     this.previewEl = this.containerEl.createDiv({ cls: "knowgrove-anchor-preview" });
@@ -120,6 +161,7 @@ export class DocumentAnchorWidget {
     this.attachScrollListener();
     this.attachHoverListeners();
     this.attachLocateListeners();
+    this.attachRailResizeObserver();
   }
 
   updateHeadings(headings: HeadingAnchorItem[]): void {
@@ -130,7 +172,9 @@ export class DocumentAnchorWidget {
 
   private render(): void {
     this.railEl.empty();
+    this.railEl.scrollTop = 0;
     this.nodes = [];
+    this.activeIndex = -1;
 
     this.actionContainerEl?.toggleClass("is-hidden", !this.headings.length);
     if (!this.headings.length) return;
@@ -156,7 +200,7 @@ export class DocumentAnchorWidget {
   private attachLocateListeners(): void {
     if (!this.locateBtnEl) return;
 
-    this.locateBtnEl.addEventListener("pointerdown", (e) => {
+    this.locateBtnEl.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       this.revealActiveFileInExplorer();
@@ -164,7 +208,7 @@ export class DocumentAnchorWidget {
 
     this.locateBtnEl.addEventListener("mouseenter", () => {
       if (!this.locateBtnEl) return;
-      this.previewEl.setText("在文件列表中定位此文档");
+      this.previewEl.setText(translateKnowGroveText("在文件列表中定位此文档"));
       const btnRect = this.locateBtnEl.getBoundingClientRect();
       const containerRect = this.containerEl.getBoundingClientRect();
       const topOffset = btnRect.top - containerRect.top + btnRect.height / 2;
@@ -204,6 +248,7 @@ export class DocumentAnchorWidget {
 
     this.railMouseMoveListener = (event: MouseEvent) => {
       if (!this.nodes.length) return;
+      this.scrollRailToPointer(event.clientY);
       const closestIndex = this.findHeadingIndexAtY(event.clientY);
       this.hoveredIndex = closestIndex;
       this.applyMagnification(closestIndex);
@@ -212,11 +257,13 @@ export class DocumentAnchorWidget {
     this.railMouseLeaveListener = () => {
       this.hoveredIndex = -1;
       this.resetMagnification();
+      this.ensureActiveNodeVisible();
     };
 
     this.railPointerDownListener = (event: PointerEvent) => {
       event.preventDefault();
       event.stopPropagation();
+      this.scrollRailToPointer(event.clientY);
       const closestIndex = this.findHeadingIndexAtY(event.clientY);
       const targetHeading = this.headings[closestIndex];
       if (targetHeading) {
@@ -238,6 +285,41 @@ export class DocumentAnchorWidget {
     this.railEl.addEventListener("mouseleave", this.railMouseLeaveListener, { passive: true });
     this.railEl.addEventListener("pointerdown", this.railPointerDownListener);
     this.railEl.addEventListener("click", this.railClickListener);
+  }
+
+  private scrollRailToPointer(clientY: number): void {
+    const railRect = this.railEl.getBoundingClientRect();
+    const nextScrollTop = calculateAnchorRailScrollTop(
+      clientY,
+      railRect.top,
+      railRect.height,
+      this.railEl.scrollHeight,
+      this.railEl.clientHeight,
+    );
+    if (Math.abs(this.railEl.scrollTop - nextScrollTop) > 0.5) {
+      this.railEl.scrollTop = nextScrollTop;
+    }
+  }
+
+  private ensureActiveNodeVisible(): void {
+    if (this.hoveredIndex >= 0 || this.activeIndex < 0) return;
+    const node = this.nodes[this.activeIndex];
+    if (!node) return;
+
+    if (this.railEl.scrollHeight <= this.railEl.clientHeight) {
+      this.railEl.scrollTop = 0;
+      return;
+    }
+
+    const railRect = this.railEl.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    this.railEl.scrollTop = calculateVisibleAnchorScrollTop(
+      this.railEl.scrollTop,
+      railRect.top,
+      railRect.bottom,
+      nodeRect.top,
+      nodeRect.bottom,
+    );
   }
 
   private applyMagnification(centerIndex: number): void {
@@ -464,6 +546,27 @@ export class DocumentAnchorWidget {
     }
   }
 
+  private attachRailResizeObserver(): void {
+    if (typeof ResizeObserver === "undefined") return;
+    this.railResizeObserver = new ResizeObserver(() => {
+      if (this.resizeRafHandle !== null) window.cancelAnimationFrame(this.resizeRafHandle);
+      this.resizeRafHandle = window.requestAnimationFrame(() => {
+        this.resizeRafHandle = null;
+        this.ensureActiveNodeVisible();
+      });
+    });
+    this.railResizeObserver.observe(this.railEl);
+  }
+
+  private detachRailResizeObserver(): void {
+    this.railResizeObserver?.disconnect();
+    this.railResizeObserver = null;
+    if (this.resizeRafHandle !== null) {
+      window.cancelAnimationFrame(this.resizeRafHandle);
+      this.resizeRafHandle = null;
+    }
+  }
+
   private updateActiveIndex(): void {
     if (this.isNavigating) return;
     if (!this.headings.length || !this.nodes.length) return;
@@ -478,6 +581,7 @@ export class DocumentAnchorWidget {
       if (this.activeIndex >= 0 && this.nodes[this.activeIndex]) {
         this.nodes[this.activeIndex]?.addClass("is-active");
       }
+      this.ensureActiveNodeVisible();
     }
   }
 
@@ -571,6 +675,7 @@ export class DocumentAnchorWidget {
 
   destroy(): void {
     this.detachScrollListener();
+    this.detachRailResizeObserver();
     this.detachHoverListeners();
     this.containerEl.remove();
     this.nodes = [];

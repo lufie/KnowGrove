@@ -10,6 +10,7 @@ export interface ImageOccurrence {
   raw: string;
   unitRaw: string;
   target: string;
+  reference?: string;
   alignment?: ImageAlignment;
   width?: number;
   height?: number;
@@ -28,9 +29,128 @@ export interface TextChange {
   insert: string;
 }
 
+interface ProtectedRange {
+  from: number;
+  to: number;
+}
+
 const ALIGNMENTS = new Set<ImageAlignment>(["left", "center", "right"]);
 const SIZE_TOKEN = /^\d+(?:x\d+)?$/i;
 const META_PREFIX = "<!-- knowgrove:image";
+const WIKI_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg", "heic", "heif", "bmp", "avif"]);
+
+function fencedMarkdownRanges(content: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = [];
+  let active: { from: number; char: "`" | "~"; length: number } | undefined;
+  let lineFrom = 0;
+  while (lineFrom < content.length) {
+    const newline = content.indexOf("\n", lineFrom);
+    const lineTo = newline < 0 ? content.length : newline + 1;
+    const rawLine = content.slice(lineFrom, newline < 0 ? content.length : newline).replace(/\r$/, "");
+    if (!active) {
+      const opening = rawLine.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (opening?.[1]) {
+        active = {
+          from: lineFrom,
+          char: opening[1][0] as "`" | "~",
+          length: opening[1].length,
+        };
+      }
+    } else {
+      const closing = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
+      if (closing && closing[0] === active.char && closing.length >= active.length) {
+        ranges.push({ from: active.from, to: lineTo });
+        active = undefined;
+      }
+    }
+    lineFrom = lineTo;
+  }
+  if (active) ranges.push({ from: active.from, to: content.length });
+  return ranges;
+}
+
+function delimitedMarkdownRanges(content: string, opening: string, closing: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const from = content.indexOf(opening, cursor);
+    if (from < 0) break;
+    const closeAt = content.indexOf(closing, from + opening.length);
+    const to = closeAt < 0 ? content.length : closeAt + closing.length;
+    ranges.push({ from, to });
+    if (closeAt < 0) break;
+    cursor = to;
+  }
+  return ranges;
+}
+
+function inlineCodeRanges(content: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const opening = content.indexOf("`", cursor);
+    if (opening < 0) break;
+    if (isEscaped(content, opening)) {
+      cursor = opening + 1;
+      continue;
+    }
+    let openingLength = 1;
+    while (content[opening + openingLength] === "`") openingLength += 1;
+    let search = opening + openingLength;
+    let closing = -1;
+    while (search < content.length) {
+      const candidate = content.indexOf("`", search);
+      if (candidate < 0) break;
+      let candidateLength = 1;
+      while (content[candidate + candidateLength] === "`") candidateLength += 1;
+      if (!isEscaped(content, candidate) && candidateLength === openingLength) {
+        closing = candidate + candidateLength;
+        break;
+      }
+      search = candidate + candidateLength;
+    }
+    if (closing < 0) {
+      cursor = opening + openingLength;
+      continue;
+    }
+    ranges.push({ from: opening, to: closing });
+    cursor = closing;
+  }
+  return ranges;
+}
+
+function isWikiImageTarget(target: string): boolean {
+  const clean = target.split(/[?#]/, 1)[0] ?? target;
+  const extension = clean.split(".").pop()?.toLowerCase() ?? "";
+  return WIKI_IMAGE_EXTENSIONS.has(extension);
+}
+
+function protectedMarkdownRanges(content: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = [];
+  const frontmatterEnd = frontmatterEndOffset(content);
+  if (frontmatterEnd > 0) ranges.push({ from: 0, to: frontmatterEnd });
+  ranges.push(...fencedMarkdownRanges(content));
+  ranges.push(...delimitedMarkdownRanges(content, "<!-- knowgrove:image-text v=1 -->", "<!-- /knowgrove:image-text -->"));
+  ranges.push(...delimitedMarkdownRanges(content, "%%", "%%"));
+  ranges.push(...delimitedMarkdownRanges(content, "<!--", "-->"));
+  ranges.push(...inlineCodeRanges(content));
+  const patterns = [
+    /\$\$[\s\S]*?\$\$/g,
+    /<(?:pre|code|script|style)\b[^>]*>[\s\S]*?<\/(?:pre|code|script|style)>/gi,
+    /(^|[^\\])\$[^$\n]+\$/gm,
+  ];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      if (match.index === undefined) continue;
+      ranges.push({ from: match.index, to: match.index + match[0].length });
+    }
+  }
+  return ranges.sort((left, right) => left.from - right.from || left.to - right.to);
+}
+
+function isProtectedOffset(ranges: ProtectedRange[], offset: number): boolean {
+  return ranges.some((range) => offset >= range.from && offset < range.to);
+}
 
 function isEscaped(text: string, index: number): boolean {
   let slashes = 0;
@@ -57,7 +177,11 @@ function parseSize(value: string): { width?: number; height?: number } {
   };
 }
 
-function parseMetadataAfter(content: string, imageTo: number): { unitTo: number; alignment?: ImageAlignment } {
+function parseMetadataAfter(content: string, imageTo: number): {
+  unitTo: number;
+  alignment?: ImageAlignment;
+  reference?: string;
+} {
   let cursor = imageTo;
   while (cursor < content.length && (content[cursor] === " " || content[cursor] === "\t")) cursor += 1;
   if (!content.startsWith(META_PREFIX, cursor)) return { unitTo: imageTo };
@@ -65,9 +189,11 @@ function parseMetadataAfter(content: string, imageTo: number): { unitTo: number;
   if (end < 0) return { unitTo: imageTo };
   const raw = content.slice(cursor, end + 3);
   const match = raw.match(/\balign=(left|center|right)\b/i);
+  const reference = raw.match(/\bref=([a-z0-9-]+)\b/i)?.[1];
   return {
     unitTo: end + 3,
     alignment: match?.[1]?.toLowerCase() as ImageAlignment | undefined,
+    reference,
   };
 }
 
@@ -81,6 +207,7 @@ function parseWikiImages(content: string): ImageOccurrence[] {
     const parts = inner.split("|");
     const targetPart = parts.shift() ?? "";
     const legacy = stripLegacyAlignment(targetPart);
+    if (!isWikiImageTarget(legacy.target)) continue;
     let alignment = legacy.alignment;
     let width: number | undefined;
     let height: number | undefined;
@@ -109,6 +236,7 @@ function parseWikiImages(content: string): ImageOccurrence[] {
       raw,
       unitRaw: content.slice(from, metadata.unitTo),
       target: legacy.target,
+      reference: metadata.reference,
       alignment: metadata.alignment ?? alignment,
       width,
       height,
@@ -208,6 +336,7 @@ function parseMarkdownImages(content: string): ImageOccurrence[] {
       raw,
       unitRaw: content.slice(cursor, metadata.unitTo),
       target: targetLegacy.target,
+      reference: metadata.reference,
       alignment: metadata.alignment ?? alignment,
       width,
       height,
@@ -218,7 +347,9 @@ function parseMarkdownImages(content: string): ImageOccurrence[] {
 }
 
 export function parseImageOccurrences(content: string): ImageOccurrence[] {
+  const protectedRanges = protectedMarkdownRanges(content);
   return [...parseWikiImages(content), ...parseMarkdownImages(content)]
+    .filter((occurrence) => !isProtectedOffset(protectedRanges, occurrence.from))
     .sort((left, right) => left.from - right.from || left.to - right.to);
 }
 
@@ -270,8 +401,9 @@ export function findImageOccurrence(
   return best;
 }
 
-function metadata(alignment?: ImageAlignment): string {
-  return alignment ? ` <!-- knowgrove:image align=${alignment} -->` : "";
+function metadata(alignment?: ImageAlignment, reference?: string): string {
+  const values = [alignment ? `align=${alignment}` : "", reference ? `ref=${reference}` : ""].filter(Boolean);
+  return values.length ? ` <!-- knowgrove:image ${values.join(" ")} -->` : "";
 }
 
 function cleanMarkdownAlt(alt: string): string {
@@ -310,7 +442,7 @@ export function updateImageSyntax(occurrence: ImageOccurrence, update: ImageSynt
       nextParts.push(occurrence.height ? `${occurrence.width}x${occurrence.height}` : `${occurrence.width}`);
     }
     const alignment = update.reset ? undefined : (update.alignment ?? occurrence.alignment);
-    return `![[${nextParts.join("|")}]]${metadata(alignment)}`;
+    return `![[${nextParts.join("|")}]]${metadata(alignment, occurrence.reference)}`;
   }
 
   const marker = occurrence.raw.indexOf("](");
@@ -327,7 +459,7 @@ export function updateImageSyntax(occurrence: ImageOccurrence, update: ImageSynt
     nextAlt = `${cleanAlt}|${occurrence.width}${occurrence.height ? `x${occurrence.height}` : ""}`;
   }
   const alignment = update.reset ? undefined : (update.alignment ?? occurrence.alignment);
-  return `![${nextAlt}](${destination})${metadata(alignment)}`;
+  return `![${nextAlt}](${destination})${metadata(alignment, occurrence.reference)}`;
 }
 
 function lineBounds(content: string, offset: number): { from: number; to: number; text: string } {
@@ -339,11 +471,19 @@ function lineBounds(content: string, offset: number): { from: number; to: number
 }
 
 export function frontmatterEndOffset(content: string): number {
-  if (!content.startsWith("---\n") && content !== "---") return 0;
-  const close = content.indexOf("\n---", 3);
-  if (close < 0) return 0;
-  const after = close + 4;
-  return content[after] === "\n" ? after + 1 : after;
+  const openingEnd = content.indexOf("\n");
+  if (openingEnd < 0 || content.slice(0, openingEnd).replace(/\r$/, "") !== "---") return 0;
+  let lineStart = openingEnd + 1;
+  while (lineStart <= content.length) {
+    const newline = content.indexOf("\n", lineStart);
+    const lineEnd = newline < 0 ? content.length : newline;
+    if (content.slice(lineStart, lineEnd).replace(/\r$/, "") === "---") {
+      return newline < 0 ? lineEnd : newline + 1;
+    }
+    if (newline < 0) break;
+    lineStart = newline + 1;
+  }
+  return 0;
 }
 
 export function isOffsetInsideFencedCode(content: string, offset: number): boolean {

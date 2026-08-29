@@ -190,7 +190,7 @@ import {
   repairReferenceAnchor,
 } from "./reference-repair";
 import { KnowGroveSettingTab } from "./settings";
-import { installKnowGroveLocalization, setKnowGroveLanguage, translateKnowGroveText } from "./i18n";
+import { installKnowGroveLocalization, knowGroveDisplayName, setKnowGroveLanguage, translateKnowGroveText } from "./i18n";
 import { KnowGroveRuntimeManager, type RuntimeInstallProgress } from "./runtime-manager";
 import {
   formatRuntimeBytes,
@@ -327,6 +327,24 @@ import {
 } from "./types";
 import { TableResizer } from "./table-resizer";
 import { ImageLayoutEnhancer } from "./image-layout-enhancer";
+import { ImageToTextService } from "./image-to-text";
+import { ImageTextConfirmModal, ImageTextProgressCenter, type ImageTextProgressTask } from "./image-to-text-modal";
+import {
+  imageTextManagedBlockRange,
+  imageTextOccurrenceSnapshot,
+  removeConfirmedImageReferences,
+  upsertImageTextBlock,
+} from "./image-to-text-core";
+import { type AIImageExecutionPlan } from "./image-provider-core";
+import {
+  formatImageTextFailureSummary,
+  imageResourceMatches,
+  imageTextFailureCategory,
+  resolveImageTextOccurrence,
+  type ImageTextFailureDetail,
+  type ImageTextOccurrenceIdentity,
+} from "./image-text-progress-core";
+import { parseImageOccurrences, type ImageOccurrence } from "./image-layout-core";
 
 const NEW_NOTE_SETTLE_MILLISECONDS = 650;
 const NEW_NOTE_IMPORT_WINDOW_MILLISECONDS = 15_000;
@@ -463,6 +481,8 @@ export default class KnowGrovePlugin extends Plugin {
   private documentAnchorManager?: DocumentAnchorManager;
   private tableResizer?: TableResizer;
   private imageLayoutEnhancer?: ImageLayoutEnhancer;
+  private imageToTextService?: ImageToTextService;
+  private imageTextProgressCenter?: ImageTextProgressCenter;
   private disposeLocalization?: () => void;
   private readonly normalizingCaptureImageLinks = new Set<string>();
   private readonly normalizedCaptureImageLinkMtime = new Map<string, number>();
@@ -511,6 +531,8 @@ export default class KnowGrovePlugin extends Plugin {
     this.attachmentCleanupManager = new AttachmentCleanupManager(this);
     this.documentAnchorManager = new DocumentAnchorManager(this);
     this.tableResizer = new TableResizer(this);
+    this.imageToTextService = new ImageToTextService(this);
+    this.imageTextProgressCenter = new ImageTextProgressCenter(this.app);
     this.imageLayoutEnhancer = new ImageLayoutEnhancer(this);
     this.app.workspace.onLayoutReady(() => this.documentAnchorManager?.refreshAll());
     this.registerKnowGroveProtocolHandler("knowgrove-browser-pair", (params) => {
@@ -893,6 +915,15 @@ export default class KnowGrovePlugin extends Plugin {
         .setTitle("KnowGrove：检查附件与链接")
         .setIcon("list-checks")
         .onClick(() => void this.checkAttachmentLinkConsistency()));
+      menu.addSeparator();
+      menu.addItem((item) => item
+        .setTitle(translateKnowGroveText("转换本文全部图片"))
+        .setIcon("scan-text")
+        .onClick(() => this.confirmConvertAllImages(file)));
+      menu.addItem((item) => item
+        .setTitle(translateKnowGroveText("一键移除本文全部图片"))
+        .setIcon("image-minus")
+        .onClick(() => this.confirmRemoveAllImages(file)));
     }));
     this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, context) => {
       if (!(context instanceof MarkdownView) || !context.file) return;
@@ -915,6 +946,15 @@ export default class KnowGrovePlugin extends Plugin {
           .setIcon("wand-sparkles")
           .onClick(() => this.openCreationRewrite(editor, context)));
       }
+      menu.addSeparator();
+      menu.addItem((item) => item
+        .setTitle(translateKnowGroveText("转换本文全部图片"))
+        .setIcon("scan-text")
+        .onClick(() => this.confirmConvertAllImages(context.file!)));
+      menu.addItem((item) => item
+        .setTitle(translateKnowGroveText("一键移除本文全部图片"))
+        .setIcon("image-minus")
+        .onClick(() => this.confirmRemoveAllImages(context.file!, editor)));
       const reference = this.settings.enableComments
         ? this.findReferenceAtCursor(editor, context.file)
         : undefined;
@@ -938,6 +978,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.documentAnchorManager?.destroyAll();
     this.tableResizer?.destroy();
     this.imageLayoutEnhancer?.destroy();
+    this.imageTextProgressCenter?.destroy();
     this.disposeLocalization?.();
     this.disposeLocalization = undefined;
     this.normalizingCaptureImageLinks.clear();
@@ -962,6 +1003,369 @@ export default class KnowGrovePlugin extends Plugin {
     for (const path of Array.from(this.pendingNewNoteInitializations.keys())) {
       this.clearPendingNewNoteInitialization(path);
     }
+  }
+
+  public confirmImageToText(file: TFile, occurrence: ImageOccurrence): void {
+    void this.openSingleImageTextConfirmation(file, occurrence);
+  }
+
+  private confirmConvertAllImages(file: TFile): void {
+    void this.openAllImageTextConfirmation(file);
+  }
+
+  private async openSingleImageTextConfirmation(file: TFile, occurrence: ImageOccurrence): Promise<void> {
+    const service = this.imageToTextService;
+    if (!service) return;
+    try {
+      const [content, plan] = await Promise.all([
+        this.app.vault.read(file),
+        service.createExecutionPlan(),
+      ]);
+      if (!service.supportsExecutionPlan(plan)) {
+        new Notice(`当前模型不支持图片输入，请在 ${knowGroveDisplayName()} 设置中切换到 ${providerName("codex-cli")}、${providerName("anthropic-api")} 或 ${providerName("openai-compatible")}视觉模型`, 9000);
+        return;
+      }
+      const current = parseImageOccurrences(content).find((candidate) => (
+        candidate.from === occurrence.from
+        && candidate.raw === occurrence.raw
+        && candidate.target === occurrence.target
+      ));
+      if (!current) {
+        new Notice("图片在确认前已变化，请重新选择", 7000);
+        return;
+      }
+      const identity: ImageTextOccurrenceIdentity = {
+        raw: current.raw,
+        target: current.target,
+        anchorOffset: current.from,
+        ...imageTextOccurrenceSnapshot(content, current),
+      };
+      const remote = /^https?:\/\//i.test(current.target);
+      new ImageTextConfirmModal(
+        this.app,
+        translateKnowGroveText("AI 图片转文字"),
+        [
+          `模型：${this.imageTextExecutionPlanSummary(plan)}`,
+          `图片：${current.target}`,
+          remote ? "来源：远程图片（图片内容将发送给所选模型）" : "来源：Vault 本地图片（图片内容将发送给所选模型）",
+          `写入范围：仅在该图片下方新增或更新 ${knowGroveDisplayName()} 管理的识别区块`,
+        ],
+        translateKnowGroveText("开始转换"),
+        () => this.convertSingleImage(file, identity, plan),
+      ).open();
+    } catch (error) {
+      new Notice(`图片模型检查失败：${error instanceof Error ? error.message : String(error)}`, 8000);
+    }
+  }
+
+  private async openAllImageTextConfirmation(file: TFile): Promise<void> {
+    const service = this.imageToTextService;
+    if (!service) return;
+    try {
+      const [content, plan] = await Promise.all([
+        this.app.vault.read(file),
+        service.createExecutionPlan(),
+      ]);
+      if (!service.supportsExecutionPlan(plan)) {
+        new Notice(`当前模型不支持图片输入，请在 ${knowGroveDisplayName()} 设置中切换到 ${providerName("codex-cli")}、${providerName("anthropic-api")} 或 ${providerName("openai-compatible")}视觉模型`, 9000);
+        return;
+      }
+      const occurrences = parseImageOccurrences(content);
+      if (!occurrences.length) {
+        new Notice(translateKnowGroveText("本文没有可转换的图片"));
+        return;
+      }
+      const remoteCount = occurrences.filter((item) => /^https?:\/\//i.test(item.target)).length;
+      new ImageTextConfirmModal(
+        this.app,
+        translateKnowGroveText("转换本文全部图片"),
+        [
+          `模型：${this.imageTextExecutionPlanSummary(plan)}`,
+          `图片：${occurrences.length} 张（本地 ${occurrences.length - remoteCount}，远程 ${remoteCount}）`,
+          "发送范围：逐张发送图片本身与固定识别指令，不发送整篇笔记",
+          "处理方式：按文档顺序串行执行；失败项会跳过，已完成结果立即保留",
+        ],
+        translateKnowGroveText("开始转换"),
+        () => this.convertAllImages(file, occurrences.map((occurrence) => {
+          const snapshot = imageTextOccurrenceSnapshot(content, occurrence);
+          return {
+            raw: occurrence.raw,
+            target: occurrence.target,
+            anchorOffset: occurrence.from,
+            ...snapshot,
+          };
+        }), plan),
+      ).open();
+    } catch (error) {
+      new Notice(`读取笔记或检查模型失败：${error instanceof Error ? error.message : String(error)}`, 8000);
+    }
+  }
+
+  private imageTextExecutionPlanSummary(plan: AIImageExecutionPlan): string {
+    const detected = plan.availability.find((provider) => provider.id === plan.settings.provider);
+    const model = plan.settings.model.trim() || detected?.configuredModel || "默认模型";
+    return `${providerName(plan.settings.provider)} · ${model}`;
+  }
+
+  private confirmRemoveAllImages(file: TFile, editor?: Editor): void {
+    const content = editor?.getValue();
+    void (content === undefined ? this.app.vault.read(file) : Promise.resolve(content)).then((source) => {
+      const count = parseImageOccurrences(source).length;
+      if (!count) {
+        new Notice(translateKnowGroveText("本文没有可移除的图片"));
+        return;
+      }
+      new ImageTextConfirmModal(
+        this.app,
+        translateKnowGroveText("一键移除本文全部图片"),
+        [
+          `将移除 ${count} 个真实图片引用。`,
+          "图片转文字结果、普通链接、音频、PDF、代码示例和附件文件本身都会保留。",
+          "附件是否清理由现有附件管理流程另行确认。",
+        ],
+        translateKnowGroveText("移除图片引用"),
+        async () => {
+          try {
+            const current = editor?.getValue() ?? await this.app.vault.read(file);
+            const result = removeConfirmedImageReferences(source, current);
+            if (editor) {
+              editor.replaceRange(result.content, { line: 0, ch: 0 }, editor.offsetToPos(current.length));
+            } else {
+              await this.app.vault.modify(file, result.content);
+            }
+            new Notice(`已移除 ${result.removed} 个图片引用；图片文件未删除`);
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : String(error), 8000);
+          }
+        },
+      ).open();
+    }).catch((error) => new Notice(`读取笔记失败：${error instanceof Error ? error.message : String(error)}`, 8000));
+  }
+
+  private async convertSingleImage(
+    file: TFile,
+    original: ImageTextOccurrenceIdentity,
+    plan: AIImageExecutionPlan,
+  ): Promise<void> {
+    const service = this.imageToTextService;
+    const progressCenter = this.imageTextProgressCenter;
+    if (!service || !progressCenter) throw new Error("图片转文字组件尚未就绪，请重新加载插件");
+    const controller = new AbortController();
+    let location: ImageTextOccurrenceIdentity = { ...original };
+    const progress = progressCenter.createTask({
+      id: makeId("image-text"),
+      noteName: file.basename,
+      imageTarget: original.target,
+      total: 1,
+      onCancel: () => controller.abort(),
+      onLocate: () => this.locateImageTextResult(file, location),
+    });
+    try {
+      const before = await this.app.vault.read(file);
+      const current = resolveImageTextOccurrence(before, location);
+      if (!current) throw new Error("图片引用已变化，请重新执行");
+      const snapshot = imageTextOccurrenceSnapshot(before, current);
+      location = {
+        raw: current.raw,
+        target: current.target,
+        anchorOffset: current.from,
+        ...snapshot,
+      };
+      progress.update({ imageTarget: current.target, message: `正在处理 ${current.target}` });
+      const result = await service.convert(file, current, plan, controller.signal, (phase) => {
+        progress.update({ phase, message: `正在处理 ${current.target}` });
+      });
+      if (controller.signal.aborted) throw new DOMException("任务已由用户取消", "AbortError");
+      await this.persistImageTextResult(file, before, current, result, progress);
+      location = { ...location, anchorOffset: current.from, locateManagedResult: true };
+      progress.update({ completed: 1, message: "识别结果已写入图片下方" });
+      progress.finish("completed", "已完成 1 张图片，原图片保持不变。点击可定位识别结果。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        progress.finish("cancelled", "已取消，未写入未完成结果。");
+      } else {
+        progress.update({ failed: 1, message });
+        progress.finish("failed", `转换失败：${message}`);
+      }
+    }
+  }
+
+  private async convertAllImages(
+    file: TFile,
+    queue: ImageTextOccurrenceIdentity[],
+    plan: AIImageExecutionPlan,
+  ): Promise<void> {
+    const service = this.imageToTextService;
+    const progressCenter = this.imageTextProgressCenter;
+    if (!service || !progressCenter) throw new Error("图片转文字组件尚未就绪，请重新加载插件");
+    const controller = new AbortController();
+    const expectedTotal = queue.length;
+    let location = queue[0] ?? { raw: "", target: "", anchorOffset: 0 };
+    const progress = progressCenter.createTask({
+      id: makeId("image-text"),
+      noteName: file.basename,
+      imageTarget: `${expectedTotal} 张图片`,
+      total: expectedTotal,
+      onCancel: () => controller.abort(),
+      onLocate: () => this.locateImageTextResult(file, location),
+    });
+    let completed = 0;
+    let failed = 0;
+    let skipped = 0;
+    const failures: ImageTextFailureDetail[] = [];
+    let lastCompletedLocation: ImageTextOccurrenceIdentity | undefined;
+    for (let index = 0; index < expectedTotal; index += 1) {
+      if (controller.signal.aborted) break;
+      try {
+        const before = await this.app.vault.read(file);
+        const identity = queue[index];
+        const occurrence = identity ? resolveImageTextOccurrence(before, identity) : undefined;
+        if (!occurrence) throw new Error("图片数量或顺序已变化，请重新执行剩余图片");
+        location = {
+          raw: occurrence.raw,
+          target: occurrence.target,
+          anchorOffset: occurrence.from,
+          reference: identity?.reference,
+          duplicateOrdinal: identity?.duplicateOrdinal,
+          duplicateCount: identity?.duplicateCount,
+        };
+        progress.update({
+          current: index + 1,
+          completed,
+          failed,
+          skipped,
+          imageTarget: occurrence.target,
+          phase: "preparing",
+          message: `正在处理第 ${index + 1}/${expectedTotal} 张：${occurrence.target}`,
+        });
+        const result = await service.convert(file, occurrence, plan, controller.signal, (phase) => {
+          progress.update({ phase, message: `正在处理第 ${index + 1}/${expectedTotal} 张：${occurrence.target}` });
+        });
+        if (controller.signal.aborted) break;
+        await this.persistImageTextResult(file, before, occurrence, result, progress);
+        lastCompletedLocation = { ...location, locateManagedResult: true };
+        location = lastCompletedLocation;
+        completed += 1;
+      } catch (error) {
+        if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) break;
+        const message = error instanceof Error ? error.message : String(error);
+        const skippedItem = this.isSkippedImageTextError(error);
+        if (skippedItem) skipped += 1;
+        else failed += 1;
+        failures.push({
+          target: queue[index]?.target ?? `第 ${index + 1} 张图片`,
+          category: imageTextFailureCategory(message, skippedItem),
+          message,
+        });
+        console.error("KnowGrove image-to-text item failed", error);
+      }
+      progress.update({ completed, failed, skipped, failures: [...failures], message: `已处理 ${completed + failed + skipped}/${expectedTotal}` });
+    }
+    const cancelled = controller.signal.aborted;
+    location = lastCompletedLocation ?? location;
+    const failureSummary = formatImageTextFailureSummary(failures);
+    if (cancelled) {
+      progress.finish("cancelled", `已取消后续处理；保留已完成 ${completed} 张，跳过 ${skipped} 张，失败 ${failed} 张。${failureSummary ? ` ${failureSummary}` : ""}`);
+    } else {
+      progress.finish(completed === 0 && failed > 0 ? "failed" : "completed", `处理结束：完成 ${completed} 张，跳过 ${skipped} 张，失败 ${failed} 张。${failureSummary ? ` ${failureSummary}` : ""} 点击可定位最后处理位置。`);
+    }
+  }
+
+  private async persistImageTextResult(
+    file: TFile,
+    sourceBeforeRecognition: string,
+    occurrence: ImageOccurrence,
+    result: string,
+    progress: ImageTextProgressTask,
+  ): Promise<void> {
+    let expected = "";
+    progress.update({ phase: "writing", message: `正在写入 ${occurrence.target} 的识别结果` });
+    const written = await this.app.vault.process(file, (current) => {
+      if (current !== sourceBeforeRecognition) {
+        throw new Error("笔记在识别期间发生变化，为避免覆盖已停止写入，请重新执行");
+      }
+      expected = upsertImageTextBlock(current, occurrence, result).content;
+      return expected;
+    });
+    if (!expected || written !== expected) {
+      throw new Error("图片识别结果未完整写入，请重新转换");
+    }
+    progress.update({ phase: "verifying", message: `正在回读 ${occurrence.target} 的识别结果` });
+    const verified = await this.app.vault.read(file);
+    if (verified !== expected) {
+      throw new Error("图片识别结果写入后回读不一致，请重新转换");
+    }
+  }
+
+  private isSkippedImageTextError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /图片(?:数量或顺序|引用)已变化|笔记在识别期间发生变化/.test(message);
+  }
+
+  private async locateImageTextResult(
+    file: TFile,
+    identity: ImageTextOccurrenceIdentity,
+  ): Promise<void> {
+    const currentFile = this.app.vault.getFileByPath(file.path);
+    if (!currentFile) {
+      new Notice("目标笔记已移动或删除，无法打开转换位置", 7000);
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(currentFile, { active: true });
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+    const content = await this.app.vault.read(currentFile);
+    const occurrence = resolveImageTextOccurrence(content, identity);
+    if (!occurrence) {
+      new Notice("已打开目标笔记，但图片已移动、删除或无法唯一定位", 7000);
+      return;
+    }
+    if (!(leaf.view instanceof MarkdownView)) return;
+    const managedRange = identity.locateManagedResult
+      ? imageTextManagedBlockRange(content, occurrence)
+      : undefined;
+    if (leaf.view.getMode() === "source") {
+      const from = leaf.view.editor.offsetToPos(managedRange?.contentFrom ?? occurrence.from);
+      const to = leaf.view.editor.offsetToPos(managedRange?.to ?? occurrence.unitTo);
+      leaf.view.editor.setCursor(from);
+      leaf.view.editor.scrollIntoView({ from, to }, true);
+      return;
+    }
+    if (managedRange) {
+      const resultLine = content.slice(0, managedRange.contentFrom).split("\n").length - 1;
+      const resultEndLine = content.slice(0, managedRange.to).split("\n").length - 1;
+      const resultElement = Array.from(leaf.view.containerEl.querySelectorAll<HTMLElement>(".markdown-preview-view [data-line]"))
+        .find((element) => {
+          const line = Number.parseInt(element.dataset.line ?? "", 10);
+          return Number.isFinite(line) && line >= resultLine && line <= resultEndLine;
+        });
+      if (resultElement) {
+        resultElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        resultElement.addClass("knowgrove-image-text-located");
+        window.setTimeout(() => resultElement.removeClass("knowgrove-image-text-located"), 2_200);
+        return;
+      }
+    }
+    const matchingOccurrences = parseImageOccurrences(content)
+      .filter((candidate) => candidate.target === occurrence.target);
+    const targetIndex = matchingOccurrences.findIndex((candidate) => candidate.from === occurrence.from);
+    const cleanTarget = occurrence.target.split("#", 1)[0]?.split("?", 1)[0] ?? occurrence.target;
+    const resolved = /^https?:\/\//i.test(occurrence.target)
+      ? undefined
+      : this.app.vault.getFileByPath(normalizePath(cleanTarget))
+        ?? this.app.metadataCache.getFirstLinkpathDest(cleanTarget, currentFile.path);
+    const expectedSource = resolved ? this.app.vault.getResourcePath(resolved) : occurrence.target;
+    const matchingImages = Array.from(leaf.view.containerEl.querySelectorAll<HTMLImageElement>(".markdown-preview-view img"))
+      .filter((image) => imageResourceMatches(image.currentSrc || image.src, expectedSource));
+    const image = matchingImages[Math.max(0, targetIndex)];
+    if (!image) {
+      new Notice("已打开目标笔记，但当前阅读视图尚未渲染该图片", 5000);
+      return;
+    }
+    image.scrollIntoView({ behavior: "smooth", block: "center" });
+    image.addClass("knowgrove-image-text-located");
+    window.setTimeout(() => image.removeClass("knowgrove-image-text-located"), 2_200);
   }
 
   async scanUnreferencedAttachments(): Promise<void> {

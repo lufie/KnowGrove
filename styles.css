@@ -5258,6 +5258,10 @@ button.knowgrove-recording-restore:focus-visible {
   left: 8px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-height: calc(100% - 24px);
   z-index: 15;
   pointer-events: auto;
   user-select: none;
@@ -5265,10 +5269,14 @@ button.knowgrove-recording-restore:focus-visible {
 
 .knowgrove-anchor-rail {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   align-items: flex-start;
+  min-height: 0;
   gap: 10px;
   padding: 14px 18px 14px 6px;
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: transparent;
   border: none;
   box-shadow: none;
@@ -5354,9 +5362,10 @@ button.knowgrove-recording-restore:focus-visible {
 
 .knowgrove-anchor-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: flex-start;
-  margin-top: 10px;
+  margin-top: 8px;
   padding-left: 2px;
 }
 
@@ -5376,6 +5385,8 @@ button.knowgrove-recording-restore:focus-visible {
   cursor: pointer;
   background: transparent;
   border: none;
+  box-shadow: none;
+  padding: 0;
   transition: all 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -5392,6 +5403,13 @@ button.knowgrove-recording-restore:focus-visible {
   color: var(--text-normal, #ffffff);
   background: var(--background-modifier-hover, rgba(255, 255, 255, 0.1));
   transform: scale(1.15);
+}
+
+.knowgrove-anchor-locate-btn:focus-visible {
+  opacity: 1;
+  color: var(--text-normal, #ffffff);
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 
 .knowgrove-anchor-locate-btn:hover svg {
@@ -5806,6 +5824,150 @@ body.knowgrove-reorder-dragging * {
   color: var(--text-normal, #ffffff);
 }
 
+.knowgrove-image-text-details {
+  margin: var(--size-4-3, 12px) 0;
+  padding-left: 1.4em;
+  color: var(--text-muted);
+}
+
+.knowgrove-image-text-details li + li {
+  margin-top: var(--size-4-1, 4px);
+}
+
+.knowgrove-image-text-failures {
+  margin: var(--size-4-3, 12px) 0;
+  padding: var(--size-4-3, 12px) var(--size-4-4, 16px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.knowgrove-image-text-failures ul {
+  margin: var(--size-4-2, 8px) 0;
+  padding-inline-start: 20px;
+}
+
+.knowgrove-image-text-failures p {
+  margin: var(--size-4-2, 8px) 0 0;
+  color: var(--text-muted);
+}
+
+.knowgrove-image-text-progress {
+  width: 100%;
+  accent-color: var(--interactive-accent);
+}
+
+.knowgrove-image-text-task-stack {
+  position: fixed;
+  right: var(--size-4-4, 16px);
+  bottom: var(--size-4-4, 16px);
+  z-index: var(--layer-popover, 30);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2, 8px);
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.knowgrove-image-text-task-card {
+  padding: var(--size-4-3, 12px);
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: var(--radius-m, 8px);
+  box-shadow: var(--shadow-s);
+  pointer-events: auto;
+}
+
+.knowgrove-image-text-task-card.is-finished {
+  border-left-color: var(--color-green);
+}
+
+.knowgrove-image-text-task-card.is-failed {
+  border-left-color: var(--color-red);
+}
+
+.knowgrove-image-text-task-eyebrow {
+  margin-bottom: var(--size-4-1, 4px);
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+}
+
+.knowgrove-image-text-task-locate {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.knowgrove-image-text-task-locate:hover,
+.knowgrove-image-text-task-locate:focus-visible {
+  color: var(--text-accent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.knowgrove-image-text-task-title {
+  overflow: hidden;
+  font-weight: var(--font-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-image-text-task-target {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowgrove-image-text-task-phase {
+  margin-top: var(--size-4-2, 8px);
+  font-size: var(--font-ui-small);
+}
+
+.knowgrove-image-text-task-elapsed {
+  display: inline-block;
+  margin: 2px 0 var(--size-4-2, 8px);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.knowgrove-image-text-task-counts {
+  margin-top: var(--size-4-1, 4px);
+}
+
+.knowgrove-image-text-task-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2, 8px);
+  margin-top: var(--size-4-2, 8px);
+}
+
+.knowgrove-image-text-located {
+  outline: 3px solid var(--interactive-accent);
+  outline-offset: 4px;
+  transition: outline-color 180ms ease;
+}
+
+@media (max-width: 600px) {
+  .knowgrove-image-text-task-stack {
+    right: var(--size-4-2, 8px);
+    bottom: var(--size-4-2, 8px);
+    width: calc(100vw - 16px);
+  }
+}
+
 .knowgrove-adorner-sep {
   width: 1px;
   height: 12px;
@@ -6030,5 +6192,3 @@ body.knowgrove-reorder-dragging * {
 .knowgrove-scroll-anchor-lock {
   overflow-anchor: none;
 }
-
-

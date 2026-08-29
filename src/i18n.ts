@@ -96,6 +96,7 @@ const ENGLISH: Record<string, string> = {
   "默认开启。在左侧显示全部主题；关闭只隐藏入口，不会修改或删除笔记中的主题属性。": "On by default. Shows all topics in the left sidebar. Turning it off only hides the entry and never changes topic properties.",
   "文档浮动层级定位锚点": "Floating document outline anchors",
   "默认开启。在文档阅读区左侧边缘显示极简浮动锚点轨。仅在文档包含标题层级时展示，鼠标悬停可预览标题，点击可快速跳转定位，滚动时实时跟随阅读位置。": "On by default. Displays a minimal floating outline rail along the left edge of the document reading area. Visible only when the document has headings; hover to preview heading, click to jump, and syncs automatically with current scroll position.",
+  "在文件列表中定位此文档": "Reveal this note in file explorer",
   "附件冗余检测": "Orphaned attachment check",
   "只跟踪曾被笔记使用过的附件；失去最后一处引用时提醒。每天复查一次历史失联附件，不会扫描或删除从未引用的文件。": "Tracks only attachments previously used by notes and alerts when the last reference is removed. Never treats never-referenced files as cleanup candidates.",
   "日常只检查刚刚创建、编辑、移动或删除的笔记；附件失去最后一处引用时提醒。启动时不扫描全库，从未引用的文件不会进入删除候选。": "Checks only notes you just created, edited, moved, or deleted. Alerts when an attachment loses its last reference. Never scans the full vault at startup or treats never-referenced files as cleanup candidates.",
@@ -131,6 +132,36 @@ const ENGLISH: Record<string, string> = {
   "删除选中内容的空行": "Remove blank lines from selection",
   "选中内容中没有可删除的空行": "There are no removable blank lines in the selection.",
   "已删除选中内容的空行": "Removed blank lines from the selection.",
+  "AI 图片转文字": "AI image to text",
+  "图片转文字": "Image to text",
+  "图片转文字后台任务": "Background image-to-text tasks",
+  "转换本文全部图片": "Convert all images in this note",
+  "一键移除本文全部图片": "Remove all images from this note",
+  "开始转换": "Start conversion",
+  "转文字": "Convert to text",
+  "本文没有可转换的图片": "This note has no images that can be converted.",
+  "本文没有可移除的图片": "This note has no images that can be removed.",
+  "移除图片引用": "Remove image references",
+  "正在启动…": "Starting…",
+  "图片转文字已结束": "Image-to-text finished",
+  "正在转换图片": "Converting images",
+  "取消后续处理": "Cancel remaining images",
+  "正在取消…": "Cancelling…",
+  "正在安全停止当前图片…": "Safely stopping the current image…",
+  "正在准备图片": "Preparing image",
+  "正在读取图片": "Reading image",
+  "正在调用模型识别": "Waiting for the model",
+  "正在校验识别结果": "Validating recognition result",
+  "正在写入图片下方": "Writing below the image",
+  "正在回读验证结果": "Verifying the saved result",
+  "图片转文字已完成": "Image-to-text completed",
+  "图片转文字失败": "Image-to-text failed",
+  "图片转文字已取消": "Image-to-text cancelled",
+  "定位转换位置": "Locate conversion",
+  "定位失败，请稍后重试": "Could not locate the conversion. Try again shortly.",
+  "详情": "Details",
+  "转到后台": "Continue in background",
+  "关闭": "Close",
   "关键时刻": "Key moment",
   "跳转到录音位置": "Jump to the recording position",
   "当前阅读视图中没有可跳转的音频或视频播放器": "No audio or video player is available in the current reading view.",
@@ -362,8 +393,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
     "言续": "言续", "言续设置": "言续設定",
     "大模型配置": "AI 模型設定", "属性管理": "屬性管理", "知识工作台": "知識工作區", "增强功能": "增強功能",
     "收集箱路径": "收集匣路徑", "自动整理新内容": "自動整理新內容", "阅读习惯设置": "閱讀習慣",
-    "主题列表": "主題列表", "附件冗余检测": "孤立附件檢查", "附件随笔记移动": "附件隨筆記移動", "自动整理附件": "自動整理附件", "共享附件处理": "共用附件處理", "附件与链接排除目录": "附件與連結排除資料夾", "额外附件格式": "其他附件格式", "最近文件依据": "最近檔案依據",
-    "最近操作": "最近開啟", "最近编辑": "最近編輯", "最近新建": "最近建立", "删除多余空行": "刪除多餘空行", "删除选中内容的空行": "刪除所選內容的空行", "选中内容中没有可删除的空行": "所選內容中沒有可刪除的空行", "已删除选中内容的空行": "已刪除所選內容的空行",
+    "主题列表": "主題列表", "在文件列表中定位此文档": "在檔案總管中顯示此筆記", "附件冗余检测": "孤立附件檢查", "附件随笔记移动": "附件隨筆記移動", "自动整理附件": "自動整理附件", "共享附件处理": "共用附件處理", "附件与链接排除目录": "附件與連結排除資料夾", "额外附件格式": "其他附件格式", "最近文件依据": "最近檔案依據",
+    "最近操作": "最近開啟", "最近编辑": "最近編輯", "最近新建": "最近建立", "删除多余空行": "刪除多餘空行", "删除选中内容的空行": "刪除所選內容的空行", "选中内容中没有可删除的空行": "所選內容中沒有可刪除的空行", "已删除选中内容的空行": "已刪除所選內容的空行", "AI 图片转文字": "AI 圖片轉文字", "图片转文字": "圖片轉文字", "图片转文字后台任务": "圖片轉文字背景工作", "转换本文全部图片": "轉換本文全部圖片", "一键移除本文全部图片": "移除本文全部圖片", "开始转换": "開始轉換", "转文字": "轉文字", "本文没有可转换的图片": "本文沒有可轉換的圖片", "本文没有可移除的图片": "本文沒有可移除的圖片", "移除图片引用": "移除圖片引用", "正在准备图片": "正在準備圖片", "正在读取图片": "正在讀取圖片", "正在调用模型识别": "正在呼叫模型辨識", "正在校验识别结果": "正在驗證辨識結果", "正在写入图片下方": "正在寫入圖片下方", "正在回读验证结果": "正在回讀驗證結果", "图片转文字已完成": "圖片轉文字已完成", "图片转文字失败": "圖片轉文字失敗", "图片转文字已取消": "圖片轉文字已取消", "定位转换位置": "定位轉換位置", "定位失败，请稍后重试": "定位失敗，請稍後再試", "详情": "詳細資料", "转到后台": "轉到背景執行",
     "启用评论": "啟用評論", "自动整理组件配置": "自動整理元件", "浏览器剪藏": "瀏覽器剪藏",
     "手机端剪藏": "行動裝置剪藏", "剪藏内容解析": "剪藏內容解析", "模型选择": "模型供應商",
     "模型名称": "模型", "作品文件夹": "作品資料夾", "选择文件夹": "選擇資料夾", "阅读列表": "閱讀列表",
@@ -375,8 +406,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ja: {
     "大模型配置": "AIモデル", "属性管理": "プロパティ管理", "知识工作台": "ナレッジワークスペース", "增强功能": "拡張機能",
     "收集箱路径": "受信トレイフォルダー", "自动整理新内容": "新しいコンテンツを自動整理", "阅读习惯设置": "読書設定",
-    "主题列表": "トピック一覧", "附件冗余检测": "孤立した添付ファイルの確認", "附件随笔记移动": "ノートと一緒に添付ファイルを移動", "自动整理附件": "添付ファイルを自動整理", "共享附件处理": "共有添付ファイルの処理", "附件与链接排除目录": "添付ファイルとリンクの除外フォルダー", "额外附件格式": "追加の添付ファイル形式", "最近文件依据": "最近のファイルの基準",
-    "最近操作": "最近開いた項目", "最近编辑": "最近編集した項目", "最近新建": "最近作成した項目", "删除多余空行": "余分な空行を削除", "删除选中内容的空行": "選択範囲の空行を削除", "选中内容中没有可删除的空行": "選択範囲に削除できる空行はありません", "已删除选中内容的空行": "選択範囲の空行を削除しました",
+    "主题列表": "トピック一覧", "在文件列表中定位此文档": "ファイルエクスプローラーでこのノートを表示", "附件冗余检测": "孤立した添付ファイルの確認", "附件随笔记移动": "ノートと一緒に添付ファイルを移動", "自动整理附件": "添付ファイルを自動整理", "共享附件处理": "共有添付ファイルの処理", "附件与链接排除目录": "添付ファイルとリンクの除外フォルダー", "额外附件格式": "追加の添付ファイル形式", "最近文件依据": "最近のファイルの基準",
+    "最近操作": "最近開いた項目", "最近编辑": "最近編集した項目", "最近新建": "最近作成した項目", "删除多余空行": "余分な空行を削除", "删除选中内容的空行": "選択範囲の空行を削除", "选中内容中没有可删除的空行": "選択範囲に削除できる空行はありません", "已删除选中内容的空行": "選択範囲の空行を削除しました", "AI 图片转文字": "AI画像をテキスト化", "转换本文全部图片": "このノートの画像をすべて変換", "一键移除本文全部图片": "このノートの画像をすべて削除", "开始转换": "変換を開始", "转文字": "テキスト化", "本文没有可转换的图片": "変換できる画像がありません", "本文没有可移除的图片": "削除できる画像がありません", "移除图片引用": "画像参照を削除",
     "启用评论": "コメントを有効化", "自动整理组件配置": "コンテンツ処理コンポーネント", "浏览器剪藏": "ブラウザーキャプチャ",
     "手机端剪藏": "モバイルキャプチャ", "剪藏内容解析": "キャプチャの処理", "模型选择": "モデルプロバイダー",
     "模型名称": "モデル", "作品文件夹": "出力フォルダー", "选择文件夹": "フォルダーを選択", "阅读列表": "リーディングリスト",
@@ -388,8 +419,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ko: {
     "大模型配置": "AI 모델", "属性管理": "속성 관리", "知识工作台": "지식 작업 공간", "增强功能": "향상 기능",
     "收集箱路径": "받은 편지함 폴더", "自动整理新内容": "새 콘텐츠 자동 정리", "阅读习惯设置": "읽기 환경설정",
-    "主题列表": "주제 목록", "附件冗余检测": "고아 첨부 파일 검사", "附件随笔记移动": "노트와 함께 첨부 파일 이동", "自动整理附件": "첨부 파일 자동 정리", "共享附件处理": "공유 첨부 파일 처리", "附件与链接排除目录": "첨부 파일 및 링크 제외 폴더", "额外附件格式": "추가 첨부 파일 형식", "最近文件依据": "최근 파일 기준",
-    "最近操作": "최근에 연 파일", "最近编辑": "최근에 편집한 파일", "最近新建": "최근에 만든 파일", "删除多余空行": "불필요한 빈 줄 제거", "删除选中内容的空行": "선택 영역의 빈 줄 제거", "选中内容中没有可删除的空行": "선택 영역에 제거할 수 있는 빈 줄이 없습니다", "已删除选中内容的空行": "선택 영역의 빈 줄을 제거했습니다",
+    "主题列表": "주제 목록", "在文件列表中定位此文档": "파일 탐색기에서 이 노트 표시", "附件冗余检测": "고아 첨부 파일 검사", "附件随笔记移动": "노트와 함께 첨부 파일 이동", "自动整理附件": "첨부 파일 자동 정리", "共享附件处理": "공유 첨부 파일 처리", "附件与链接排除目录": "첨부 파일 및 링크 제외 폴더", "额外附件格式": "추가 첨부 파일 형식", "最近文件依据": "최근 파일 기준",
+    "最近操作": "최근에 연 파일", "最近编辑": "최근에 편집한 파일", "最近新建": "최근에 만든 파일", "删除多余空行": "불필요한 빈 줄 제거", "删除选中内容的空行": "선택 영역의 빈 줄 제거", "选中内容中没有可删除的空行": "선택 영역에 제거할 수 있는 빈 줄이 없습니다", "已删除选中内容的空行": "선택 영역의 빈 줄을 제거했습니다", "AI 图片转文字": "AI 이미지 텍스트 변환", "转换本文全部图片": "이 노트의 모든 이미지 변환", "一键移除本文全部图片": "이 노트의 모든 이미지 제거", "开始转换": "변환 시작", "转文字": "텍스트로 변환", "本文没有可转换的图片": "변환할 이미지가 없습니다", "本文没有可移除的图片": "제거할 이미지가 없습니다", "移除图片引用": "이미지 참조 제거",
     "启用评论": "댓글 사용", "自动整理组件配置": "콘텐츠 처리 구성 요소", "浏览器剪藏": "브라우저 캡처",
     "手机端剪藏": "모바일 캡처", "剪藏内容解析": "캡처 처리", "模型选择": "모델 공급자", "模型名称": "모델",
     "作品文件夹": "출력 폴더", "选择文件夹": "폴더 선택", "阅读列表": "읽기 목록", "未读": "읽지 않음", "已读": "읽음",
@@ -400,8 +431,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   de: {
     "大模型配置": "KI-Modell", "属性管理": "Eigenschaften", "知识工作台": "Wissensarbeitsbereich", "增强功能": "Erweiterungen",
     "收集箱路径": "Posteingangsordner", "自动整理新内容": "Neue Inhalte automatisch verarbeiten", "阅读习惯设置": "Leseeinstellungen",
-    "主题列表": "Themenliste", "附件冗余检测": "Verwaiste Anhänge prüfen", "附件随笔记移动": "Anhänge mit Notizen verschieben", "自动整理附件": "Anhänge automatisch organisieren", "共享附件处理": "Gemeinsame Anhänge", "附件与链接排除目录": "Ausgeschlossene Anhangs- und Linkordner", "额外附件格式": "Zusätzliche Anhangsformate", "最近文件依据": "Zuletzt verwendet nach",
-    "最近操作": "Zuletzt geöffnet", "最近编辑": "Zuletzt bearbeitet", "最近新建": "Zuletzt erstellt", "删除多余空行": "Zusätzliche Leerzeilen entfernen", "删除选中内容的空行": "Leerzeilen in der Auswahl entfernen", "选中内容中没有可删除的空行": "Die Auswahl enthält keine entfernbaren Leerzeilen.", "已删除选中内容的空行": "Leerzeilen in der Auswahl wurden entfernt.",
+    "主题列表": "Themenliste", "在文件列表中定位此文档": "Diese Notiz im Datei-Explorer anzeigen", "附件冗余检测": "Verwaiste Anhänge prüfen", "附件随笔记移动": "Anhänge mit Notizen verschieben", "自动整理附件": "Anhänge automatisch organisieren", "共享附件处理": "Gemeinsame Anhänge", "附件与链接排除目录": "Ausgeschlossene Anhangs- und Linkordner", "额外附件格式": "Zusätzliche Anhangsformate", "最近文件依据": "Zuletzt verwendet nach",
+    "最近操作": "Zuletzt geöffnet", "最近编辑": "Zuletzt bearbeitet", "最近新建": "Zuletzt erstellt", "删除多余空行": "Zusätzliche Leerzeilen entfernen", "删除选中内容的空行": "Leerzeilen in der Auswahl entfernen", "选中内容中没有可删除的空行": "Die Auswahl enthält keine entfernbaren Leerzeilen.", "已删除选中内容的空行": "Leerzeilen in der Auswahl wurden entfernt.", "AI 图片转文字": "KI-Bild in Text", "转换本文全部图片": "Alle Bilder dieser Notiz umwandeln", "一键移除本文全部图片": "Alle Bilder aus dieser Notiz entfernen", "开始转换": "Umwandlung starten", "转文字": "In Text umwandeln", "本文没有可转换的图片": "Diese Notiz enthält keine umwandelbaren Bilder.", "本文没有可移除的图片": "Diese Notiz enthält keine entfernbaren Bilder.", "移除图片引用": "Bildverweise entfernen",
     "启用评论": "Kommentare aktivieren", "自动整理组件配置": "Komponenten zur Inhaltsverarbeitung", "浏览器剪藏": "Browser-Erfassung",
     "手机端剪藏": "Mobile Erfassung", "剪藏内容解析": "Erfasste Inhalte verarbeiten", "模型选择": "Modellanbieter", "模型名称": "Modell",
     "作品文件夹": "Ausgabeordner", "选择文件夹": "Ordner auswählen", "阅读列表": "Leseliste", "未读": "Ungelesen", "已读": "Gelesen",
@@ -412,8 +443,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   fr: {
     "大模型配置": "Modèle d’IA", "属性管理": "Gestion des propriétés", "知识工作台": "Espace de connaissances", "增强功能": "Améliorations",
     "收集箱路径": "Dossier de réception", "自动整理新内容": "Traiter automatiquement le nouveau contenu", "阅读习惯设置": "Préférences de lecture",
-    "主题列表": "Liste des sujets", "附件冗余检测": "Vérifier les pièces jointes orphelines", "附件随笔记移动": "Déplacer les pièces jointes avec les notes", "自动整理附件": "Organiser automatiquement les pièces jointes", "共享附件处理": "Pièces jointes partagées", "附件与链接排除目录": "Dossiers de pièces jointes et liens exclus", "额外附件格式": "Formats de pièce jointe supplémentaires", "最近文件依据": "Fichiers récents selon",
-    "最近操作": "Ouverture récente", "最近编辑": "Modification récente", "最近新建": "Création récente", "删除多余空行": "Supprimer les lignes vides en trop", "删除选中内容的空行": "Supprimer les lignes vides de la sélection", "选中内容中没有可删除的空行": "La sélection ne contient aucune ligne vide à supprimer.", "已删除选中内容的空行": "Les lignes vides de la sélection ont été supprimées.",
+    "主题列表": "Liste des sujets", "在文件列表中定位此文档": "Afficher cette note dans l’explorateur de fichiers", "附件冗余检测": "Vérifier les pièces jointes orphelines", "附件随笔记移动": "Déplacer les pièces jointes avec les notes", "自动整理附件": "Organiser automatiquement les pièces jointes", "共享附件处理": "Pièces jointes partagées", "附件与链接排除目录": "Dossiers de pièces jointes et liens exclus", "额外附件格式": "Formats de pièce jointe supplémentaires", "最近文件依据": "Fichiers récents selon",
+    "最近操作": "Ouverture récente", "最近编辑": "Modification récente", "最近新建": "Création récente", "删除多余空行": "Supprimer les lignes vides en trop", "删除选中内容的空行": "Supprimer les lignes vides de la sélection", "选中内容中没有可删除的空行": "La sélection ne contient aucune ligne vide à supprimer.", "已删除选中内容的空行": "Les lignes vides de la sélection ont été supprimées.", "AI 图片转文字": "Image IA en texte", "转换本文全部图片": "Convertir toutes les images de cette note", "一键移除本文全部图片": "Supprimer toutes les images de cette note", "开始转换": "Démarrer la conversion", "转文字": "Convertir en texte", "本文没有可转换的图片": "Cette note ne contient aucune image convertible.", "本文没有可移除的图片": "Cette note ne contient aucune image à supprimer.", "移除图片引用": "Supprimer les références d’image",
     "启用评论": "Activer les commentaires", "自动整理组件配置": "Composants de traitement", "浏览器剪藏": "Capture du navigateur",
     "手机端剪藏": "Capture mobile", "剪藏内容解析": "Traitement des captures", "模型选择": "Fournisseur du modèle", "模型名称": "Modèle",
     "作品文件夹": "Dossier de sortie", "选择文件夹": "Choisir un dossier", "阅读列表": "Liste de lecture", "未读": "Non lu", "已读": "Lu",
@@ -424,8 +455,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   es: {
     "大模型配置": "Modelo de IA", "属性管理": "Gestión de propiedades", "知识工作台": "Espacio de conocimiento", "增强功能": "Mejoras",
     "收集箱路径": "Carpeta de entrada", "自动整理新内容": "Procesar contenido nuevo automáticamente", "阅读习惯设置": "Preferencias de lectura",
-    "主题列表": "Lista de temas", "附件冗余检测": "Comprobar adjuntos huérfanos", "附件随笔记移动": "Mover adjuntos con las notas", "自动整理附件": "Organizar adjuntos automáticamente", "共享附件处理": "Adjuntos compartidos", "附件与链接排除目录": "Carpetas de adjuntos y enlaces excluidas", "额外附件格式": "Formatos de adjuntos adicionales", "最近文件依据": "Archivos recientes según",
-    "最近操作": "Abiertos recientemente", "最近编辑": "Editados recientemente", "最近新建": "Creados recientemente", "删除多余空行": "Eliminar líneas vacías adicionales", "删除选中内容的空行": "Eliminar líneas vacías de la selección", "选中内容中没有可删除的空行": "La selección no contiene líneas vacías que se puedan eliminar.", "已删除选中内容的空行": "Se eliminaron las líneas vacías de la selección.",
+    "主题列表": "Lista de temas", "在文件列表中定位此文档": "Mostrar esta nota en el explorador de archivos", "附件冗余检测": "Comprobar adjuntos huérfanos", "附件随笔记移动": "Mover adjuntos con las notas", "自动整理附件": "Organizar adjuntos automáticamente", "共享附件处理": "Adjuntos compartidos", "附件与链接排除目录": "Carpetas de adjuntos y enlaces excluidas", "额外附件格式": "Formatos de adjuntos adicionales", "最近文件依据": "Archivos recientes según",
+    "最近操作": "Abiertos recientemente", "最近编辑": "Editados recientemente", "最近新建": "Creados recientemente", "删除多余空行": "Eliminar líneas vacías adicionales", "删除选中内容的空行": "Eliminar líneas vacías de la selección", "选中内容中没有可删除的空行": "La selección no contiene líneas vacías que se puedan eliminar.", "已删除选中内容的空行": "Se eliminaron las líneas vacías de la selección.", "AI 图片转文字": "Imagen a texto con IA", "转换本文全部图片": "Convertir todas las imágenes de esta nota", "一键移除本文全部图片": "Eliminar todas las imágenes de esta nota", "开始转换": "Iniciar conversión", "转文字": "Convertir a texto", "本文没有可转换的图片": "Esta nota no contiene imágenes convertibles.", "本文没有可移除的图片": "Esta nota no contiene imágenes para eliminar.", "移除图片引用": "Eliminar referencias de imagen",
     "启用评论": "Activar comentarios", "自动整理组件配置": "Componentes de procesamiento", "浏览器剪藏": "Captura del navegador",
     "手机端剪藏": "Captura móvil", "剪藏内容解析": "Procesamiento de capturas", "模型选择": "Proveedor del modelo", "模型名称": "Modelo",
     "作品文件夹": "Carpeta de salida", "选择文件夹": "Elegir carpeta", "阅读列表": "Lista de lectura", "未读": "Sin leer", "已读": "Leído",
@@ -436,8 +467,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   "pt-BR": {
     "大模型配置": "Modelo de IA", "属性管理": "Gerenciamento de propriedades", "知识工作台": "Espaço de conhecimento", "增强功能": "Recursos avançados",
     "收集箱路径": "Pasta de entrada", "自动整理新内容": "Processar novos conteúdos automaticamente", "阅读习惯设置": "Preferências de leitura",
-    "主题列表": "Lista de tópicos", "附件冗余检测": "Verificar anexos órfãos", "附件随笔记移动": "Mover anexos com as notas", "自动整理附件": "Organizar anexos automaticamente", "共享附件处理": "Anexos compartilhados", "附件与链接排除目录": "Pastas de anexos e links excluídas", "额外附件格式": "Formatos de anexo adicionais", "最近文件依据": "Arquivos recentes por",
-    "最近操作": "Abertos recentemente", "最近编辑": "Editados recentemente", "最近新建": "Criados recentemente", "删除多余空行": "Remover linhas em branco extras", "删除选中内容的空行": "Remover linhas em branco da seleção", "选中内容中没有可删除的空行": "A seleção não contém linhas em branco que possam ser removidas.", "已删除选中内容的空行": "As linhas em branco da seleção foram removidas.",
+    "主题列表": "Lista de tópicos", "在文件列表中定位此文档": "Mostrar esta nota no explorador de arquivos", "附件冗余检测": "Verificar anexos órfãos", "附件随笔记移动": "Mover anexos com as notas", "自动整理附件": "Organizar anexos automaticamente", "共享附件处理": "Anexos compartilhados", "附件与链接排除目录": "Pastas de anexos e links excluídas", "额外附件格式": "Formatos de anexo adicionais", "最近文件依据": "Arquivos recentes por",
+    "最近操作": "Abertos recentemente", "最近编辑": "Editados recentemente", "最近新建": "Criados recentemente", "删除多余空行": "Remover linhas em branco extras", "删除选中内容的空行": "Remover linhas em branco da seleção", "选中内容中没有可删除的空行": "A seleção não contém linhas em branco que possam ser removidas.", "已删除选中内容的空行": "As linhas em branco da seleção foram removidas.", "AI 图片转文字": "Imagem em texto com IA", "转换本文全部图片": "Converter todas as imagens desta nota", "一键移除本文全部图片": "Remover todas as imagens desta nota", "开始转换": "Iniciar conversão", "转文字": "Converter em texto", "本文没有可转换的图片": "Esta nota não contém imagens conversíveis.", "本文没有可移除的图片": "Esta nota não contém imagens para remover.", "移除图片引用": "Remover referências de imagem",
     "启用评论": "Ativar comentários", "自动整理组件配置": "Componentes de processamento", "浏览器剪藏": "Captura do navegador",
     "手机端剪藏": "Captura no celular", "剪藏内容解析": "Processamento de capturas", "模型选择": "Provedor do modelo", "模型名称": "Modelo",
     "作品文件夹": "Pasta de saída", "选择文件夹": "Escolher pasta", "阅读列表": "Lista de leitura", "未读": "Não lido", "已读": "Lido",
@@ -448,8 +479,8 @@ const LOCAL_OVERRIDES: Partial<Record<KnowGroveLocale, Record<string, string>>> 
   ru: {
     "大模型配置": "Модель ИИ", "属性管理": "Управление свойствами", "知识工作台": "Рабочая область знаний", "增强功能": "Дополнительные функции",
     "收集箱路径": "Папка входящих", "自动整理新内容": "Автоматически обрабатывать новые материалы", "阅读习惯设置": "Настройки чтения",
-    "主题列表": "Список тем", "附件冗余检测": "Проверка потерянных вложений", "附件随笔记移动": "Перемещать вложения вместе с заметками", "自动整理附件": "Автоматически упорядочивать вложения", "共享附件处理": "Общие вложения", "附件与链接排除目录": "Исключённые папки вложений и ссылок", "额外附件格式": "Дополнительные форматы вложений", "最近文件依据": "Недавние файлы по",
-    "最近操作": "Недавно открытые", "最近编辑": "Недавно изменённые", "最近新建": "Недавно созданные", "删除多余空行": "Удалять лишние пустые строки", "删除选中内容的空行": "Удалить пустые строки в выделении", "选中内容中没有可删除的空行": "В выделении нет пустых строк, которые можно удалить.", "已删除选中内容的空行": "Пустые строки в выделении удалены.",
+    "主题列表": "Список тем", "在文件列表中定位此文档": "Показать эту заметку в файловом проводнике", "附件冗余检测": "Проверка потерянных вложений", "附件随笔记移动": "Перемещать вложения вместе с заметками", "自动整理附件": "Автоматически упорядочивать вложения", "共享附件处理": "Общие вложения", "附件与链接排除目录": "Исключённые папки вложений и ссылок", "额外附件格式": "Дополнительные форматы вложений", "最近文件依据": "Недавние файлы по",
+    "最近操作": "Недавно открытые", "最近编辑": "Недавно изменённые", "最近新建": "Недавно созданные", "删除多余空行": "Удалять лишние пустые строки", "删除选中内容的空行": "Удалить пустые строки в выделении", "选中内容中没有可删除的空行": "В выделении нет пустых строк, которые можно удалить.", "已删除选中内容的空行": "Пустые строки в выделении удалены.", "AI 图片转文字": "Изображение в текст с ИИ", "转换本文全部图片": "Преобразовать все изображения в заметке", "一键移除本文全部图片": "Удалить все изображения из заметки", "开始转换": "Начать преобразование", "转文字": "Преобразовать в текст", "本文没有可转换的图片": "В заметке нет изображений для преобразования.", "本文没有可移除的图片": "В заметке нет изображений для удаления.", "移除图片引用": "Удалить ссылки на изображения",
     "启用评论": "Включить комментарии", "自动整理组件配置": "Компоненты обработки", "浏览器剪藏": "Сохранение из браузера",
     "手机端剪藏": "Сохранение с телефона", "剪藏内容解析": "Обработка сохранённых материалов", "模型选择": "Поставщик модели", "模型名称": "Модель",
     "作品文件夹": "Папка результатов", "选择文件夹": "Выбрать папку", "阅读列表": "Список чтения", "未读": "Не прочитано", "已读": "Прочитано",
@@ -482,6 +513,42 @@ export function setKnowGroveLanguage(language: string): KnowGroveLocale {
 
 export function currentKnowGroveLocale(): KnowGroveLocale {
   return activeLocale;
+}
+
+export function formatImageTextElapsedLabel(
+  elapsed: string,
+  locale = currentKnowGroveLocale(),
+): string {
+  if (locale === "zh-CN") return `已耗时 ${elapsed}`;
+  if (locale === "zh-TW") return `已耗時 ${elapsed}`;
+  if (locale === "ja") return `経過時間 ${elapsed}`;
+  if (locale === "ko") return `경과 시간 ${elapsed}`;
+  if (locale === "de") return `Verstrichen ${elapsed}`;
+  if (locale === "fr") return `Temps écoulé ${elapsed}`;
+  if (locale === "es") return `Transcurrido ${elapsed}`;
+  if (locale === "pt-BR") return `Decorrido ${elapsed}`;
+  if (locale === "ru") return `Прошло ${elapsed}`;
+  return `Elapsed ${elapsed}`;
+}
+
+export function formatImageTextTaskCounts(
+  current: number,
+  total: number,
+  completed: number,
+  skipped: number,
+  failed: number,
+  locale = currentKnowGroveLocale(),
+): string {
+  if (locale === "zh-CN") return `第 ${current}/${total} 张 · 已完成 ${completed} · 跳过 ${skipped} · 失败 ${failed}`;
+  if (locale === "zh-TW") return `第 ${current}/${total} 張 · 已完成 ${completed} · 略過 ${skipped} · 失敗 ${failed}`;
+  if (locale === "ja") return `${current}/${total} 枚目 · 完了 ${completed} · スキップ ${skipped} · 失敗 ${failed}`;
+  if (locale === "ko") return `${current}/${total}번째 · 완료 ${completed} · 건너뜀 ${skipped} · 실패 ${failed}`;
+  if (locale === "de") return `Bild ${current}/${total} · Fertig ${completed} · Übersprungen ${skipped} · Fehler ${failed}`;
+  if (locale === "fr") return `Image ${current}/${total} · Terminées ${completed} · Ignorées ${skipped} · Échecs ${failed}`;
+  if (locale === "es") return `Imagen ${current}/${total} · Completadas ${completed} · Omitidas ${skipped} · Fallidas ${failed}`;
+  if (locale === "pt-BR") return `Imagem ${current}/${total} · Concluídas ${completed} · Ignoradas ${skipped} · Falhas ${failed}`;
+  if (locale === "ru") return `Изображение ${current}/${total} · Готово ${completed} · Пропущено ${skipped} · Ошибок ${failed}`;
+  return `Image ${current}/${total} · Completed ${completed} · Skipped ${skipped} · Failed ${failed}`;
 }
 
 export function knowGroveDisplayName(locale = currentKnowGroveLocale()): "言续" | "KnowGrove" {

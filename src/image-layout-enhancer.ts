@@ -1,5 +1,6 @@
 import { MarkdownView } from "obsidian";
 import type KnowGrovePlugin from "./main";
+import { translateKnowGroveText } from "./i18n";
 import {
   buildImageMoveChanges,
   clampResize,
@@ -287,6 +288,12 @@ export class ImageLayoutEnhancer {
     createButton("50%", "设为当前编辑区宽度的 50%", () => this.applyPresetWidth(0.5));
     createButton("100%", "设为当前编辑区最大可用宽度", () => this.applyPresetWidth(1));
     createButton("↺ 还原", "还原默认尺寸与对齐", () => this.resetCurrentImage());
+    toolbar.createSpan({ cls: "knowgrove-adorner-sep" });
+    createButton(`✦ ${translateKnowGroveText("转文字")}`, translateKnowGroveText("AI 图片转文字"), () => {
+      if (!this.currentTarget) return;
+      const resolved = this.resolveOccurrence(this.currentTarget.embedEl, this.currentTarget.imgEl);
+      if (resolved?.view.file) this.plugin.confirmImageToText(resolved.view.file, resolved.occurrence);
+    });
     const badge = adorner.createDiv({ cls: "knowgrove-adorner-badge" });
     this.badgeEl = badge;
 

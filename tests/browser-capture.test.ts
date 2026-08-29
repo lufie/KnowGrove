@@ -15,6 +15,8 @@ import {
   classifyBrowserCaptureUrl,
   captureDatePrefix,
   captureCancellationPlan,
+  enqueueAfterInitialCaptureNote,
+  settleTaskOwnedCapturePreparation,
   CAPTURE_FILE_NAME_MAX_BYTES,
   cleanArticleMarkdown,
   detectCaptureErrorShell,
@@ -47,11 +49,15 @@ import {
   ytDlpCaptureArgs,
   ytDlpSubtitleArgs,
   extractRootDomain,
+  activeCaptureNotePath,
+  initialCaptureNotePath,
   matchDomainSessionCookies,
   parseRawCookieString,
   parseTikTokHtml,
   parseXiguaHtml,
   portableSiblingAssetLinkPath,
+  nextCapturePlaceholderPath,
+  reserveNextCapturePlaceholderPath,
   rewriteWikiImageEmbeds,
   extractVimeoVideoId,
   extractTencentVideoVid,
@@ -400,6 +406,179 @@ test("capture cancellation deletes only task-owned notes and attachments", () =>
     trashPaths: ["Home/输入/assets/task.png"],
     restoreTarget: true,
   });
+});
+
+test("capture admission persists a second placeholder before joining a slow FIFO queue", async () => {
+  const queue = ["slow-running"];
+  const persisted = new Set<string>();
+  const events: string[] = [];
+  let releasePersistence: (() => void) | undefined;
+  const persistenceGate = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+  const admission = enqueueAfterInitialCaptureNote(
+    { id: "second-job" },
+    async (job) => {
+      events.push(`persist:start:${job.id}`);
+      await persistenceGate;
+      persisted.add(job.id);
+      events.push(`persist:verified:${job.id}`);
+    },
+    (jobId) => {
+      assert.equal(persisted.has(jobId), true);
+      queue.push(jobId);
+      events.push(`queued:${jobId}`);
+    },
+  );
+  await Promise.resolve();
+  assert.deepEqual(queue, ["slow-running"]);
+  releasePersistence?.();
+  assert.equal(await admission, true);
+  assert.deepEqual(queue, ["slow-running", "second-job"]);
+  assert.deepEqual(events, [
+    "persist:start:second-job",
+    "persist:verified:second-job",
+    "queued:second-job",
+  ]);
+});
+
+test("queued cancellation waits for task-owned placeholder creation and prevents admission", async () => {
+  const job: {
+    id: string;
+    status: "queued" | "cancelling";
+    createdNotePath?: string;
+  } = { id: "cancel-during-create", status: "queued" };
+  const notes = new Set<string>();
+  const queue: string[] = [];
+  let jobExists = true;
+  let releaseCreate: (() => void) | undefined;
+  let signalCreateStarted: (() => void) | undefined;
+  const createStarted = new Promise<void>((resolve) => {
+    signalCreateStarted = resolve;
+  });
+  const createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const preparation = (async () => {
+    signalCreateStarted?.();
+    await createGate;
+    job.createdNotePath = "Home/输入/取消竞态.md";
+    notes.add(job.createdNotePath);
+  })();
+  const admission = enqueueAfterInitialCaptureNote(
+    job,
+    async () => preparation,
+    (jobId) => queue.push(jobId),
+    () => jobExists && job.status === "queued",
+  );
+  await createStarted;
+  job.status = "cancelling";
+  let cancellationResolved = false;
+  const cancellation = (async () => {
+    await settleTaskOwnedCapturePreparation({ preparation });
+    if (job.createdNotePath) notes.delete(job.createdNotePath);
+    jobExists = false;
+    cancellationResolved = true;
+  })();
+  await Promise.resolve();
+  assert.equal(cancellationResolved, false);
+  assert.equal(jobExists, true);
+  releaseCreate?.();
+  assert.equal(await admission, false);
+  await cancellation;
+  assert.equal(cancellationResolved, true);
+  assert.equal(jobExists, false);
+  assert.deepEqual(queue, []);
+  assert.deepEqual([...notes], []);
+});
+
+test("queued cancellation never waits for or removes a user target note", async () => {
+  let preparationSettled = false;
+  const preparation = new Promise<void>(() => undefined).finally(() => {
+    preparationSettled = true;
+  });
+  await settleTaskOwnedCapturePreparation({
+    targetPath: "Home/输入/用户原有笔记.md",
+    preparation,
+  });
+  assert.equal(preparationSettled, false);
+  assert.deepEqual(captureCancellationPlan({
+    targetPath: "Home/输入/用户原有笔记.md",
+  }), {
+    trashPaths: [],
+    restoreTarget: true,
+  });
+});
+
+test("capture admission never queues a job when initial Vault persistence fails", async () => {
+  const queue: string[] = [];
+  await assert.rejects(
+    enqueueAfterInitialCaptureNote(
+      { id: "failed-job" },
+      async () => {
+        throw new Error("Vault readback failed");
+      },
+      (jobId) => queue.push(jobId),
+    ),
+    /Vault readback failed/,
+  );
+  assert.deepEqual(queue, []);
+});
+
+test("capture initial note selection survives restart and preserves user targets", () => {
+  assert.equal(initialCaptureNotePath({
+    createdNotePath: "Home/输入/已保存占位.md",
+    resultPath: "Home/输入/旧结果路径.md",
+  }), "Home/输入/已保存占位.md");
+  assert.equal(initialCaptureNotePath({
+    targetPath: "Home/输入/用户原有笔记.md",
+    createdNotePath: "Home/输入/不应优先.md",
+  }), "Home/输入/用户原有笔记.md");
+  assert.equal(initialCaptureNotePath({ resultPath: "Home/输入/任务结果.md" }), "Home/输入/任务结果.md");
+});
+
+test("active captures reuse their renamed live or verified result path before a stale target", () => {
+  assert.equal(activeCaptureNotePath({
+    currentPath: "Home/输入/新标题.md",
+    targetPath: "Home/输入/旧标题.md",
+    resultPath: "Home/输入/较早结果.md",
+    resultStorageVerified: true,
+  }), "Home/输入/新标题.md");
+  assert.equal(activeCaptureNotePath({
+    targetPath: "Home/输入/旧标题.md",
+    resultPath: "Home/输入/新标题.md",
+    resultStorageVerified: true,
+  }), "Home/输入/新标题.md");
+  assert.equal(activeCaptureNotePath({
+    targetPath: "Home/输入/用户目标.md",
+    resultPath: "Home/输入/未验证结果.md",
+    resultStorageVerified: false,
+  }), "Home/输入/用户目标.md");
+});
+
+test("capture placeholder naming remains deterministic when titles collide", () => {
+  const existing = new Set([
+    "Home/输入/同名文章.md",
+    "Home/输入/同名文章 2.md",
+  ]);
+  assert.equal(
+    nextCapturePlaceholderPath("Home/输入", "同名文章", (path) => existing.has(path)),
+    "Home/输入/同名文章 3.md",
+  );
+});
+
+test("concurrent capture admissions reserve distinct placeholder paths before Vault creation settles", () => {
+  const reservations = new Set<string>();
+  const first = reserveNextCapturePlaceholderPath("Home/输入", "同名文章", () => false, reservations);
+  const second = reserveNextCapturePlaceholderPath("Home/输入", "同名文章", () => false, reservations);
+  assert.equal(first.path, "Home/输入/同名文章.md");
+  assert.equal(second.path, "Home/输入/同名文章 2.md");
+  assert.deepEqual([...reservations], [first.path, second.path]);
+  first.release();
+  first.release();
+  assert.deepEqual([...reservations], [second.path]);
+  second.release();
+  assert.equal(reservations.size, 0);
 });
 
 test("dynamic AI share pages recover question and answer text from embedded router data", () => {
