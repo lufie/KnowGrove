@@ -2,9 +2,17 @@
 
 [English](https://github.com/lufie/KnowGrove/blob/main/README.md) · [简体中文](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.zh-CN.md) · **繁體中文** · [日本語](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ja.md) · [한국어](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ko.md) · [Deutsch](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.de.md) · [Français](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.fr.md) · [Español](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.es.md) · [Português (Brasil)](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.pt-BR.md) · [Русский](https://github.com/lufie/KnowGrove/blob/main/docs/locales/README.ru.md)
 
-言续是一個本機優先的 Obsidian 知識工作區，協助你把零散資料整理成彼此連結的主題、證據、研究與可重複使用的知識。
+言續是一套本機優先的 Obsidian 知識工作流程，適合「收集速度快於整理速度」的使用者。它保留原始資料、擷取有用結構、把內容連結到主題與證據，再沉澱成可重複使用的成果。
 
-目前原始碼版本：`2.8.29`
+目前原始碼版本：`2.8.30`
+
+## 從資料到成果的一條工作流程
+
+| 收集 | 處理 | 組織 | 創作 |
+| --- | --- | --- | --- |
+| 儲存文章、連結、本機音訊／影片、錄音與圖片。 | 擷取網頁正文，把圖片轉成結構化 Markdown，轉錄音訊與影片。 | 稍後閱讀，管理屬性，連結主題、評論、區塊引用與證據。 | 根據選定資料產生大綱、報告、長文與不同平台版本。 |
+
+Vault 始終是唯一事實來源。言續不收集用戶端遙測；只有你選擇的本機工具或相容模型服務才會處理相應內容。
 
 ## 主要功能
 
