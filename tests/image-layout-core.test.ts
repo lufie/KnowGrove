@@ -54,6 +54,14 @@ test("reset removes only KnowGrove size and alignment while preserving markdown 
   assert.equal(updateImageSyntax(occurrence, { reset: true }), "![产品图](assets/demo.png \"主图标题\")");
 });
 
+test("layout updates preserve a stable image text reference", () => {
+  const content = "![[chart.png]] <!-- knowgrove:image align=right ref=img-stable -->";
+  const occurrence = parseImageOccurrences(content)[0];
+  assert.equal(occurrence?.reference, "img-stable");
+  assert.ok(occurrence);
+  assert.equal(updateImageSyntax(occurrence, { reset: true }), "![[chart.png]] <!-- knowgrove:image ref=img-stable -->");
+});
+
 test("moving an inline image moves only the image token and keeps surrounding text", () => {
   const content = "第一段\n文字A ![[assets/demo.png]] 文字B\n目标段";
   const source = parseImageOccurrences(content)[0];
@@ -83,6 +91,26 @@ test("frontmatter and fenced code are invalid image drop targets", () => {
   const codeOffset = content.indexOf("目标");
   assert.equal(isOffsetInsideFencedCode(content, codeOffset), true);
   assert.equal(buildImageMoveChanges(content, source, codeOffset, "line-before"), null);
+});
+
+test("unfinished backtick and tilde fences protect image examples through EOF", () => {
+  const backticks = "正文\n```md\n![[unfinished.png]]\n仍在编辑";
+  const tildes = "正文\n~~~markdown\n![示例](unfinished.jpg)\n仍在编辑";
+  assert.deepEqual(parseImageOccurrences(backticks), []);
+  assert.deepEqual(parseImageOccurrences(tildes), []);
+  assert.equal(isOffsetInsideFencedCode(backticks, backticks.indexOf("unfinished.png")), true);
+  assert.equal(isOffsetInsideFencedCode(tildes, tildes.indexOf("unfinished.jpg")), true);
+});
+
+test("unfinished Obsidian and HTML comments protect image examples through EOF", () => {
+  assert.deepEqual(parseImageOccurrences("正文\n%% 尚未写完\n![[comment.png]]"), []);
+  assert.deepEqual(parseImageOccurrences("正文\n<!-- 尚未写完\n![示例](comment.jpg)"), []);
+});
+
+test("CRLF frontmatter protects image-like YAML from conversion and removal", () => {
+  const content = "---\r\ncover: '![[cover.png]]'\r\n---\r\n![[body.png]]\r\n";
+  assert.ok(frontmatterEndOffset(content) > 0);
+  assert.deepEqual(parseImageOccurrences(content).map((item) => item.target), ["body.png"]);
 });
 
 test("resize clamp enforces minimum size and editor maximum width", () => {

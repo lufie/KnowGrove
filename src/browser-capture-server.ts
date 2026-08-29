@@ -21,6 +21,8 @@ import {
   browserCaptureSkill,
   browserCaptureSynthesisPrompt,
   captureCancellationPlan,
+  enqueueAfterInitialCaptureNote,
+  settleTaskOwnedCapturePreparation,
   buildWhisperInvocation,
   whisperLanguageFromLocale,
   buildWhisperPcmConversionArgs,
@@ -60,6 +62,7 @@ import {
   ytDlpSubtitleArgs,
   extractRootDomain,
   matchDomainSessionCookies,
+  initialCaptureNotePath,
   isTikTokCaptureUrl,
   isXiguaCaptureUrl,
   isVimeoCaptureUrl,
@@ -68,6 +71,7 @@ import {
   extractVimeoVideoId,
   parseTikTokHtml,
   portableSiblingAssetLinkPath,
+  nextCapturePlaceholderPath,
   extractTencentVideoVid,
   parseXiguaHtml,
   type BrowserCaptureAIResult,
@@ -88,6 +92,13 @@ import {
 } from "./recording-markers";
 
 export type BrowserCaptureJobStatus = "queued" | "running" | "cancelling" | "completed" | "partial" | "failed";
+
+class CaptureAdmissionCancelledError extends Error {
+  constructor() {
+    super("任务已取消");
+    this.name = "CaptureAdmissionCancelledError";
+  }
+}
 
 export interface BrowserCaptureJob {
   id: string;
@@ -611,6 +622,7 @@ export class BrowserCaptureServer {
   private readonly activeJobRuns = new Map<string, Promise<void>>();
   private readonly originalTargetContents = new Map<string, { path: string; content: string }>();
   private readonly currentNotePaths = new Map<string, string>();
+  private readonly queuedNotePreparations = new Map<string, Promise<TFile>>();
   private readonly listeners = new Set<(jobs: BrowserCaptureJob[]) => void>();
   private processing = false;
   private stopping = false;
@@ -644,6 +656,7 @@ export class BrowserCaptureServer {
           this.capturedSources.delete(id);
           this.captureSessions.delete(id);
           this.originalTargetContents.delete(id);
+          this.queuedNotePreparations.delete(id);
           changed = true;
         }
       }
@@ -804,7 +817,15 @@ export class BrowserCaptureServer {
       mediaPath: candidate?.mediaPath,
       resumeFromRaw: Boolean(interrupted),
     });
-    this.queue.push(job.id);
+    try {
+      const admitted = await enqueueAfterInitialCaptureNote(job, (queuedJob) => this.ensureInitialNote(queuedJob), (id) => {
+        this.queue.push(id);
+      }, (queuedJob) => this.jobs.get(queuedJob.id)?.status === "queued");
+      if (!admitted) throw new CaptureAdmissionCancelledError();
+    } catch (error) {
+      await this.cleanupCancelledJob(job.id);
+      throw error;
+    }
     void this.drainQueue();
     return job;
   }
@@ -834,6 +855,10 @@ export class BrowserCaptureServer {
       cancelRequestedAt: new Date().toISOString(),
     });
     this.jobAbortControllers.get(id)?.abort();
+    await settleTaskOwnedCapturePreparation({
+      targetPath: job.targetPath,
+      preparation: this.queuedNotePreparations.get(id),
+    });
     const activeRun = this.activeJobRuns.get(id);
     if (activeRun) {
       await activeRun;
@@ -959,12 +984,26 @@ export class BrowserCaptureServer {
         }, origin);
         return;
       }
+      const browserContent = stringField(body.content).trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const browserTranscript = stringField(body.transcript).trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const errorShell = detectCaptureErrorShell({
+        title: stringField(body.contentTitle) || stringField(body.title),
+        text: browserContent,
+      });
+      if (errorShell && pageType === "article") {
+        sendJson(response, 422, {
+          error: `${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`,
+          code: "PAGE_REQUIRES_BROWSER_SESSION",
+        }, origin);
+        return;
+      }
       const active = [...this.jobs.values()].find((job) =>
         !FINISHED_STATUSES.has(job.status)
         && job.status !== "cancelling"
         && sameCaptureResourceUrl(job.url, url),
       );
       if (active) {
+        await this.ensureInitialNote(active);
         sendJson(response, 202, { jobId: active.id, status: active.status, reused: true }, origin);
         return;
       }
@@ -996,21 +1035,6 @@ export class BrowserCaptureServer {
         source: stringField(body.source, "extension").slice(0, 80),
         targetPath: targetFile?.path,
       });
-      const browserContent = stringField(body.content).trim().slice(0, MAX_SOURCE_CHARACTERS);
-      const browserTranscript = stringField(body.transcript).trim().slice(0, MAX_SOURCE_CHARACTERS);
-      const errorShell = detectCaptureErrorShell({
-        title: stringField(body.contentTitle) || stringField(body.title),
-        text: browserContent,
-      });
-      if (errorShell && pageType === "article") {
-        this.jobs.delete(job.id);
-        await this.persistJobs();
-        sendJson(response, 422, {
-          error: `${errorShell}。请在浏览器中打开有效内容或完成登录/验证后重试。`,
-          code: "PAGE_REQUIRES_BROWSER_SESSION",
-        }, origin);
-        return;
-      }
       const mediaCandidates = captureMediaCandidates(body.mediaCandidates, url);
       const cookies = captureSessionCookies(body.sessionCookies, url);
       const userAgent = stringField(body.userAgent).replace(/[\r\n\0]/g, "").slice(0, 1_000);
@@ -1074,7 +1098,19 @@ export class BrowserCaptureServer {
           source: formatTranscriptParagraphs(browserTranscript),
         });
       }
-      this.queue.push(job.id);
+      try {
+        const admitted = await enqueueAfterInitialCaptureNote(job, (queuedJob) => this.ensureInitialNote(queuedJob), (id) => {
+          this.queue.push(id);
+        }, (queuedJob) => this.jobs.get(queuedJob.id)?.status === "queued");
+        if (!admitted) throw new CaptureAdmissionCancelledError();
+      } catch (error) {
+        await this.cleanupCancelledJob(job.id);
+        if (error instanceof CaptureAdmissionCancelledError) {
+          sendJson(response, 409, { error: error.message }, origin);
+          return;
+        }
+        throw error;
+      }
       void this.drainQueue();
       sendJson(response, 202, { jobId: job.id, status: job.status }, origin);
       return;
@@ -1283,14 +1319,19 @@ export class BrowserCaptureServer {
       if (!job.resumeFromRaw && !job.mediaPath && !this.capturedSources.has(id)) {
         await this.probeCaptureTarget(job);
       }
-      const target = job.targetPath
-        ? this.host.app.vault.getAbstractFileByPath(job.targetPath)
+      const initialNotePath = initialCaptureNotePath({
+        targetPath: job.targetPath,
+        createdNotePath: job.createdNotePath,
+        resultPath: job.result?.relativePath,
+      });
+      const target = initialNotePath
+        ? this.host.app.vault.getAbstractFileByPath(initialNotePath)
         : undefined;
       noteFile = target instanceof TFile
         ? target
         : job.targetPath
           ? undefined
-          : await this.createPlaceholder(job);
+          : await this.ensureInitialNote(job);
       if (!noteFile) throw new Error("待解析的链接笔记已经不存在");
       this.currentNotePaths.set(id, noteFile.path);
       throwIfCaptureAborted(signal);
@@ -1575,6 +1616,7 @@ export class BrowserCaptureServer {
     this.capturedSources.delete(id);
     this.captureSessions.delete(id);
     this.originalTargetContents.delete(id);
+    this.queuedNotePreparations.delete(id);
     this.currentNotePaths.delete(id);
     this.jobAbortControllers.delete(id);
     this.jobs.delete(id);
@@ -1601,12 +1643,11 @@ export class BrowserCaptureServer {
       .replace(/^\/+|\/+$/g, "");
     await this.ensureFolder(folder);
     const baseName = safeCaptureFileName(job.title || new URL(job.url).hostname);
-    let path = normalizePath(`${folder}/${baseName}.md`);
-    let suffix = 2;
-    while (this.host.app.vault.getAbstractFileByPath(path)) {
-      path = normalizePath(`${folder}/${baseName} ${suffix}.md`);
-      suffix += 1;
-    }
+    const path = normalizePath(nextCapturePlaceholderPath(
+      folder,
+      baseName,
+      (candidate) => Boolean(this.host.app.vault.getAbstractFileByPath(candidate)),
+    ));
     const placeholder = [
       "---",
       `来源: ${JSON.stringify(job.url)}`,
@@ -1624,6 +1665,59 @@ export class BrowserCaptureServer {
     this.host.suppressNewNoteInitialization(path);
     this.host.suppressAutomaticLinkNote(path);
     await this.trackCreatedNote(job.id, path);
+    return file;
+  }
+
+  private async ensureInitialNote(job: BrowserCaptureJob): Promise<TFile> {
+    const current = this.jobs.get(job.id);
+    if (!current || current.status === "cancelling") throw new CaptureAdmissionCancelledError();
+    const activePreparation = this.queuedNotePreparations.get(job.id);
+    if (activePreparation) return activePreparation;
+    const preparation = this.prepareQueuedNote(job);
+    this.queuedNotePreparations.set(job.id, preparation);
+    try {
+      return await preparation;
+    } finally {
+      if (this.queuedNotePreparations.get(job.id) === preparation) {
+        this.queuedNotePreparations.delete(job.id);
+      }
+    }
+  }
+
+  private async prepareQueuedNote(job: BrowserCaptureJob): Promise<TFile> {
+    const current = this.jobs.get(job.id) ?? job;
+    const targetPath = initialCaptureNotePath({
+      targetPath: current.targetPath,
+      createdNotePath: current.createdNotePath,
+      resultPath: current.result?.relativePath,
+    });
+    const target = targetPath
+      ? this.host.app.vault.getAbstractFileByPath(targetPath)
+      : undefined;
+    const file = target instanceof TFile
+      ? target
+      : current.targetPath || current.createdNotePath
+        ? undefined
+        : await this.createPlaceholder(current);
+    if (!file) {
+      throw new Error(current.targetPath
+        ? "待解析的链接笔记已经不存在"
+        : "已保存的剪藏占位笔记已经不存在，请重新处理");
+    }
+    const stored = await this.host.app.vault.read(file);
+    if (!stored.trim()) throw new Error("剪藏占位笔记写入后回读为空，请重新处理");
+    this.currentNotePaths.set(current.id, file.path);
+    const latest = this.jobs.get(current.id);
+    if (!latest || latest.status === "cancelling") return file;
+    await this.updateJob(current.id, {
+      result: this.resultFor(
+        latest,
+        file,
+        latest.title || file.basename || "待提取内容",
+        latest.targetPath ? "目标笔记已确认，等待后台整理" : "链接和标题已保存，等待后台整理",
+        true,
+      ),
+    });
     return file;
   }
 

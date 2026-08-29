@@ -487,6 +487,51 @@ export function captureCancellationPlan(input: {
   };
 }
 
+export function initialCaptureNotePath(input: {
+  targetPath?: string;
+  createdNotePath?: string;
+  resultPath?: string;
+}): string | undefined {
+  return input.targetPath?.trim()
+    || input.createdNotePath?.trim()
+    || input.resultPath?.trim()
+    || undefined;
+}
+
+export function nextCapturePlaceholderPath(
+  folder: string,
+  baseName: string,
+  exists: (path: string) => boolean,
+): string {
+  let path = folder ? `${folder}/${baseName}.md` : `${baseName}.md`;
+  let suffix = 2;
+  while (exists(path)) {
+    path = folder ? `${folder}/${baseName} ${suffix}.md` : `${baseName} ${suffix}.md`;
+    suffix += 1;
+  }
+  return path;
+}
+
+export async function enqueueAfterInitialCaptureNote<T extends { id: string }>(
+  job: T,
+  ensureInitialNote: (job: T) => Promise<unknown>,
+  enqueue: (jobId: string) => void,
+  shouldEnqueue: (job: T) => boolean = () => true,
+): Promise<boolean> {
+  await ensureInitialNote(job);
+  if (!shouldEnqueue(job)) return false;
+  enqueue(job.id);
+  return true;
+}
+
+export async function settleTaskOwnedCapturePreparation(input: {
+  targetPath?: string;
+  preparation?: Promise<unknown>;
+}): Promise<void> {
+  if (input.targetPath || !input.preparation) return;
+  await input.preparation.catch(() => undefined);
+}
+
 export function extractRootDomain(urlOrHost: string): string {
   try {
     const hostname = urlOrHost.includes("://") ? new URL(urlOrHost).hostname : urlOrHost;

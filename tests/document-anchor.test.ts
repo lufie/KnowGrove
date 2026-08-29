@@ -2,11 +2,37 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createDefaultSettings } from "../src/types";
 import {
+  calculateAnchorRailScrollTop,
   calculateHeadingIndentation,
+  calculateVisibleAnchorScrollTop,
   findActiveHeadingIndex,
   shouldDisplayDocumentAnchors,
   type HeadingAnchorItem,
 } from "../src/document-anchor-navigator";
+
+test("calculateAnchorRailScrollTop keeps short rails at their natural position", () => {
+  assert.equal(calculateAnchorRailScrollTop(150, 100, 200, 180, 180), 0);
+  assert.equal(calculateAnchorRailScrollTop(250, 100, 200, 180, 220), 0);
+});
+
+test("calculateAnchorRailScrollTop maps vertical pointer movement across an overflowing rail", () => {
+  assert.equal(calculateAnchorRailScrollTop(100, 100, 200, 600, 200), 0);
+  assert.equal(calculateAnchorRailScrollTop(200, 100, 200, 600, 200), 200);
+  assert.equal(calculateAnchorRailScrollTop(300, 100, 200, 600, 200), 400);
+});
+
+test("calculateAnchorRailScrollTop clamps pointer positions outside the rail", () => {
+  assert.equal(calculateAnchorRailScrollTop(20, 100, 200, 600, 200), 0);
+  assert.equal(calculateAnchorRailScrollTop(420, 100, 200, 600, 200), 400);
+  assert.equal(calculateAnchorRailScrollTop(150, 100, 0, 600, 200), 0);
+});
+
+test("calculateVisibleAnchorScrollTop restores an active anchor after pointer browsing", () => {
+  assert.equal(calculateVisibleAnchorScrollTop(200, 100, 300, 92, 96), 184);
+  assert.equal(calculateVisibleAnchorScrollTop(200, 100, 300, 304, 308), 216);
+  assert.equal(calculateVisibleAnchorScrollTop(200, 100, 300, 160, 164), 200);
+  assert.equal(calculateVisibleAnchorScrollTop(4, 100, 300, 80, 84), 0);
+});
 
 test("document anchor navigator is enabled by default", () => {
   assert.equal(createDefaultSettings().enableDocumentAnchors, true);

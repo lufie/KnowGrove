@@ -1,6 +1,6 @@
 import { Platform, requestUrl } from "obsidian";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -19,6 +19,8 @@ import {
   mergeExecutablePath,
   resolveLocalExecutable,
 } from "./local-cli";
+import { buildCodexImageArguments, supportsAIImageProvider } from "./image-provider-core";
+import { type AbortableJsonResponse, requestJsonWithSignal } from "./abortable-json-request";
 
 export { automaticAIContentCharacterLimit, providerModelOptions } from "./ai-provider-utils";
 
@@ -26,6 +28,13 @@ export interface LocalCommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+export interface AIImageInput {
+  data: ArrayBuffer;
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  extension: "png" | "jpg" | "webp" | "gif";
+  localPath?: string;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -584,6 +593,36 @@ async function runCodex(settings: AIPropertySettings, prompt: string, executable
   return extractCodexMessage(result.stdout);
 }
 
+async function runCodexImage(
+  settings: AIPropertySettings,
+  prompt: string,
+  image: AIImageInput,
+  executablePath?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const executable = settings.executablePath.trim() || executablePath || "codex";
+  let temporaryDirectory: string | undefined;
+  try {
+    let imagePath = image.localPath;
+    if (!imagePath) {
+      temporaryDirectory = await mkdtemp(join(tmpdir(), "knowgrove-image-"));
+      imagePath = join(temporaryDirectory, `source.${image.extension}`);
+      await writeFile(imagePath, Buffer.from(image.data));
+    }
+    const result = await runLocalCommand(
+      executable,
+      buildCodexImageArguments(configuredModel(settings), imagePath),
+      prompt,
+      settings.timeoutSeconds,
+      signal,
+    );
+    if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Codex CLI 退出码 ${result.exitCode}`);
+    return extractCodexMessage(result.stdout);
+  } finally {
+    if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function runClaude(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "claude";
   const args = ["-p", "--output-format", "json"];
@@ -668,6 +707,12 @@ function normalizedEndpoint(value: string, fallback: string): string {
   return (value.trim() || fallback).replace(/\/+$/, "");
 }
 
+function ensureSuccessfulJsonResponse(response: AbortableJsonResponse, provider: string): void {
+  if (response.status >= 200 && response.status < 300) return;
+  const excerpt = response.text.trim().slice(0, 500);
+  throw new Error(`${provider} 请求失败（HTTP ${response.status}）${excerpt ? `：${excerpt}` : ""}`);
+}
+
 async function runAnthropic(settings: AIPropertySettings, prompt: string, apiKey?: string, signal?: AbortSignal): Promise<string> {
   throwIfAborted(signal);
   if (!apiKey) throw new Error("尚未保存 Anthropic API Key");
@@ -716,6 +761,94 @@ async function runOpenAICompatible(settings: AIPropertySettings, prompt: string,
     .choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error("OpenAI 兼容接口没有返回文本结果");
   return content;
+}
+
+async function runAnthropicImage(
+  settings: AIPropertySettings,
+  prompt: string,
+  image: AIImageInput,
+  apiKey?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal);
+  if (!apiKey) throw new Error("尚未保存 Anthropic API Key");
+  if (!configuredModel(settings)) throw new Error("请先填写 Anthropic 模型名称");
+  const response = await requestJsonWithSignal(
+    normalizedEndpoint(settings.endpoint, "https://api.anthropic.com/v1/messages"),
+    { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    JSON.stringify({
+      model: configuredModel(settings),
+      max_tokens: 4_000,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: image.mediaType, data: Buffer.from(image.data).toString("base64") } },
+          { type: "text", text: prompt },
+        ],
+      }],
+    }),
+    settings.timeoutSeconds,
+    signal,
+  );
+  ensureSuccessfulJsonResponse(response, "Anthropic API");
+  throwIfAborted(signal);
+  const blocks = (response.json as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
+  const text = blocks.filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n").trim();
+  if (!text) throw new Error("Anthropic API 没有返回图片识别结果");
+  return text;
+}
+
+async function runOpenAICompatibleImage(
+  settings: AIPropertySettings,
+  prompt: string,
+  image: AIImageInput,
+  apiKey?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal);
+  if (!configuredModel(settings)) throw new Error("请先填写支持视觉的模型名称");
+  const base = normalizedEndpoint(settings.endpoint, "http://127.0.0.1:11434/v1");
+  const url = base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
+  const headers: Record<string, string> = {};
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const dataUrl = `data:${image.mediaType};base64,${Buffer.from(image.data).toString("base64")}`;
+  const response = await requestJsonWithSignal(
+    url,
+    headers,
+    JSON.stringify({
+      model: configuredModel(settings),
+      temperature: 0.1,
+      messages: [{ role: "user", content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ] }],
+    }),
+    settings.timeoutSeconds,
+    signal,
+  );
+  ensureSuccessfulJsonResponse(response, "OpenAI 兼容接口");
+  throwIfAborted(signal);
+  const content = (response.json as { choices?: Array<{ message?: { content?: string } }> })
+    .choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("OpenAI 兼容接口没有返回图片识别结果");
+  return content;
+}
+
+export async function runAIImageProvider(
+  settings: AIPropertySettings,
+  prompt: string,
+  image: AIImageInput,
+  availability: AIProviderAvailability[],
+  apiKey?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!supportsAIImageProvider(settings.provider)) {
+    throw new Error(`${providerName(settings.provider)} 暂不支持图片输入，请切换到 Codex CLI、Anthropic API 或 OpenAI 兼容视觉模型`);
+  }
+  const detected = availability.find((provider) => provider.id === settings.provider);
+  if (settings.provider === "codex-cli") return runCodexImage(settings, prompt, image, detected?.executablePath, signal);
+  if (settings.provider === "anthropic-api") return runAnthropicImage(settings, prompt, image, apiKey, signal);
+  return runOpenAICompatibleImage(settings, prompt, image, apiKey, signal);
 }
 
 export async function runAIProvider(
