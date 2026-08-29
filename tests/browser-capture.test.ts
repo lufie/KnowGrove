@@ -57,6 +57,7 @@ import {
   parseXiguaHtml,
   portableSiblingAssetLinkPath,
   nextCapturePlaceholderPath,
+  reserveNextCapturePlaceholderPath,
   rewriteWikiImageEmbeds,
   extractVimeoVideoId,
   extractTencentVideoVid,
@@ -564,6 +565,20 @@ test("capture placeholder naming remains deterministic when titles collide", () 
     nextCapturePlaceholderPath("Home/输入", "同名文章", (path) => existing.has(path)),
     "Home/输入/同名文章 3.md",
   );
+});
+
+test("concurrent capture admissions reserve distinct placeholder paths before Vault creation settles", () => {
+  const reservations = new Set<string>();
+  const first = reserveNextCapturePlaceholderPath("Home/输入", "同名文章", () => false, reservations);
+  const second = reserveNextCapturePlaceholderPath("Home/输入", "同名文章", () => false, reservations);
+  assert.equal(first.path, "Home/输入/同名文章.md");
+  assert.equal(second.path, "Home/输入/同名文章 2.md");
+  assert.deepEqual([...reservations], [first.path, second.path]);
+  first.release();
+  first.release();
+  assert.deepEqual([...reservations], [second.path]);
+  second.release();
+  assert.equal(reservations.size, 0);
 });
 
 test("dynamic AI share pages recover question and answer text from embedded router data", () => {

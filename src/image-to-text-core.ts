@@ -208,13 +208,28 @@ function attachImageReference(
   return { content: taggedContent, occurrence: taggedOccurrence };
 }
 
+function balanceUnclosedFencedMarkdown(markdown: string): string {
+  let active: { char: "`" | "~"; length: number } | undefined;
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!active) {
+      const opening = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+      if (opening) active = { char: opening[0] as "`" | "~", length: opening.length };
+      continue;
+    }
+    const closing = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
+    if (closing && closing[0] === active.char && closing.length >= active.length) active = undefined;
+  }
+  return active ? `${markdown}\n${active.char.repeat(active.length)}` : markdown;
+}
+
 function normalizedResult(markdown: string): string {
   const trimmed = markdown.trim();
   const wrapper = trimmed.match(/^```(?:markdown|md)[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i);
-  const result = (wrapper?.[1] ?? trimmed).trim().replace(
+  const escaped = (wrapper?.[1] ?? trimmed).trim().replace(
     /<!--[ \t]*(?:knowgrove:image-text[ \t]+v=1|\/knowgrove:image-text|knowgrove:image-text-ref\b[^>\r\n]*)[ \t]*-->/gi,
     (marker) => marker.replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
   );
+  const result = balanceUnclosedFencedMarkdown(escaped);
   if (!result) throw new Error("模型没有返回可写入的图片识别结果，请重新转换");
   return result;
 }

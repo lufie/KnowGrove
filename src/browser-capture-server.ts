@@ -71,7 +71,7 @@ import {
   extractVimeoVideoId,
   parseTikTokHtml,
   portableSiblingAssetLinkPath,
-  nextCapturePlaceholderPath,
+  reserveNextCapturePlaceholderPath,
   extractTencentVideoVid,
   parseXiguaHtml,
   type BrowserCaptureAIResult,
@@ -623,6 +623,7 @@ export class BrowserCaptureServer {
   private readonly originalTargetContents = new Map<string, { path: string; content: string }>();
   private readonly currentNotePaths = new Map<string, string>();
   private readonly queuedNotePreparations = new Map<string, Promise<TFile>>();
+  private readonly reservedPlaceholderPaths = new Set<string>();
   private readonly listeners = new Set<(jobs: BrowserCaptureJob[]) => void>();
   private processing = false;
   private stopping = false;
@@ -1645,11 +1646,13 @@ export class BrowserCaptureServer {
       .replace(/^\/+|\/+$/g, "");
     await this.ensureFolder(folder);
     const baseName = safeCaptureFileName(job.title || new URL(job.url).hostname);
-    const path = normalizePath(nextCapturePlaceholderPath(
+    const reservation = reserveNextCapturePlaceholderPath(
       folder,
       baseName,
       (candidate) => Boolean(this.host.app.vault.getAbstractFileByPath(candidate)),
-    ));
+      this.reservedPlaceholderPaths,
+    );
+    const path = normalizePath(reservation.path);
     const placeholder = [
       "---",
       `来源: ${JSON.stringify(job.url)}`,
@@ -1663,11 +1666,15 @@ export class BrowserCaptureServer {
       "> KnowGrove 正在提取和整理这条内容。",
       "",
     ].join("\n");
-    const file = await this.host.app.vault.create(path, placeholder);
-    this.host.suppressNewNoteInitialization(path);
-    this.host.suppressAutomaticLinkNote(path);
-    await this.trackCreatedNote(job.id, path);
-    return file;
+    try {
+      const file = await this.host.app.vault.create(path, placeholder);
+      this.host.suppressNewNoteInitialization(path);
+      this.host.suppressAutomaticLinkNote(path);
+      await this.trackCreatedNote(job.id, path);
+      return file;
+    } finally {
+      reservation.release();
+    }
   }
 
   private async ensureInitialNote(job: BrowserCaptureJob): Promise<TFile> {

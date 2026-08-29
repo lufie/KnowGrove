@@ -524,6 +524,29 @@ export function nextCapturePlaceholderPath(
   return path;
 }
 
+export function reserveNextCapturePlaceholderPath(
+  folder: string,
+  baseName: string,
+  exists: (path: string) => boolean,
+  reservations: Set<string>,
+): { path: string; release: () => void } {
+  const path = nextCapturePlaceholderPath(
+    folder,
+    baseName,
+    (candidate) => reservations.has(candidate) || exists(candidate),
+  );
+  reservations.add(path);
+  let released = false;
+  return {
+    path,
+    release: () => {
+      if (released) return;
+      released = true;
+      reservations.delete(path);
+    },
+  };
+}
+
 export async function enqueueAfterInitialCaptureNote<T extends { id: string }>(
   job: T,
   ensureInitialNote: (job: T) => Promise<unknown>,

@@ -103,6 +103,19 @@ test("reserved managed markers in OCR output are escaped and remain replaceable"
   assert.match(second.content, /重新识别结果/);
 });
 
+test("unclosed OCR code fences are balanced before the managed block terminator", () => {
+  const original = "![[unclosed-code.png]]";
+  const occurrence = parseImageOccurrences(original)[0]!;
+  const first = upsertImageTextBlock(original, occurrence, "```text\n未闭合示例");
+  assert.match(first.content, /```text\n未闭合示例\n```\n\n<!-- \/knowgrove:image-text -->/);
+  assert.equal(imageTextManagedMarkerRanges(first.content).length, 3);
+  const current = parseImageOccurrences(first.content)[0]!;
+  const second = upsertImageTextBlock(first.content, current, "重新识别结果");
+  assert.equal(second.replaced, true);
+  assert.doesNotMatch(second.content, /未闭合示例/);
+  assert.match(second.content, /重新识别结果/);
+});
+
 test("rerunning a legacy adjacent managed block restores Live Preview block boundaries", () => {
   const original = "![[table.png]]\n";
   const occurrence = parseImageOccurrences(original)[0]!;
