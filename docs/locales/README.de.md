@@ -4,7 +4,7 @@
 
 KnowGrove ist ein lokaler Wissensworkflow für alle, die schneller sammeln als ordnen. Originalmaterial bleibt im Obsidian-Vault, wird strukturiert, mit Themen und Belegen verknüpft und in wiederverwendbare Ergebnisse verwandelt.
 
-Aktuelle Quellcodeversion: `2.8.31`
+Aktuelle Quellcodeversion: `2.8.32`
 
 ## Ein Workflow von der Quelle zum Ergebnis
 

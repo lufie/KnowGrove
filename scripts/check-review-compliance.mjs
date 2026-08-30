@@ -8,6 +8,12 @@ const sourceFiles = [
 ];
 
 const failures = [];
+
+const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
+if (/\bobsidian\b/iu.test(String(manifest.description ?? ""))) {
+  failures.push('manifest.json: description must not include the redundant word "Obsidian"');
+}
+
 for (const path of sourceFiles) {
   const source = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
   if (/\.createElement\s*\(/u.test(source)) {

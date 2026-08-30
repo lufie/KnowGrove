@@ -4,7 +4,7 @@
 
 O KnowGrove é um fluxo de conhecimento local para quem coleta mais rápido do que consegue organizar. Ele mantém as fontes no vault do Obsidian, extrai sua estrutura, conecta tópicos e evidências e transforma tudo em resultados reutilizáveis.
 
-Versão atual do código-fonte: `2.8.31`
+Versão atual do código-fonte: `2.8.32`
 
 ## Um fluxo da fonte ao resultado
 
