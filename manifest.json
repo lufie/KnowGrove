@@ -1,9 +1,9 @@
 {
   "id": "knowgrove",
   "name": "KnowGrove",
-  "version": "2.8.31",
+  "version": "2.8.32",
   "minAppVersion": "1.13.0",
-  "description": "Local-first capture, AI image-to-text, audio/video transcription, reading, research, and safe cleanup for Obsidian.",
+  "description": "Local-first capture, AI image-to-text, audio/video transcription, reading, research, and safe cleanup.",
   "author": "Liyijie",
   "isDesktopOnly": true
 }
