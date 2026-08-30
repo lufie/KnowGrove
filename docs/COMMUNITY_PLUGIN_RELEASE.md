@@ -4,7 +4,7 @@
 
 ## 1. 当前结论
 
-`2.8.32` 是社区清单合规修复版：完整属性规范 V2、治理范围内 1,375 篇普通笔记迁移、2.8.31 GitHub Release 与当前 Documents Vault 升级均已完成；社区后台识别到 2.8.31 后，因 Manifest 简介冗余包含 “Obsidian” 而阻断正式扫描。2.8.32 只移除该冗余词并增加自动门禁，不改变运行逻辑、Vault 数据、设置、桥接协议或权限。隔离 clean Vault 与社区正式扫描仍按独立门禁执行，未完成前不得表述为市场已发布。
+`2.8.32` 是社区清单合规修复版：完整属性规范 V2、治理范围内 1,375 篇普通笔记迁移、2.8.31 GitHub Release 与当前 Documents Vault 升级均已完成；社区后台识别到 2.8.31 后，因 Manifest 简介冗余包含 “Obsidian” 而阻断正式扫描。2.8.32 只移除该冗余词并增加自动门禁，不改变运行逻辑、Vault 数据、设置、桥接协议或权限。私有 PR `#108`、公开白名单 PR `lufie/KnowGrove#32`、精确标签和非草稿 GitHub Release 已完成；公开三资产具有 attestation、与生产构建逐字节一致，并已回装当前 Documents Vault，设置与任务队列保持不变。社区后台对精确提交 `fb43e85e1ab6905ded208ea875f8f8fe700fe094` 的正式扫描为 `Completed`，Manifest Error 0、网络/依赖/可复现构建通过，公开目录已显示 `Current version 2.8.32`。两条 Warning 与两条 Recommendation 继续作为核心本地能力披露；隔离 clean Vault 首次安装仍未完成，必须单独表述。
 
 `2.8.31` 已完成公开白名单导出、精确标签、非草稿 GitHub Release、三项资产逐字节回读和当前 Documents Vault 公开资产升级；社区后台正式扫描的清单简介错误由 2.8.32 承接，因此 2.8.31 的最终状态是“GitHub 已分发 / 当前 Vault 已验证 / 市场未通过”。
 
