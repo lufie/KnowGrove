@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowgrove",
-  "version": "2.8.30",
+  "version": "2.8.31",
   "description": "Local-first capture, AI image-to-text, transcription, reading, research, and safe cleanup for Obsidian.",
   "main": "main.js",
   "type": "module",

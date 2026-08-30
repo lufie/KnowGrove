@@ -966,8 +966,11 @@ export function stripCaptureFrontmatter(markdown: string): string {
   return markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
 }
 
+export const CAPTURE_NOTE_MARKER = "<!-- knowgrove:capture-note v=1 -->";
+
 export function isManagedCaptureMarkdown(markdown: string): boolean {
-  return /^(?:capture_id\s*:|type\s*:\s*keeprec-capture\s*$|KnowGrove采集状态\s*:)/m.test(markdown);
+  return markdown.includes(CAPTURE_NOTE_MARKER)
+    || /^(?:capture_id\s*:|type\s*:\s*keeprec-capture\s*$|KnowGrove采集状态\s*:)/m.test(markdown);
 }
 
 export function rewriteWikiImageEmbeds(
@@ -1005,7 +1008,8 @@ function normalizedLinkNoteTitle(title: string, url: string): string {
 }
 
 export function detectLinkNoteCandidate(markdown: string, fallbackTitle = ""): LinkNoteCandidate | null {
-  if (/KnowGrove采集状态:\s*["']?(?:处理中|已完成)["']?/i.test(markdown)) return null;
+  if (/^状态:\s*["']?(?:已完成|已沉淀)["']?\s*$/mi.test(markdown)
+    || /KnowGrove采集状态:\s*["']?(?:处理中|已完成)["']?/i.test(markdown)) return null;
   const body = stripCaptureFrontmatter(markdown);
   const urls = Array.from(body.matchAll(/https?:\/\/[^\s<>()\]]+/gi))
     .map((match) => match[0].replace(/[.,;:!?，。；：！？）】》]+$/g, ""));
@@ -1090,11 +1094,17 @@ function frontmatterScalar(markdown: string, keys: string[]): string {
   return "";
 }
 
-export function detectInterruptedCapture(markdown: string): InterruptedCaptureCandidate | null {
-  if (!/KnowGrove采集状态:\s*["']?(?:处理中|部分完成)["']?/i.test(markdown)) return null;
+export function detectInterruptedCapture(
+  markdown: string,
+  fallbackTitle = "",
+): InterruptedCaptureCandidate | null {
+  const legacyIncomplete = /KnowGrove采集状态:\s*["']?(?:处理中|部分完成|待处理)["']?/i.test(markdown);
+  const canonicalIncomplete = markdown.includes(CAPTURE_NOTE_MARKER)
+    && !/^状态:\s*["']?(?:已完成|已沉淀)["']?\s*$/mi.test(markdown);
+  if (!legacyIncomplete && !canonicalIncomplete) return null;
   const outputLabels = Object.values(CAPTURE_OUTPUT_LABELS);
   if (outputLabels.some((labels) => new RegExp(`^##\\s+${escapeRegExp(labels.summary)}\\s*$`, "m").test(markdown))) return null;
-  const url = frontmatterScalar(markdown, ["来源", "source_url"]);
+  const url = frontmatterScalar(markdown, ["来源链接", "来源", "source_url"]);
   const mediaPath = markdown.match(/^!\[\[([^\]]+)]]\s*$/m)?.[1]?.trim();
   if (!/^https?:\/\//i.test(url) && !mediaPath) return null;
   const contentType = frontmatterScalar(markdown, ["内容类型", "source_type"]);
@@ -1108,7 +1118,7 @@ export function detectInterruptedCapture(markdown: string): InterruptedCaptureCa
     new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$\\r?\\n([\\s\\S]+)$`, "m"),
   )?.[1]?.trim() ?? "").find(Boolean) ?? "";
   if (source.length < 80) return null;
-  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? fallbackTitle;
   return {
     url,
     title: normalizedLinkNoteTitle(title, url),
@@ -1888,9 +1898,15 @@ export function captureDatePrefix(value: unknown, fallbackTime?: number): string
   const raw = typeof value === "string" || typeof value === "number"
     ? String(value).trim()
     : "";
-  const dateOnly = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (dateOnly) {
-    return `${dateOnly[1]}-${dateOnly[2]!.padStart(2, "0")}-${dateOnly[3]!.padStart(2, "0")}`;
+  const sourceCalendarDate = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:$|[T\s])/);
+  if (sourceCalendarDate) {
+    const year = Number(sourceCalendarDate[1]);
+    const month = Number(sourceCalendarDate[2]);
+    const day = Number(sourceCalendarDate[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      return `${sourceCalendarDate[1]}-${sourceCalendarDate[2]!.padStart(2, "0")}-${sourceCalendarDate[3]!.padStart(2, "0")}`;
+    }
   }
   const fallback = typeof fallbackTime === "number" && Number.isFinite(fallbackTime)
     ? fallbackTime
@@ -1904,6 +1920,23 @@ export function captureDatePrefix(value: unknown, fallbackTime?: number): string
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+export function captureOptionalDate(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  if (!/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(raw) && Number.isNaN(parsed.getTime())) return undefined;
+  return captureDatePrefix(raw);
+}
+
+export function reliableCaptureAuthor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const author = value.replace(/\s+/g, " ").trim();
+  if (!author || author.length > 120) return undefined;
+  if (/^(?:AI|TrustMRR|AI\s*\/\s*TrustMRR|Bilibili|YouTube|抖音|小红书|TikTok|Medium|微信|微信公众号|unknown|未知)$/i.test(author)) return undefined;
+  return author;
 }
 
 export function datedArticleTitle(title: string, datePrefix: string): string {
@@ -1946,20 +1979,20 @@ export function buildRawCaptureNote(input: {
     : input.pageType === "audio"
       ? "音频"
       : "网页文章";
+  const author = input.pageType === "article" ? reliableCaptureAuthor(input.author) : undefined;
+  const publishedDate = captureOptionalDate(input.publishedAt);
   return [
     "---",
-    ...(input.fileName ? [`文件名: ${yamlString(input.fileName)}`] : []),
-    `标题: ${yamlString(input.title)}`,
-    ...(input.url ? [`来源: ${yamlString(input.url)}`] : []),
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${yamlString(captureDatePrefix(input.capturedAt))}`,
     `内容类型: ${yamlString(contentType)}`,
-    `采集时间: ${yamlString(input.capturedAt)}`,
-    ...(input.author ? [`作者: ${yamlString(input.author)}`] : []),
-    ...(input.publishedAt ? [`发布时间: ${yamlString(input.publishedAt)}`] : []),
-    `${input.statusProperty}: ${yamlString(input.readingStatus)}`,
-    "KnowGrove采集状态: \"处理中\"",
+    ...(publishedDate ? [`发布时间: ${yamlString(publishedDate)}`] : []),
+    ...(input.url ? [`来源链接: ${yamlString(input.url)}`] : []),
+    ...(author ? [`作者: ${yamlString(author)}`] : []),
     "---",
     "",
-    `# ${input.title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     ...(input.mediaPath
       ? [`## ${input.pageType === "video" ? labels.originalVideo : labels.originalAudio}`, "", `![[${input.mediaPath}]]`, ""]
@@ -1985,14 +2018,14 @@ export function buildCaptureFailureNote(input: {
       : "网页文章";
   return [
     "---",
-    `标题: ${yamlString(input.title)}`,
-    `来源: ${yamlString(input.url)}`,
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${yamlString(captureDatePrefix(input.capturedAt))}`,
     `内容类型: ${yamlString(contentType)}`,
-    `采集时间: ${yamlString(input.capturedAt)}`,
-    "KnowGrove采集状态: \"部分完成\"",
+    `来源链接: ${yamlString(input.url)}`,
     "---",
     "",
-    `# ${input.title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     "> 来源链接已经保存，但正文提取没有完成。重新打开来源页面后，可以再次点击言续重试。",
     "",
@@ -2007,18 +2040,51 @@ export function buildCaptureFailureNote(input: {
   ].join("\n");
 }
 
+export function buildCapturePlaceholderNote(input: {
+  pageType: BrowserCapturePageType;
+  url: string;
+  capturedAt: string;
+}): string {
+  const contentType = input.pageType === "video"
+    ? "视频"
+    : input.pageType === "audio"
+      ? "音频"
+      : "网页文章";
+  return [
+    "---",
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${yamlString(captureDatePrefix(input.capturedAt))}`,
+    `内容类型: ${yamlString(contentType)}`,
+    `来源链接: ${yamlString(input.url)}`,
+    "---",
+    "",
+    CAPTURE_NOTE_MARKER,
+    "",
+    "> KnowGrove 正在提取和整理这条内容。",
+    "",
+  ].join("\n");
+}
+
 export function buildEnhancedCaptureNote(
   rawNote: string,
   pageType: BrowserCapturePageType,
   result: BrowserCaptureAIResult,
   outputLocale: KnowGroveLocale = "zh-CN",
+  transitionLifecycleStatus = false,
 ): string {
   const labels = captureOutputLabels(outputLocale);
   const frontmatter = rawNote.match(/^---\n[\s\S]*?\n---\n?/)?.[0]?.trim() ?? "";
   const completedFrontmatter = frontmatter
-    ? frontmatter.replace(/KnowGrove采集状态:\s*["']?处理中["']?/, "KnowGrove采集状态: \"已完成\"")
+    ? (() => {
+      const withoutTaskState = frontmatter.replace(/^KnowGrove采集状态:\s*.*\n?/gmi, "");
+      if (!transitionLifecycleStatus) return withoutTaskState;
+      if (/^状态:\s*/mi.test(withoutTaskState)) {
+        return withoutTaskState.replace(/^状态:\s*.*$/mi, "状态: \"已完成\"");
+      }
+      return withoutTaskState.replace(/\n---$/, "\n状态: \"已完成\"\n---");
+    })()
     : "";
-  const title = rawNote.match(/^#\s+(.+)$/m)?.[1]?.trim() || "未命名内容";
   const sourceHeading = pageType === "article" ? labels.originalText : labels.fullTranscript;
   const sourceMatch = rawNote.match(new RegExp(`^##\\s+${sourceHeading}\\s*$([\\s\\S]*)`, "m"));
   const source = sourceMatch?.[1]?.trim() ?? "";
@@ -2042,7 +2108,7 @@ export function buildEnhancedCaptureNote(
   const generated = [
     completedFrontmatter,
     "",
-    `# ${title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     `## ${labels.summary}`,
     "",

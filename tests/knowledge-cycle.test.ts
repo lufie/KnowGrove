@@ -87,19 +87,19 @@ test("knowledge topics normalize wikilinks and aggregate domain and PDSA roles",
       path: "Home/Input.md",
       basename: "Input",
       mtime: 10,
-      frontmatter: { 类型: "输入资料", 状态: "待整理", 领域: ["AI产品"], 主题: ["[[Obsidian]]", "知识管理"] },
+      frontmatter: { 类型: "输入资料", 状态: "待处理", 领域: ["AI产品"], 主题: ["[[Obsidian]]", "知识管理"] },
     },
     {
       path: "Home/Knowledge.md",
       basename: "Knowledge",
       mtime: 20,
-      frontmatter: { 类型: "知识笔记", 状态: "生长中", 领域: ["AI产品"], 主题: ["[[Topics/Obsidian|Obsidian]]"] },
+      frontmatter: { 类型: "知识笔记", 状态: "进行中", 领域: ["AI产品"], 主题: ["[[Topics/Obsidian|Obsidian]]"] },
     },
     {
       path: "Home/Output.md",
       basename: "Output",
       mtime: 30,
-      frontmatter: { 类型: "内容输出", 状态: "草稿", 领域: ["内容创作"], 主题: ["Obsidian"] },
+      frontmatter: { 类型: "内容输出", 状态: "进行中", 领域: ["内容创作"], 主题: ["Obsidian"] },
     },
     { path: "Home/Unassigned.md", basename: "Unassigned", frontmatter: { 类型: "输入资料", 主题: [] } },
     {
@@ -114,7 +114,7 @@ test("knowledge topics normalize wikilinks and aggregate domain and PDSA roles",
   assert.equal(result.unassignedFiles, 1);
   assert.equal(obsidian.total, 3);
   assert.deepEqual(obsidian.domains, ["AI产品", "内容创作"]);
-  assert.deepEqual(obsidian.stageCounts, { P: 1, D: 1, S: 1, A: 1 });
+  assert.deepEqual(obsidian.stageCounts, { P: 2, D: 2, S: 0, A: 0 });
   assert.equal(obsidian.currentStage, "S");
   assert.equal(obsidian.parentName, "AI产品");
   assert.deepEqual(obsidian.documents.map((document) => document.path), ["Home/Output.md", "Home/Knowledge.md", "Home/Input.md"]);
@@ -221,20 +221,20 @@ test("research topics are real Obsidian notes with rename-safe wikilinks and exa
       path: "Home/输入.md",
       basename: "输入",
       type: "输入资料",
-      status: "待整理",
+      status: "待处理",
       domains: ["AI产品"],
       topics: ["Obsidian"],
-      stage: "D" as const,
+      stage: "P" as const,
       modifiedAt: 1,
     }],
     candidateDocuments: [{
       path: "Home/输入.md",
       basename: "输入",
       type: "输入资料",
-      status: "待整理",
+      status: "待处理",
       domains: ["AI产品"],
       topics: ["Obsidian"],
-      stage: "D" as const,
+      stage: "P" as const,
       modifiedAt: 1,
     }],
   };
@@ -278,8 +278,8 @@ test("theme planning ranks metadata relevance and rejects invented source paths"
 
 test("research topics rank full-vault candidates independently from adopted sources", () => {
   const candidates = [
-    { path: "Home/宏观政策.md", basename: "2026 中国宏观政策", type: "输入资料", status: "待整理", domains: ["投资"], topics: ["宏观经济"], stage: "D" as const, modifiedAt: 2 },
-    { path: "Home/旅行.md", basename: "夏季旅行", type: "输入资料", status: "待整理", domains: ["生活"], topics: ["旅行"], stage: "D" as const, modifiedAt: 9 },
+    { path: "Home/宏观政策.md", basename: "2026 中国宏观政策", type: "输入资料", status: "待处理", domains: ["投资"], topics: ["宏观经济"], stage: "D" as const, modifiedAt: 2 },
+    { path: "Home/旅行.md", basename: "夏季旅行", type: "输入资料", status: "待处理", domains: ["生活"], topics: ["旅行"], stage: "D" as const, modifiedAt: 9 },
   ];
   const topic = { name: "中国26年经济政策", coreQuestion: "财政与货币政策如何影响增长？", parentThemeName: "宏观经济", domains: ["投资"] };
   const ranked = rankResearchTopicSourceCandidates(topic, candidates);
@@ -298,11 +298,13 @@ test("research action block upgrades existing topic notes without changing their
 });
 
 test("PDSA inference keeps document role separate from the knowledge cycle", () => {
-  assert.equal(inferPDSAStage("输入资料", "待整理"), "D");
-  assert.equal(inferPDSAStage("知识笔记", "常青"), "S");
+  assert.equal(inferPDSAStage("输入资料", "待处理"), "P");
+  assert.equal(inferPDSAStage("知识笔记", "已完成"), "S");
   assert.equal(inferPDSAStage("行动", "进行中"), "D");
   assert.equal(inferPDSAStage("行动", "已完成"), "A");
-  assert.equal(inferPDSAStage("内容输出", "草稿"), "A");
+  assert.equal(inferPDSAStage("内容输出", "进行中"), "D");
+  assert.equal(inferPDSAStage("内容输出", "已完成"), "A");
+  assert.equal(inferPDSAStage("知识笔记", "已归档"), "S");
 });
 
 test("topic Base exposes separate D S A views with exact source paths", () => {
@@ -310,7 +312,7 @@ test("topic Base exposes separate D S A views with exact source paths", () => {
   const theme = buildKnowledgeThemes([{
     path: "Home/Article.md",
     basename: "Article",
-    frontmatter: { 类型: "输入资料", 状态: "待整理", 主题: ["知识管理"] },
+    frontmatter: { 类型: "输入资料", 状态: "待处理", 主题: ["知识管理"] },
   }], settings).themes[0];
   assert.ok(theme);
   const base = buildKnowledgeThemeBase(theme);
@@ -329,7 +331,7 @@ test("topic workspace is human-readable and embeds the generated Base views", ()
   const theme = buildKnowledgeThemes([{
     path: "Home/Article.md",
     basename: "Article",
-    frontmatter: { 类型: "输入资料", 状态: "待整理", 领域: ["AI产品"], 主题: ["知识管理"] },
+    frontmatter: { 类型: "输入资料", 状态: "待处理", 领域: ["AI产品"], 主题: ["知识管理"] },
   }], settings).themes[0];
   assert.ok(theme);
   const note = buildKnowledgeThemeNote(theme, new Date(2026, 6, 20));
@@ -388,7 +390,7 @@ test("theme synthesis prompt requires evidence-backed human-readable structure",
     frontmatter: { 类型: "输入资料", 主题: ["知识管理"] },
   }], settings).themes[0];
   assert.ok(theme);
-  const prompt = buildThemeSynthesisPrompt(theme, [{ path: "Home/A.md", title: "A", type: "输入资料", status: "待整理", content: "正文" }]);
+  const prompt = buildThemeSynthesisPrompt(theme, [{ path: "Home/A.md", title: "A", type: "输入资料", status: "待处理", content: "正文" }]);
   assert.match(prompt, /研究维度=看问题的角度/);
   assert.match(prompt, /evidencePaths 只能使用输入中逐字一致的 path/);
   assert.match(prompt, /人类可读/);

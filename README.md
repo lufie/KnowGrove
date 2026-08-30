@@ -6,7 +6,7 @@
 
 KnowGrove (言续 in Chinese) is a local-first knowledge workflow for people who collect more than they can organize. It keeps the original material in your Obsidian vault, helps extract useful structure, connects it to topics and evidence, and turns it into work you can reuse.
 
-Current source version: `2.8.30`. Obsidian community updates follow the matching GitHub release.
+Current source version: `2.8.31`. Obsidian community updates follow the matching GitHub release.
 
 ## One workflow from source to output
 
@@ -27,7 +27,7 @@ Your vault remains the source of truth. KnowGrove has no client telemetry; AI wo
 - **Word-like Live Preview:** edit headings, lists, tasks, media, code blocks, and tables without exposing avoidable Markdown markers. Removing selected blank lines preserves or repairs the structural spacing around GFM tables, including image-to-text blocks, so tables keep rendering in Live Preview and Reading View.
 - **Fast, recoverable capture:** browser captures create and read back an openable minimal Markdown note before entering the processing queue; long AI or media work continues in the background without delaying the initial handoff.
 - **Long-document navigation:** an overflow-safe heading rail keeps the first and last headings reachable and the file-location action visible without taking over document scrolling.
-- **Property management:** audit note properties, preview suggested changes, and apply confirmed fixes in bulk without overwriting unknown fields.
+- **Property management:** keep notes on one compact property standard—type, lifecycle status, domain, topic, and traceable source facts—then audit, preview, and confirm migrations without overwriting unknown fields or user content.
 - **Topics and research:** browse all topics, find related source notes, and organize domains, topics, and research questions.
 - **Comments and block references:** comment on selected text and reuse a complete source block through native Obsidian block embeds.
 - **Evidence-based creation:** turn selected source material into outlines, reports, long-form drafts, and channel-specific versions.
@@ -112,7 +112,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public. Version `2.8.30` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public. Version `2.8.31` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 

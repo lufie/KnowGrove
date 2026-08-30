@@ -10,6 +10,7 @@ import type {
   ThemePlanningProposal,
 } from "./types";
 import { isPropertyGovernedPath } from "./property-system";
+import { normalizeNoteLifecycleStatus } from "./note-lifecycle";
 import { RESEARCH_SOURCES_BLOCK, RESEARCH_SOURCES_HEADING } from "./research-sources";
 
 export const TOPIC_WORKSPACE_ROOT = "_KnowGrove/主题空间";
@@ -165,13 +166,16 @@ export function researchTopicWorkspacePaths(theme: string, topic: string): { not
 }
 
 export function inferPDSAStage(type: string, status: string): PDSAStage {
+  const lifecycleStatus = normalizeNoteLifecycleStatus(status);
+  if (lifecycleStatus === "待处理") return "P";
+  if (lifecycleStatus === "进行中") return "D";
   if (type === "知识循环" || type === "主题空间") return "P";
   if (["知识笔记", "随手笔记", "复盘"].includes(type)) return "S";
   if (type === "内容输出") return "A";
   if (["项目笔记", "行动"].includes(type)) {
-    return ["已完成", "已发布", "已复盘", "已归档"].includes(status) ? "A" : "D";
+    return lifecycleStatus === "已完成" || lifecycleStatus === "已归档" ? "A" : "D";
   }
-  return "D";
+  return lifecycleStatus === "已完成" ? "S" : "D";
 }
 
 interface TopicAccumulator {

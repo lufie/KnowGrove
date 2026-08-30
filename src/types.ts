@@ -89,6 +89,17 @@ export interface PropertyAIRepairPreview {
   expected: Record<string, unknown>;
 }
 
+export interface PendingPropertyReview {
+  path: string;
+  basename: string;
+  properties: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  confidence?: number;
+  reason?: string;
+  reviewReasons: string[];
+  createdAt: string;
+}
+
 export interface PropertyTaxonomyNode {
   name: string;
   children: string[];
@@ -250,6 +261,7 @@ export interface KnowGroveData {
   settings: KnowGroveSettings;
   references: Record<string, ReferenceRecord>;
   attachmentUsage: Record<string, AttachmentUsageRecord>;
+  pendingPropertyReviews: Record<string, PendingPropertyReview>;
 }
 
 export interface AttachmentUsageRecord {
@@ -366,7 +378,7 @@ export interface PropertyInventoryItem {
   topValues: Array<{ value: string; count: number }>;
 }
 
-export type PropertyAuditIssueKind = "missing" | "legacy-alias" | "alias-conflict" | "wrong-type" | "invalid-value";
+export type PropertyAuditIssueKind = "missing" | "legacy-alias" | "alias-conflict" | "wrong-type" | "invalid-value" | "retired-property";
 
 export interface PropertyAuditIssue {
   path: string;
@@ -379,11 +391,11 @@ export interface PropertyAuditIssue {
 }
 
 export interface PropertyChangeOperation {
-  kind: "set" | "rename";
+  kind: "set" | "rename" | "delete";
   property: string;
   alias?: string;
   before?: unknown;
-  after: unknown;
+  after?: unknown;
   reason: string;
 }
 
@@ -447,7 +459,7 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
   trackedFolder: "阅读列表",
   statusProperty: "阅读状态",
   readingStatus: "在看",
-  finishedStatus: "已读完",
+  finishedStatus: "已读",
   autoMarkNewNotes: true,
   autoMarkFinishedAtEnd: true,
   finishDwellSeconds: 3,
@@ -537,39 +549,22 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
     basePath: "_KnowGrove/属性工作台.base",
     initializeTrackedNotes: true,
     trackedNoteType: "输入资料",
-    trackedNoteStatus: "待整理",
+    trackedNoteStatus: "待处理",
     creationDateProperty: "创建时间",
     taxonomy: {
       version: 1,
       strategy: "four-layer-pdsa",
       source: "recommended",
       domains: [
-        { name: "工作", children: [] },
-        { name: "AI产品", children: [] },
-        { name: "投资", children: [] },
-        { name: "内容创作", children: [] },
-        { name: "商业探索", children: [] },
-        { name: "职业发展", children: [] },
-        { name: "个人成长", children: [] },
-        { name: "生活", children: [] },
+        { name: "投资", children: ["投资方法与决策", "宏观经济与资产配置", "估值与证券研究", "保险与财富管理"] },
+        { name: "AI产品", children: ["行业与产品研究", "AI应用与智能体"] },
+        { name: "职业与工作", children: ["产品与运营", "市场与销售", "组织与协作", "职业发展"] },
+        { name: "内容创作", children: ["内容策划与表达", "内容分发与增长"] },
+        { name: "商业探索", children: ["创业与新业务", "跨境商业"] },
+        { name: "个人成长与生活", children: [] },
       ],
     },
     dimensions: [
-      {
-        id: "file-name",
-        name: "文件名",
-        description: "用于属性面板展示和标题管理，默认与 Markdown 文件名一致。",
-        aliases: ["title", "name"],
-        valueType: "text",
-        required: true,
-        requiredForTypes: [],
-        origin: "system",
-        aiManaged: false,
-        enumMode: "open",
-        allowedValues: [],
-        fillStrategy: "file-name",
-        defaultValue: "",
-      },
       {
         id: "type",
         name: "类型",
@@ -579,7 +574,7 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
         required: true,
         requiredForTypes: [],
         origin: "system",
-        aiManaged: true,
+        aiManaged: false,
         enumMode: "closed",
         allowedValues: ["输入资料", "随手笔记", "知识笔记", "项目笔记", "行动", "复盘", "内容输出"],
         fillStrategy: "none",
@@ -594,13 +589,9 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
         required: true,
         requiredForTypes: [],
         origin: "system",
-        aiManaged: true,
+        aiManaged: false,
         enumMode: "closed",
-        allowedValues: [
-          "待整理", "待归类", "待沉淀", "已沉淀", "跳过", "处理失败", "已归档",
-          "种子", "生长中", "常青", "待复核", "构思中", "进行中", "等待中", "已完成",
-          "已暂停", "待办", "已取消", "草稿", "选题", "提纲", "待发布", "已发布", "已复盘",
-        ],
+        allowedValues: ["待处理", "进行中", "已完成", "已归档"],
         fillStrategy: "none",
         defaultValue: "",
       },
@@ -615,7 +606,58 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
         origin: "system",
         aiManaged: true,
         enumMode: "closed",
-        allowedValues: ["工作", "AI产品", "投资", "内容创作", "商业探索", "职业发展", "个人成长", "生活"],
+        allowedValues: [
+          "投资", "投资/投资方法与决策", "投资/宏观经济与资产配置", "投资/估值与证券研究", "投资/保险与财富管理",
+          "AI产品", "AI产品/行业与产品研究", "AI产品/AI应用与智能体",
+          "职业与工作", "职业与工作/产品与运营", "职业与工作/市场与销售", "职业与工作/组织与协作", "职业与工作/职业发展",
+          "内容创作", "内容创作/内容策划与表达", "内容创作/内容分发与增长",
+          "商业探索", "商业探索/创业与新业务", "商业探索/跨境商业", "个人成长与生活",
+        ],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      {
+        id: "creation-date",
+        name: "创建时间",
+        description: "普通笔记首次进入知识库的本地日期，格式为 YYYY-MM-DD。",
+        aliases: ["created", "采集时间"],
+        valueType: "date",
+        required: true,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "open",
+        allowedValues: [],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      {
+        id: "content-type",
+        name: "内容类型",
+        description: "仅在内容形态明确时记录，例如网页文章、音频或视频。",
+        aliases: ["source_type"],
+        valueType: "single",
+        required: false,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "closed",
+        allowedValues: ["网页文章", "研究报告", "视频", "音频", "图片", "PDF", "邮件", "文档"],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      {
+        id: "published-date",
+        name: "发布时间",
+        description: "来源内容可靠提供的发布日期；未知时不写入。",
+        aliases: ["published_at", "publishedAt", "发布日期"],
+        valueType: "date",
+        required: false,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "open",
+        allowedValues: [],
         fillStrategy: "none",
         defaultValue: "",
       },
@@ -634,6 +676,71 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
         fillStrategy: "none",
         defaultValue: "",
       },
+      {
+        id: "source-url",
+        name: "来源链接",
+        description: "原始网页或媒体的公开来源地址；没有来源链接时不写入。",
+        aliases: ["source_url", "来源"],
+        valueType: "text",
+        required: false,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "open",
+        allowedValues: [],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      {
+        id: "author",
+        name: "作者",
+        description: "仅在微信公众号或普通网页可靠提取到作者时写入。",
+        aliases: ["author"],
+        valueType: "text",
+        required: false,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "open",
+        allowedValues: [],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      {
+        id: "reading-status",
+        name: "阅读状态",
+        description: "只在已经开始或完成阅读时记录；缺失代表未读。",
+        aliases: [],
+        valueType: "single",
+        required: false,
+        requiredForTypes: [],
+        origin: "system",
+        aiManaged: false,
+        enumMode: "closed",
+        allowedValues: ["在看", "已读"],
+        fillStrategy: "none",
+        defaultValue: "",
+      },
+      ...([
+        ["project", "所属项目", "笔记明确属于某个项目时记录。"],
+        ["source-note", "来源笔记", "知识沉淀可追溯到源笔记时记录。"],
+        ["related-notes", "关联笔记", "存在明确语义关系的笔记引用。"],
+        ["destination", "沉淀去向", "输入资料进一步沉淀形成的目标笔记。"],
+      ] as const).map(([id, name, description]) => ({
+        id,
+        name,
+        description,
+        aliases: [],
+        valueType: "multi" as const,
+        required: false,
+        requiredForTypes: [],
+        origin: "system" as const,
+        aiManaged: false,
+        enumMode: "open" as const,
+        allowedValues: [],
+        fillStrategy: "none" as const,
+        defaultValue: "",
+      })),
     ],
   },
 };

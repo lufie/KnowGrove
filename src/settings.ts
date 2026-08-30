@@ -326,7 +326,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("自动整理新内容")
-      .setDesc("新文档自动进入未读列表；对于只有链接或语音的轻量笔记，会自动提取、转录并由 AI 整理。")
+      .setDesc("新文档按最小属性进入未读列表；只有链接或音频的轻量笔记会继续提取、转录并由 AI 整理。")
       .addToggle((toggle) => toggle
         .setValue(settings.autoMarkNewNotes)
         .onChange(async (value) => {
@@ -504,36 +504,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     const content = details.createDiv("knowgrove-settings-details-content");
 
     new Setting(content)
-      .setName("阅读状态属性")
-      .setDesc("只有已有知识库使用不同字段时才需要修改。")
-      .addText((text) => text
-        .setValue(settings.statusProperty)
-        .onChange(async (value) => {
-          if (!value.trim()) return;
-          settings.statusProperty = value.trim();
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
+      .setName("阅读状态规范")
+      .setDesc("固定使用“阅读状态”：缺失代表未读，开始阅读写“在看”，完成后写“已读”。");
 
     new Setting(content)
-      .setName("未读 / 已读状态值")
-      .setDesc("默认使用“在看”和“已读完”。")
-      .addText((text) => text
-        .setValue(settings.readingStatus)
-        .onChange(async (value) => {
-          if (!value.trim()) return;
-          settings.readingStatus = value.trim();
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }))
-      .addText((text) => text
-        .setValue(settings.finishedStatus)
-        .onChange(async (value) => {
-          if (!value.trim()) return;
-          settings.finishedStatus = value.trim();
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
+      .setName("新笔记阅读状态")
+      .setDesc("新笔记不会预写“在看”；只有真正开始阅读时才写入阅读状态。");
 
     new Setting(content)
       .setName("文末停留时间")
@@ -567,46 +543,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
         }));
 
     new Setting(content)
-      .setName("状态属性名")
-      .setDesc("写入 Markdown frontmatter 的属性名称。")
-      .addText((text) => text
-        .setPlaceholder("阅读状态")
-        .setValue(this.plugin.settings.statusProperty)
-        .onChange(async (value) => {
-          const next = value.trim();
-          if (!next) return;
-          this.plugin.settings.statusProperty = next;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
+      .setName("阅读状态规范")
+      .setDesc("固定使用“阅读状态”：缺失代表未读，开始阅读写“在看”，完成后写“已读”。");
 
     new Setting(content)
-      .setName("在看状态值")
-      .addText((text) => text
-        .setValue(this.plugin.settings.readingStatus)
-        .onChange(async (value) => {
-          const next = value.trim();
-          if (!next) return;
-          this.plugin.settings.readingStatus = next;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
-
-    new Setting(content)
-      .setName("已读完状态值")
-      .addText((text) => text
-        .setValue(this.plugin.settings.finishedStatus)
-        .onChange(async (value) => {
-          const next = value.trim();
-          if (!next) return;
-          this.plugin.settings.finishedStatus = next;
-          await this.plugin.savePluginData();
-          this.plugin.refreshReadingViews();
-        }));
-
-    new Setting(content)
-      .setName("自动接管新笔记")
-      .setDesc("在跟踪文件夹中新建或导入 Markdown 笔记时，若没有阅读状态，自动设为“在看”。")
+      .setName("自动初始化新笔记")
+      .setDesc("在跟踪文件夹中新建或导入 Markdown 笔记时，补齐类型、状态和创建时间；不会预写阅读状态。")
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.autoMarkNewNotes)
         .onChange(async (value) => {
@@ -616,7 +558,7 @@ export class KnowGroveSettingTab extends PluginSettingTab {
 
     new Setting(content)
       .setName("读到文末自动完成")
-      .setDesc("在实时阅览或阅读视图中主动滚动、点击，并在文末停留后自动切换为“已读完”。实时编辑文字时会暂停，避免误判。")
+      .setDesc("在实时阅览或阅读视图中主动滚动、点击，并在文末停留后自动切换为“已读”。实时编辑文字时会暂停，避免误判。")
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.autoMarkFinishedAtEnd)
         .onChange(async (value) => {

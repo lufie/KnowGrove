@@ -71,7 +71,7 @@ test("AI response obeys allowed values, value types, and field limits", () => {
   ].join("\n"), semanticDimensions(), { 类型: "输入资料" });
   assert.deepEqual(result.properties, {
     领域: ["AI产品", "内容创作"],
-    主题: ["知识管理", "Agent记忆", "自动分类", "工作流", "标签治理"],
+    主题: ["知识管理", "Agent记忆", "自动分类"],
   });
   assert.equal(result.confidence, 1);
   assert.equal(result.reason, "正文主要讨论 AI 知识管理。");
@@ -90,16 +90,20 @@ test("open enums use learned values as suggestions without rejecting new values"
     frontmatter: {},
     dimensions: [dimension],
     maxContentCharacters: 4_000,
+    existingTopics: ["既有主题"],
   });
   assert.match(prompt, /"enumMode":"open"/);
   assert.match(prompt, /"suggestedValues":\["既有主题"\]/);
   assert.doesNotMatch(prompt, /"allowedValues":\["既有主题"\]/);
   const parsed = parseAIPropertyResponse(
-    JSON.stringify({ properties: { 主题: ["全新主题"] } }),
+    JSON.stringify({ properties: { 主题: ["全新主题"] }, confidence: 0.9 }),
     [dimension],
     {},
+    { existingTopics: ["既有主题"] },
   );
   assert.deepEqual(parsed.properties, { 主题: ["全新主题"] });
+  assert.equal(parsed.requiresReview, true);
+  assert.deepEqual(parsed.reviewReasons, ["新主题待确认：全新主题"]);
 });
 
 test("AI response never accepts empty semantic values", () => {
@@ -114,11 +118,11 @@ test("pending AI dimensions preserve existing values unless refresh is explicit"
   const dimensions = semanticDimensions();
   assert.deepEqual(
     pendingAIManagedDimensions(dimensions, { 领域: ["AI产品"] }, false).map((dimension) => dimension.name),
-    ["类型", "状态", "主题"],
+    ["主题"],
   );
   assert.deepEqual(
     pendingAIManagedDimensions(dimensions, { 领域: ["AI产品"] }, true).map((dimension) => dimension.name),
-    ["类型", "状态", "领域", "主题"],
+    ["领域", "主题"],
   );
 });
 

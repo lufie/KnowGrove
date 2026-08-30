@@ -36,9 +36,15 @@ test("capture notes remain sparse and use deterministic local names", () => {
   const date = new Date(2026, 7, 11, 9, 5, 7);
   assert.equal(batchCaptureFileStem(date, 0, "www.example.com"), "2026-08-11 090507-01-example.com");
   const note = buildBatchLinkNote("https://example.com/a", "example.com", date);
+  assert.match(note, /^类型: "输入资料"$/m);
+  assert.match(note, /^状态: "待处理"$/m);
+  assert.match(note, /^创建时间: "2026-08-11"$/m);
+  assert.match(note, /^内容类型: "网页文章"$/m);
   assert.match(note, /来源链接: "https:\/\/example\.com\/a"/);
-  assert.match(note, /KnowGrove采集状态: "待处理"/);
-  assert.match(note, /# example\.com\n\nhttps:\/\/example\.com\/a/);
+  assert.match(note, /<!-- knowgrove:capture-note v=1 -->/);
+  assert.doesNotMatch(note, /文件名:|标题:|capture_id:|KnowGrove采集状态:|采集时间:/);
+  assert.doesNotMatch(note, /^#\s+/m);
+  assert.match(note, /<!-- knowgrove:capture-note v=1 -->\n\nhttps:\/\/example\.com\/a/);
 });
 
 test("local media import accepts the advertised audio and video formats", () => {
@@ -59,11 +65,13 @@ test("local media import notes preserve a native media embed and parsing state",
     "video",
     new Date("2026-08-14T03:00:00.000Z"),
   );
-  assert.match(note, /^文件名: "English interview"$/m);
+  assert.match(note, /^类型: "输入资料"$/m);
+  assert.match(note, /^状态: "待处理"$/m);
+  assert.match(note, /^创建时间: "2026-08-14"$/m);
   assert.match(note, /^内容类型: "视频"$/m);
-  assert.match(note, /^video: "\[\[Home\/📬输入\/附件\/音视频\/English interview\.mov\]\]"$/m);
   assert.match(note, /!\[\[Home\/📬输入\/附件\/音视频\/English interview\.mov]]/);
-  assert.match(note, /KnowGrove采集状态: "待处理"/);
+  assert.match(note, /<!-- knowgrove:capture-note v=1 -->/);
+  assert.doesNotMatch(note, /文件名:|title:|video:|audio:|KnowGrove采集状态:|采集时间:/);
   assert.doesNotMatch(note, /file:\/\//);
 });
 

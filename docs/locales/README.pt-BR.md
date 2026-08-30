@@ -4,7 +4,7 @@
 
 O KnowGrove é um fluxo de conhecimento local para quem coleta mais rápido do que consegue organizar. Ele mantém as fontes no vault do Obsidian, extrai sua estrutura, conecta tópicos e evidências e transforma tudo em resultados reutilizáveis.
 
-Versão atual do código-fonte: `2.8.30`
+Versão atual do código-fonte: `2.8.31`
 
 ## Um fluxo da fonte ao resultado
 
@@ -23,7 +23,7 @@ O vault continua sendo a fonte da verdade. O KnowGrove não coleta telemetria do
 - **Edição na visualização ao estilo Word:** mantém a formatação de títulos, listas, tarefas, imagens, blocos de código e tabelas. Ao remover linhas em branco da seleção, preserva ou repara os limites das tabelas GFM para que continuem renderizadas na visualização e no modo de leitura.
 - **Captura rápida e recuperável:** cria e relê uma nota Markdown mínima e pronta para abrir antes da fila demorada; o processamento de IA e mídia continua em segundo plano.
 - **Navegação em documentos longos:** mantém o primeiro e o último título acessíveis e a ação de localizar arquivo visível, sem capturar a rolagem do documento.
-- **Gerenciamento de propriedades:** visualize sugestões antes de aplicá-las em lote e mantenha campos desconhecidos intactos.
+- **Gerenciamento de propriedades:** use um padrão compacto de tipo, estado do ciclo de vida, domínio, tópico e fatos de origem rastreáveis; as migrações são revisadas e confirmadas sem substituir campos desconhecidos nem conteúdo do usuário.
 - **Tópicos e pesquisa:** navegue por todos os tópicos e fontes relacionadas e organize áreas, tópicos e perguntas de pesquisa.
 - **Comentários e referências de bloco:** comente o texto selecionado e reutilize-o com incorporações de bloco nativas do Obsidian.
 - **Escrita baseada em evidências:** crie estruturas, relatórios, textos longos e versões para diferentes canais.

@@ -60,10 +60,10 @@ test("AI source screening accepts only exact candidate paths and valid decisions
     path: "Home/A.md",
     basename: "财政政策",
     type: "输入资料",
-    status: "待整理",
+    status: "待处理",
     domains: ["投资"],
     topics: ["宏观经济"],
-    stage: "D" as const,
+    stage: "P" as const,
     modifiedAt: 1,
     excerpt: "讨论财政支出与增长。",
   };

@@ -53,6 +53,10 @@ test("AI taxonomy response accepts only a bounded two-level tree", () => {
 
 test("adopting a taxonomy updates semantic contracts but preserves custom dimensions", () => {
   const defaults = createDefaultSettings();
+  assert.deepEqual(
+    defaults.propertySystem.dimensions.find((dimension) => dimension.name === "状态")?.allowedValues,
+    ["待处理", "进行中", "已完成", "已归档"],
+  );
   const custom = {
     id: "author",
     name: "作者",
@@ -77,11 +81,11 @@ test("adopting a taxonomy updates semantic contracts but preserves custom dimens
   );
 
   assert.ok(dimensions.some((dimension) => dimension.name === "作者" && !dimension.aiManaged));
-  assert.equal(dimensions.find((dimension) => dimension.name === "文件名")?.aiManaged, false);
+  assert.equal(dimensions.some((dimension) => dimension.name === "文件名"), false);
   assert.deepEqual(
     dimensions.filter((dimension) => ["类型", "状态", "领域", "主题"].includes(dimension.name))
       .map((dimension) => [dimension.name, dimension.aiManaged]),
-    [["类型", true], ["状态", true], ["领域", true], ["主题", true]],
+    [["类型", false], ["状态", false], ["领域", true], ["主题", true]],
   );
   assert.deepEqual(
     dimensions.find((dimension) => dimension.name === "领域")?.allowedValues,

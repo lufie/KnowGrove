@@ -9,8 +9,8 @@ import {
 import type { KnowledgeThemeDocument, KnowledgeThemeSummary } from "../src/types";
 
 const documents: KnowledgeThemeDocument[] = [
-  { path: "Home/A.md", basename: "金融入门", type: "输入资料", status: "待整理", domains: ["投资"], topics: ["金融常识", "理财规划"], stage: "D", modifiedAt: 20 },
-  { path: "Home/B.md", basename: "预算方法", type: "知识笔记", status: "生长中", domains: ["生活"], topics: ["理财规划"], stage: "S", modifiedAt: 10 },
+  { path: "Home/A.md", basename: "金融入门", type: "输入资料", status: "待处理", domains: ["投资"], topics: ["金融常识", "理财规划"], stage: "P", modifiedAt: 20 },
+  { path: "Home/B.md", basename: "预算方法", type: "知识笔记", status: "进行中", domains: ["生活"], topics: ["理财规划"], stage: "D", modifiedAt: 10 },
 ];
 
 function theme(overrides: Partial<KnowledgeThemeSummary> & Pick<KnowledgeThemeSummary, "name">): KnowledgeThemeSummary {
