@@ -1,5 +1,6 @@
 import type { PropertyDimensionConfig, PropertyTaxonomySettings } from "./types";
 import { PDSA_STAGES } from "./property-taxonomy";
+import { isNoteLifecycleStatus, NOTE_LIFECYCLE_STATUSES } from "./note-lifecycle";
 
 export interface AIPropertyPromptInput {
   path: string;
@@ -9,12 +10,15 @@ export interface AIPropertyPromptInput {
   dimensions: PropertyDimensionConfig[];
   maxContentCharacters: number;
   taxonomy?: PropertyTaxonomySettings;
+  existingTopics?: string[];
 }
 
 export interface AIPropertyGeneration {
   properties: Record<string, unknown>;
   confidence?: number;
   reason?: string;
+  requiresReview?: boolean;
+  reviewReasons?: string[];
 }
 
 export interface AIBatchPromptItem {
@@ -24,16 +28,6 @@ export interface AIBatchPromptItem {
   frontmatter: Record<string, unknown>;
   dimensions: PropertyDimensionConfig[];
 }
-
-const STATUS_BY_TYPE: Record<string, string[]> = {
-  输入资料: ["待整理", "待归类", "待沉淀", "已沉淀", "跳过", "处理失败", "已归档"],
-  随手笔记: ["种子", "生长中", "常青", "待复核", "已归档"],
-  知识笔记: ["种子", "生长中", "常青", "待复核", "已归档"],
-  复盘: ["种子", "生长中", "常青", "待复核", "已归档"],
-  项目笔记: ["构思中", "进行中", "等待中", "已完成", "已暂停", "已归档"],
-  行动: ["待办", "进行中", "等待中", "已完成", "已取消"],
-  内容输出: ["选题", "提纲", "草稿", "待发布", "已发布", "已复盘", "已归档"],
-};
 
 export function isEmptyPropertyValue(value: unknown): boolean {
   return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
@@ -70,7 +64,7 @@ function safeFrontmatter(frontmatter: Record<string, unknown>): Record<string, u
   return result;
 }
 
-function dimensionContract(dimension: PropertyDimensionConfig): Record<string, unknown> {
+function dimensionContract(dimension: PropertyDimensionConfig, existingTopics: string[] = []): Record<string, unknown> {
   const closed = dimension.enumMode === "closed";
   return {
     name: dimension.name,
@@ -78,19 +72,21 @@ function dimensionContract(dimension: PropertyDimensionConfig): Record<string, u
     valueType: dimension.valueType,
     enumMode: closed ? "closed" : "open",
     allowedValues: closed ? dimension.allowedValues : undefined,
-    suggestedValues: !closed && dimension.allowedValues.length ? dimension.allowedValues : undefined,
+    suggestedValues: dimension.name === "主题"
+      ? existingTopics
+      : !closed && dimension.allowedValues.length ? dimension.allowedValues : undefined,
     rule: dimension.name === "领域"
       ? "最多选择 2 个稳定领域"
       : dimension.name === "主题"
-        ? "输出 1 到 5 个可复用概念，不使用文章标题或一次性专有名词"
+        ? "输出 1 到 3 个可复用纯文本概念，不使用 Wikilink、文章标题或一次性专有名词；优先复用 suggestedValues"
         : undefined,
   };
 }
 
 export function buildAIPropertyPrompt(input: AIPropertyPromptInput): string {
-  const contracts = input.dimensions.map(dimensionContract);
+  const contracts = input.dimensions.map((dimension) => dimensionContract(dimension, input.existingTopics));
   const statusRules = input.dimensions.some((dimension) => dimension.name === "状态")
-    ? STATUS_BY_TYPE
+    ? NOTE_LIFECYCLE_STATUSES
     : undefined;
   return [
     "你是 KnowGrove 的属性分类器。只分析给定笔记，不调用工具，不搜索网络，不修改文件。",
@@ -99,10 +95,10 @@ export function buildAIPropertyPrompt(input: AIPropertyPromptInput): string {
     "1. 只返回 JSON，不要 Markdown、代码围栏或额外解释。",
     "2. 输出格式必须是 {\"properties\":{...},\"confidence\":0到1,\"reason\":\"一句简短依据\"}。",
     "3. 只能输出属性契约中列出的字段；不得虚构作者、来源、链接或未要求的属性。",
-    "4. enumMode=closed 且有 allowedValues 时只能从中选择；enumMode=open 的 suggestedValues 仅供参考，允许生成新的合理值。multi 必须是非空字符串数组，single/text/date 必须是非空字符串。",
-    "5. 不确定时选择最符合正文主旨的值，不要输出 null、空字符串或空数组。",
+    "4. enumMode=closed 且有 allowedValues 时只能从中选择。主题优先复用 suggestedValues；只有确实没有合适概念时才提出新主题，新主题会进入人工确认。multi 必须是非空字符串数组，single/text/date 必须是非空字符串。",
+    "5. 不确定时降低 confidence，不要输出 null、空字符串或空数组；低置信度结果会进入人工确认。",
     "6. 主题应归一为可复用概念，避免把完整标题、文件名、品牌长句或临时事件直接当主题。",
-    statusRules ? `7. 若生成状态，必须遵守类型对应状态：${JSON.stringify(statusRules)}。` : "",
+    statusRules ? `7. 若生成状态，无论类型都只能从统一四态中选择：${JSON.stringify(statusRules)}。` : "",
     input.taxonomy
       ? `8. 当前采用四层分类协议。领域树：${JSON.stringify(input.taxonomy.domains)}；PDSA 映射：${JSON.stringify(PDSA_STAGES)}。领域优先选择最具体且语义明确的二级路径，宽泛内容保留在一级领域。`
       : "",
@@ -120,12 +116,13 @@ export function buildAIBatchPropertyPrompt(
   items: AIBatchPromptItem[],
   taxonomy?: PropertyTaxonomySettings,
   maxContentCharacters = 3_000,
+  existingTopics: string[] = [],
 ): string {
   const documents = items.map((item) => ({
     path: item.path,
     title: item.basename,
     currentProperties: safeFrontmatter(item.frontmatter),
-    contracts: item.dimensions.map(dimensionContract),
+    contracts: item.dimensions.map((dimension) => dimensionContract(dimension, existingTopics)),
     content: truncateForAI(item.body, maxContentCharacters),
   }));
   return [
@@ -135,11 +132,12 @@ export function buildAIBatchPropertyPrompt(
     "1. 只返回 JSON，格式必须是 {\"items\":[{\"path\":\"原样路径\",\"properties\":{},\"confidence\":0到1,\"reason\":\"一句简短依据\"}]}。",
     "2. 每个输入 path 最多返回一个 item，path 必须逐字匹配；不要遗漏能判断的笔记。",
     "3. 每个笔记只能输出它自己的 contracts 中列出的字段，不得虚构作者、来源、链接或其他字段。",
-    "4. enumMode=closed 且有 allowedValues 时只能从中选择；enumMode=open 的 suggestedValues 仅供参考，允许生成新的合理值。multi 必须是非空字符串数组，single/text/date 必须是非空字符串。",
-    "5. 不确定时选择最符合正文主旨的值，不要输出 null、空字符串或空数组；已有非空属性不要重复覆盖。",
+    "4. enumMode=closed 且有 allowedValues 时只能从中选择。主题优先复用 suggestedValues；只有确实没有合适概念时才提出新主题，新主题会进入人工确认。multi 必须是非空字符串数组，single/text/date 必须是非空字符串。",
+    "5. 不确定时降低 confidence，不要输出 null、空字符串或空数组；已有非空属性不要重复覆盖。",
     "6. 主题应归一为可复用概念，避免把完整标题、文件名、品牌长句或临时事件直接当主题。",
+    `7. 若 contracts 包含“状态”，无论笔记类型都只能从统一四态中选择：${JSON.stringify(NOTE_LIFECYCLE_STATUSES)}。`,
     taxonomy
-      ? `7. 当前采用四层分类协议。领域树：${JSON.stringify(taxonomy.domains)}；PDSA 映射：${JSON.stringify(PDSA_STAGES)}。领域优先选择最具体且语义明确的二级路径，宽泛内容保留在一级领域。`
+      ? `8. 当前采用四层分类协议。领域树：${JSON.stringify(taxonomy.domains)}；PDSA 映射：${JSON.stringify(PDSA_STAGES)}。领域优先选择最具体且语义明确的二级路径，宽泛内容保留在一级领域。`
       : "",
     `输入笔记：${JSON.stringify(documents)}`,
   ].filter(Boolean).join("\n");
@@ -199,7 +197,11 @@ function normalizeDimensionValue(dimension: PropertyDimensionConfig, value: unkn
     } else if (typeof normalized === "string" && !allowed.has(normalized)) return undefined;
   }
   if (dimension.name === "领域" && Array.isArray(normalized)) normalized = normalized.slice(0, 2);
-  if (dimension.name === "主题" && Array.isArray(normalized)) normalized = normalized.slice(0, 5);
+  if (dimension.name === "主题" && Array.isArray(normalized)) {
+    normalized = (normalized as unknown[])
+      .map((item) => typeof item === "string" ? item.replace(/^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$/, "$1") : item)
+      .slice(0, 3);
+  }
   return normalized;
 }
 
@@ -207,6 +209,7 @@ export function parseAIPropertyResponse(
   raw: string,
   dimensions: PropertyDimensionConfig[],
   currentFrontmatter: Record<string, unknown>,
+  options: { existingTopics?: string[]; confidenceThreshold?: number } = {},
 ): AIPropertyGeneration {
   const parsed = JSON.parse(extractJsonObject(raw)) as Record<string, unknown>;
   const source = parsed.properties && typeof parsed.properties === "object" && !Array.isArray(parsed.properties)
@@ -221,27 +224,29 @@ export function parseAIPropertyResponse(
     if (normalized !== undefined) properties[name] = normalized;
   }
 
-  const noteType = typeof properties.类型 === "string"
-    ? properties.类型
-    : typeof currentFrontmatter.类型 === "string"
-      ? currentFrontmatter.类型
-      : undefined;
-  if (noteType && typeof properties.状态 === "string") {
-    const allowedStatuses = STATUS_BY_TYPE[noteType];
-    if (allowedStatuses && !allowedStatuses.includes(properties.状态)) delete properties.状态;
-  }
+  if (typeof properties.状态 === "string" && !isNoteLifecycleStatus(properties.状态)) delete properties.状态;
   if (!Object.keys(properties).length) throw new Error("模型返回中没有符合当前属性契约的有效值");
 
   const confidence = typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
     ? Math.max(0, Math.min(1, parsed.confidence))
     : undefined;
   const reason = typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 240) : undefined;
-  return { properties, confidence, reason };
+  const reviewReasons: string[] = [];
+  const threshold = options.confidenceThreshold ?? 0.75;
+  if (confidence === undefined || confidence < threshold) reviewReasons.push("AI 置信度不足");
+  const knownTopics = new Set((options.existingTopics ?? []).map((topic) => topic.trim()).filter(Boolean));
+  const generatedTopics = Array.isArray(properties.主题)
+    ? properties.主题.filter((topic): topic is string => typeof topic === "string")
+    : [];
+  const newTopics = generatedTopics.filter((topic) => !knownTopics.has(topic));
+  if (newTopics.length) reviewReasons.push(`新主题待确认：${newTopics.join("、")}`);
+  return { properties, confidence, reason, requiresReview: reviewReasons.length > 0, reviewReasons };
 }
 
 export function parseAIBatchPropertyResponse(
   raw: string,
   items: AIBatchPromptItem[],
+  options: { existingTopics?: string[]; confidenceThreshold?: number } = {},
 ): Map<string, AIPropertyGeneration> {
   const parsed = JSON.parse(extractJsonObject(raw)) as Record<string, unknown>;
   const source = Array.isArray(parsed.items) ? parsed.items : [];
@@ -254,7 +259,7 @@ export function parseAIBatchPropertyResponse(
     const item = byPath.get(entry.path);
     if (!item) continue;
     try {
-      results.set(item.path, parseAIPropertyResponse(JSON.stringify(entry), item.dimensions, item.frontmatter));
+      results.set(item.path, parseAIPropertyResponse(JSON.stringify(entry), item.dimensions, item.frontmatter, options));
     } catch {
       // A malformed item should not discard valid results for the rest of the batch.
     }

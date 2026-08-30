@@ -10,7 +10,7 @@ import {
 import { auditPropertySnapshots } from "../src/property-system";
 import { createDefaultSettings } from "../src/types";
 
-test("property matrix hides automatic file-name synchronization and shows only fields needing review", () => {
+test("property matrix shows only fields needing review", () => {
   const settings = createDefaultSettings().propertySystem;
   const snapshots = [
     {
@@ -18,7 +18,7 @@ test("property matrix hides automatic file-name synchronization and shows only f
       basename: "文章甲",
       frontmatter: {
         类型: "输入资料",
-        状态: "待整理",
+        状态: "待处理",
         创建时间: "2026-07-24",
         领域: ["未知领域"],
         主题: ["知识管理"],
@@ -29,7 +29,8 @@ test("property matrix hides automatic file-name synchronization and shows only f
       basename: "文章乙",
       frontmatter: {
         类型: "知识笔记",
-        状态: "常青",
+        状态: "已完成",
+        创建时间: "2026-07-24",
         领域: ["AI产品"],
         主题: ["知识管理"],
       },
@@ -52,7 +53,7 @@ test("edited matrix suggestions become one confirmed audit operation per changed
     basename: "文章甲",
     frontmatter: {
       类型: "输入资料",
-      状态: "待整理",
+      状态: "待处理",
       创建时间: "2026-07-24",
       领域: ["未知领域"],
       主题: ["知识管理"],

@@ -4,7 +4,7 @@
 
 KnowGrove est un flux de connaissances local pour celles et ceux qui collectent plus vite qu’ils n’organisent. Les sources restent dans le coffre Obsidian, sont structurées, reliées aux sujets et aux preuves, puis transformées en résultats réutilisables.
 
-Version actuelle du code source : `2.8.30`
+Version actuelle du code source : `2.8.31`
 
 ## Un seul flux, de la source au résultat
 
@@ -23,7 +23,7 @@ Le coffre reste la source de vérité. KnowGrove ne collecte aucune télémétri
 - **Édition en aperçu instantané comme dans Word :** conservez la mise en forme des titres, listes, tâches, images, blocs de code et tableaux. La suppression des lignes vides sélectionnées préserve ou répare les limites des tableaux GFM afin qu’ils restent rendus dans l’aperçu instantané et le mode lecture.
 - **Capture rapide et récupérable :** une note Markdown minimale et ouvrable est créée puis relue avant l’entrée dans la file de traitement ; l’IA et les médias continuent en arrière-plan.
 - **Navigation dans les longs documents :** le début et la fin de l’index restent accessibles, l’action de localisation du fichier reste visible et le défilement du document n’est pas intercepté.
-- **Gestion des propriétés :** prévisualisez les propositions avant de les appliquer en lot, sans écraser les champs inconnus.
+- **Gestion des propriétés :** appliquez une norme concise fondée sur le type, l’état du cycle de vie, le domaine, le sujet et des faits de provenance traçables ; les migrations sont prévisualisées et confirmées sans écraser les champs inconnus ni le contenu utilisateur.
 - **Sujets et recherche :** parcourez tous les sujets et leurs sources, puis organisez domaines, sujets et questions de recherche.
 - **Commentaires et références de blocs :** commentez une sélection et réutilisez-la avec les inclusions de blocs natives d’Obsidian.
 - **Rédaction fondée sur les sources :** créez plans, rapports, articles longs et variantes par canal.

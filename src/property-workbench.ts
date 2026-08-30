@@ -1,4 +1,4 @@
-import { ItemView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import { buildKnowledgeDomainTree } from "./knowledge-cycle";
 import type {
@@ -142,6 +142,41 @@ export class PropertyWorkbenchView extends ItemView {
           text: "知道了",
         });
         dismiss.addEventListener("click", () => this.plugin.dismissAIPropertyRunState());
+      }
+    }
+
+    const pendingReviews = this.plugin.getPendingPropertyReviews();
+    if (pendingReviews.length) {
+      const reviews = section.createEl("details", { cls: "knowgrove-topic-discovery" });
+      reviews.open = true;
+      reviews.createEl("summary", { text: `AI 属性待确认 · ${pendingReviews.length}` });
+      const list = reviews.createDiv("knowgrove-topic-list");
+      for (const review of pendingReviews) {
+        const row = list.createDiv("knowgrove-topic-row");
+        const copy = row.createDiv("knowgrove-topic-row-copy");
+        copy.createEl("strong", { text: review.basename });
+        copy.createEl("small", {
+          text: `${review.reviewReasons.join("；")} · ${Object.entries(review.properties)
+            .map(([name, value]) => `${name}：${Array.isArray(value) ? value.join("、") : String(value)}`)
+            .join("；")}`,
+        });
+        const actions = row.createDiv("knowgrove-property-header-actions");
+        const open = this.iconButton(actions, "file-search", "打开", () => {
+          const file = this.app.vault.getAbstractFileByPath(review.path);
+          if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+        });
+        open.setAttr("aria-label", "打开对应笔记");
+        const accept = actions.createEl("button", { text: "采用" });
+        accept.addEventListener("click", () => void (async () => {
+          accept.disabled = true;
+          try {
+            await this.plugin.applyPendingPropertyReview(review.path);
+            new Notice("AI 属性建议已确认并写入");
+          } catch (error) {
+            accept.disabled = false;
+            new Notice(`无法采用建议：${error instanceof Error ? error.message : String(error)}`, 8000);
+          }
+        })());
       }
     }
   }

@@ -10,6 +10,7 @@ import {
   isManagedPropertyBaseContent,
   isPropertyGovernedPath,
   localDateFromTimestamp,
+  needsPendingPropertyReviewStorageMigration,
   normalizePropertyDimensions,
   operationStillApplies,
   shouldInitializeTrackedNote,
@@ -37,6 +38,15 @@ test("new-content automation uses one shared default across capture and property
   assert.equal("focusPropertyName" in settings, false);
 });
 
+test("missing or invalid pending property review storage is persisted during upgrade", () => {
+  assert.equal(needsPendingPropertyReviewStorageMigration(undefined), true);
+  assert.equal(needsPendingPropertyReviewStorageMigration(null), true);
+  assert.equal(needsPendingPropertyReviewStorageMigration([]), true);
+  assert.equal(needsPendingPropertyReviewStorageMigration("invalid"), true);
+  assert.equal(needsPendingPropertyReviewStorageMigration({}), false);
+  assert.equal(needsPendingPropertyReviewStorageMigration({ "Home/Note.md": { properties: {} } }), false);
+});
+
 test("governance scope excludes configured, system, and dependency files", () => {
   const settings = system();
   settings.scopeFolder = "Home";
@@ -59,17 +69,17 @@ test("knowledge flow counts reuse lifecycle rules and governance scope", () => {
     frontmatter: { 类型: type, 状态: status },
   });
   const snapshots = [
-    note("Home/Input.md", "输入资料", "待整理"),
-    note("Home/Read.md", "输入资料", "待沉淀"),
+    note("Home/Input.md", "输入资料", "待处理"),
+    note("Home/Read.md", "输入资料", "待处理"),
     note("Home/Archived input.md", "输入资料", "已归档"),
     note("Home/Knowledge.md", "知识笔记", "已完成"),
     note("Home/Review.md", "复盘", "已归档"),
     note("Home/Project.md", "项目笔记", "进行中"),
     note("Home/Completed project.md", "项目笔记", "已完成"),
-    note("Home/Action.md", "行动", "待办"),
-    note("Home/Output.md", "内容输出", "草稿"),
+    note("Home/Action.md", "行动", "待处理"),
+    note("Home/Output.md", "内容输出", "进行中"),
     note("Home/Archived output.md", "内容输出", "已归档"),
-    note("Home/Excluded/Hidden.md", "行动", "待办"),
+    note("Home/Excluded/Hidden.md", "行动", "待处理"),
     note("Archive/Outside.md", "知识笔记", "已完成"),
   ];
   assert.deepEqual(countPropertyFlowSnapshots(snapshots, settings), {
@@ -81,28 +91,29 @@ test("knowledge flow counts reuse lifecycle rules and governance scope", () => {
   });
 });
 
-test("inventory suggests repeated existing properties without replacing configured dimensions", () => {
+test("inventory keeps canonical properties singular while discovering noncanonical fields", () => {
   const settings = system();
   const snapshots: PropertyNoteSnapshot[] = Array.from({ length: 10 }, (_, index) => ({
     path: `Home/Note ${index}.md`,
     basename: `Note ${index}`,
     frontmatter: {
-      文件名: `Note ${index}`,
       类型: "输入资料",
-      状态: "待整理",
+      状态: "待处理",
       领域: ["AI产品"],
       主题: [],
-      内容类型: index % 2 ? "网页文章" : "研究报告",
+      内容类型: index % 2 ? "网页文章" : "文档",
+      自定义来源: index % 2 ? "内部" : "外部",
     },
   }));
   const analysis = analyzePropertyInventory(snapshots, settings);
-  const suggestion = analysis.suggestedDimensions.find((item) => item.name === "内容类型");
+  const suggestion = analysis.suggestedDimensions.find((item) => item.name === "自定义来源");
   assert.equal(analysis.governedFiles, 10);
   assert.equal(suggestion?.valueType, "single");
   assert.equal(suggestion?.required, false);
   assert.equal(suggestion?.origin, "inferred");
-  assert.deepEqual(suggestion?.allowedValues.sort(), ["研究报告", "网页文章"]);
+  assert.deepEqual(suggestion?.allowedValues.sort(), ["内部", "外部"]);
   assert.equal(analysis.suggestedDimensions.filter((item) => item.name === "类型").length, 1);
+  assert.equal(analysis.suggestedDimensions.filter((item) => item.name === "内容类型").length, 1);
 });
 
 test("audit separates deterministic fixes from semantic decisions", () => {
@@ -116,38 +127,35 @@ test("audit separates deterministic fixes from semantic decisions", () => {
   assert.equal(audit.nonCompliantFiles, 1);
   assert.deepEqual(audit.compliantPaths, []);
   assert.deepEqual(audit.nonCompliantPaths, ["Home/Inbox/Example.md"]);
-  assert.equal(audit.automaticFiles, 1);
-  assert.equal(audit.automaticOperations, 1);
-  assert.equal(audit.manualIssues, 4);
-  assert.deepEqual(
-    audit.changes[0]?.operations.map((operation) => operation.property),
-    ["文件名"],
-  );
+  assert.equal(audit.automaticFiles, 0);
+  assert.equal(audit.automaticOperations, 0);
+  assert.equal(audit.manualIssues, 5);
 });
 
-test("file name property is always synchronized with the Markdown title", () => {
+test("retired duplicate and machine properties become guarded delete operations", () => {
   const settings = system();
   const audit = auditPropertySnapshots([{
     path: "Home/输入/新标题.md",
     basename: "新标题",
     frontmatter: {
       文件名: "旧标题",
+      标题: "重复标题",
+      capture_id: "job-1",
+      KnowGrove采集状态: "已完成",
       类型: "知识笔记",
-      状态: "常青",
+      状态: "已完成",
       领域: ["AI产品"],
       主题: ["知识管理"],
     },
   }], settings);
-  assert.deepEqual(audit.changes[0]?.operations, [{
-    kind: "set",
-    property: "文件名",
-    before: "旧标题",
-    after: "新标题",
-    reason: "同步 Markdown 文件标题",
-  }]);
-  assert.ok(audit.issues.some((issue) => issue.property === "文件名"
-    && issue.automatic
-    && issue.suggestedValue === "新标题"));
+  const operations = audit.changes[0]?.operations.filter((operation) => operation.kind === "delete") ?? [];
+  assert.deepEqual(operations.map((operation) => operation.property).sort(), [
+    "KnowGrove采集状态",
+    "capture_id",
+    "文件名",
+    "标题",
+  ]);
+  assert.ok(audit.issues.filter((issue) => issue.kind === "retired-property").every((issue) => issue.automatic));
 });
 
 test("audit migrates one legacy alias but reports alias conflicts", () => {
@@ -156,18 +164,20 @@ test("audit migrates one legacy alias but reports alias conflicts", () => {
     {
       path: "Home/Legacy.md",
       basename: "Legacy",
-      frontmatter: { title: "Legacy", type: "输入资料", status: "待整理", domain: "AI产品", topics: "知识管理" },
+      frontmatter: { type: "输入资料", status: "待处理", created: "2026-07-23", domain: "AI产品", topics: "知识管理", source_url: "https://example.com" },
     },
     {
       path: "Home/Conflict.md",
       basename: "Conflict",
-      frontmatter: { 文件名: "Conflict", title: "Old", 类型: "输入资料", 状态: "待整理", 领域: [], 主题: [] },
+      frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-07-23", 来源链接: "https://example.com/a", source_url: "https://example.com/b" },
     },
   ];
   const audit = auditPropertySnapshots(snapshots, settings);
   const legacy = audit.changes.find((change) => change.path.endsWith("Legacy.md"));
-  assert.equal(legacy?.operations.filter((operation) => operation.kind === "rename").length, 5);
-  assert.ok(audit.issues.some((item) => item.path.endsWith("Conflict.md") && item.kind === "alias-conflict"));
+  assert.equal(legacy?.operations.filter((operation) => operation.kind === "rename").length, 6);
+  assert.ok(audit.issues.some((item) => item.path.endsWith("Conflict.md")
+    && item.property === "来源链接"
+    && item.kind === "alias-conflict"));
 });
 
 test("invalid enums are reported and never automatically overwritten", () => {
@@ -175,7 +185,7 @@ test("invalid enums are reported and never automatically overwritten", () => {
   const audit = auditPropertySnapshots([{
     path: "Home/Invalid.md",
     basename: "Invalid",
-    frontmatter: { 文件名: "Invalid", 类型: "神奇类型", 状态: "待整理", 领域: ["未知领域"], 主题: [] },
+    frontmatter: { 类型: "神奇类型", 状态: "待处理", 创建时间: "2026-08-30", 领域: ["未知领域"] },
   }], settings);
   const invalid = audit.issues.filter((item) => item.kind === "invalid-value");
   assert.equal(invalid.length, 2);
@@ -183,37 +193,108 @@ test("invalid enums are reported and never automatically overwritten", () => {
   assert.equal(audit.automaticFiles, 0);
 });
 
-test("inferred enums stay open when new values appear", () => {
+test("historical lifecycle statuses are proposed as deterministic four-state migrations", () => {
+  const settings = system();
+  const audit = auditPropertySnapshots([
+    { path: "Home/Pending.md", basename: "Pending", frontmatter: { 类型: "输入资料", 状态: "待整理", 创建时间: "2026-08-30" } },
+    { path: "Home/Growing.md", basename: "Growing", frontmatter: { 类型: "知识笔记", 状态: "生长中" } },
+    { path: "Home/Published.md", basename: "Published", frontmatter: { 类型: "内容输出", 状态: "已发布" } },
+    { path: "Home/Cancelled.md", basename: "Cancelled", frontmatter: { 类型: "行动", status: "cancelled" } },
+    { path: "Home/Unknown.md", basename: "Unknown", frontmatter: { 类型: "知识笔记", 状态: "自定义状态" } },
+  ], settings);
+  const statusChanges = audit.changes.flatMap((change) => change.operations)
+    .filter((operation) => operation.property === "状态")
+    .map((operation) => operation.after);
+  assert.deepEqual(statusChanges, ["待处理", "进行中", "已完成", "已归档"]);
+  assert.ok(audit.issues.some((item) => item.path === "Home/Unknown.md"
+    && item.property === "状态"
+    && item.automatic === false));
+});
+
+test("legacy content types and domains migrate to the adopted V2 vocabulary", () => {
+  const audit = auditPropertySnapshots([{
+    path: "Home/Legacy vocabulary.md",
+    basename: "Legacy vocabulary",
+    frontmatter: {
+      类型: "输入资料",
+      状态: "待处理",
+      创建时间: "2026-08-30",
+      内容类型: "邮件简报",
+      领域: ["工作", "AI产品/智能体"],
+      主题: ["[[知识管理]]"],
+    },
+  }], system());
+  const operations = audit.changes[0]?.operations ?? [];
+  assert.ok(operations.some((operation) => operation.property === "内容类型" && operation.after === "邮件"));
+  assert.ok(operations.some((operation) => operation.property === "领域"
+    && JSON.stringify(operation.after) === JSON.stringify(["职业与工作", "AI产品/AI应用与智能体"])));
+  assert.ok(operations.some((operation) => operation.property === "主题"
+    && JSON.stringify(operation.after) === JSON.stringify(["知识管理"])));
+});
+
+test("scalar legacy domains become one guarded canonical operation", () => {
+  const audit = auditPropertySnapshots([{
+    path: "Home/Scalar domain.md",
+    basename: "Scalar domain",
+    frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-08-30", 领域: "工作" },
+  }], system());
+  const operations = audit.changes[0]?.operations.filter((operation) => operation.property === "领域") ?? [];
+  assert.equal(operations.length, 1);
+  assert.deepEqual(operations[0]?.before, "工作");
+  assert.deepEqual(operations[0]?.after, ["职业与工作"]);
+  const frontmatter: Record<string, unknown> = { 领域: "工作" };
+  assert.equal(operationStillApplies(frontmatter, operations[0]!), true);
+  applyOperation(frontmatter, operations[0]!);
+  assert.deepEqual(frontmatter.领域, ["职业与工作"]);
+});
+
+test("single-item historical status lists become one canonical scalar in one audit", () => {
+  const audit = auditPropertySnapshots([{
+    path: "Home/ListStatus.md",
+    basename: "ListStatus",
+    frontmatter: { 类型: "输入资料", 状态: ["待整理"], 创建时间: "2026-08-30" },
+  }], system());
+  const operations = audit.changes[0]?.operations.filter((operation) => operation.property === "状态") ?? [];
+  assert.equal(operations.length, 1);
+  assert.deepEqual(operations[0]?.before, ["待整理"]);
+  assert.equal(operations[0]?.after, "待处理");
+  const frontmatter: Record<string, unknown> = { 状态: ["待整理"] };
+  assert.equal(operationStillApplies(frontmatter, operations[0]!), true);
+  applyOperation(frontmatter, operations[0]!);
+  assert.equal(frontmatter.状态, "待处理");
+});
+
+test("user-defined enums stay open when new values appear", () => {
   const settings = system();
   settings.dimensions.push({
-    id: "project",
-    name: "所属项目",
-    description: "扫描发现：覆盖 100 篇笔记",
+    id: "business-line",
+    name: "业务线",
+    description: "用户维护的业务字段",
     aliases: [],
     valueType: "single",
     required: false,
-    origin: "inferred",
+    origin: "user",
     allowedValues: ["旧项目"],
     fillStrategy: "none",
     defaultValue: "",
   });
   settings.dimensions = normalizePropertyDimensions(settings.dimensions, settings.creationDateProperty);
-  const project = settings.dimensions.find((dimension) => dimension.name === "所属项目");
+  const project = settings.dimensions.find((dimension) => dimension.name === "业务线");
   assert.equal(project?.enumMode, "open");
   const audit = auditPropertySnapshots([{
     path: "Home/New project.md",
     basename: "New project",
     frontmatter: {
-      文件名: "New project",
       类型: "项目笔记",
       状态: "进行中",
+      创建时间: "2026-08-30",
       领域: ["AI产品"],
       主题: ["知识管理"],
-      所属项目: "美团",
+      业务线: "美团",
     },
   }], settings);
   assert.equal(audit.nonCompliantFiles, 0);
-  assert.ok(!audit.issues.some((item) => item.property === "所属项目"));
+  assert.ok(!audit.issues.some((item) => item.property === "业务线"));
 });
 
 test("only explicitly closed enums reject newly added values", () => {
@@ -235,7 +316,6 @@ test("only explicitly closed enums reject newly added values", () => {
     path: "Home/Priority.md",
     basename: "Priority",
     frontmatter: {
-      文件名: "Priority",
       类型: "项目笔记",
       状态: "进行中",
       领域: ["AI产品"],
@@ -252,35 +332,34 @@ test("reading aliases are normalized while unknown reading states remain visible
     {
       path: "Home/Unread.md",
       basename: "Unread",
-      frontmatter: { 文件名: "Unread", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 阅读状态: "未读" },
+      frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 阅读状态: "未读" },
     },
     {
       path: "Home/Unknown reading.md",
       basename: "Unknown reading",
-      frontmatter: { 文件名: "Unknown reading", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 阅读状态: "待归类" },
+      frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-07-23", 领域: ["AI产品"], 主题: ["知识管理"], 阅读状态: "待处理" },
     },
   ], settings, {
     reading: { propertyName: "阅读状态", readingValue: "在看", finishedValue: "已读" },
   });
   const unread = audit.changes.find((change) => change.path === "Home/Unread.md");
   assert.deepEqual(unread?.operations, [{
-    kind: "set",
+    kind: "delete",
     property: "阅读状态",
     before: "未读",
-    after: "在看",
-    reason: "统一阅读状态别名",
+    reason: "未读由阅读状态缺省表示",
   }]);
   assert.ok(audit.issues.some((item) => item.path === "Home/Unknown reading.md"
     && item.property === "阅读状态"
     && item.automatic === false));
 });
 
-test("AI-managed empty list properties wait for semantic generation", () => {
+test("empty required semantic properties wait for confirmation instead of being guessed", () => {
   const settings = system();
   const audit = auditPropertySnapshots([{
     path: "Home/Empty lists.md",
     basename: "Empty lists",
-    frontmatter: { 文件名: "Empty lists", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-19", 领域: null, 主题: null },
+    frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-07-19", 领域: null, 主题: null },
   }], settings);
   assert.equal(audit.manualIssues, 2);
   assert.equal(audit.changes.length, 0);
@@ -303,7 +382,7 @@ test("operations require preview preconditions and preserve unknown fields", () 
   assert.equal(operationStillApplies(frontmatter, operation), false);
 });
 
-test("new tracked note without frontmatter receives the complete minimal input schema", () => {
+test("new tracked note without frontmatter receives only deterministic minimal properties", () => {
   const settings = system();
   const frontmatter: Record<string, unknown> = {};
   const changed = initializeTrackedNoteFrontmatter(
@@ -316,15 +395,11 @@ test("new tracked note without frontmatter receives the complete minimal input s
   );
   assert.equal(changed, true);
   assert.deepEqual(frontmatter, {
-    文件名: "Imported article",
     类型: "输入资料",
-    状态: "待整理",
+    状态: "待处理",
     创建时间: "2026-07-19",
-    阅读状态: "在看",
-    领域: [],
-    主题: [],
   });
-  assert.equal(Object.keys(frontmatter)[0], "文件名");
+  assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "阅读状态"), false);
 });
 
 test("AI-managed fields are deferred instead of receiving empty lists", () => {
@@ -341,44 +416,33 @@ test("AI-managed fields are deferred instead of receiving empty lists", () => {
   );
   assert.equal(changed, true);
   assert.deepEqual(frontmatter, {
-    文件名: "AI article",
     类型: "输入资料",
-    状态: "待整理",
+    状态: "待处理",
     创建时间: "2026-07-19",
-    阅读状态: "在看",
   });
   assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "领域"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "主题"), false);
 });
 
-test("complete imported frontmatter keeps every value and only moves 文件名 first", () => {
+test("complete imported frontmatter keeps every value and property order", () => {
   const settings = system();
   const frontmatter: Record<string, unknown> = {
     来源链接: "[[网页来源]]",
     文件名: "采集器标题",
     类型: "知识笔记",
-    状态: "待沉淀",
+    状态: "待处理",
     创建时间: "2026-06-01",
     阅读状态: "已读",
     领域: ["AI产品"],
     主题: ["知识管理"],
     作者: "原作者",
   };
+  const before = JSON.stringify(frontmatter);
   assert.equal(initializeTrackedNoteFrontmatter(
     frontmatter, "磁盘文件名", settings, "阅读状态", "在看", "2026-07-19",
-  ), true);
-  assert.equal(Object.keys(frontmatter)[0], "文件名");
-  assert.deepEqual(frontmatter, {
-    文件名: "采集器标题",
-    来源链接: "[[网页来源]]",
-    类型: "知识笔记",
-    状态: "待沉淀",
-    创建时间: "2026-06-01",
-    阅读状态: "已读",
-    领域: ["AI产品"],
-    主题: ["知识管理"],
-    作者: "原作者",
-  });
+  ), false);
+  assert.equal(JSON.stringify(frontmatter), before);
+  assert.equal(Object.keys(frontmatter)[0], "来源链接");
 });
 
 test("new tracked note with only reading status fills missing core properties", () => {
@@ -388,11 +452,11 @@ test("new tracked note with only reading status fills missing core properties", 
     frontmatter, "Only status", settings, "阅读状态", "在看", "2026-07-19",
   );
   assert.equal(frontmatter.阅读状态, "在看");
-  assert.equal(frontmatter.文件名, "Only status");
   assert.equal(frontmatter.类型, "输入资料");
-  assert.equal(frontmatter.状态, "待整理");
-  assert.deepEqual(frontmatter.领域, []);
-  assert.deepEqual(frontmatter.主题, []);
+  assert.equal(frontmatter.状态, "待处理");
+  assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "文件名"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "领域"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(frontmatter, "主题"), false);
 });
 
 test("new external input does not create a plugin-owned bookmark property and preserves existing unknown fields", () => {
@@ -492,15 +556,13 @@ test("late importer frontmatter wins while missing core properties are restored 
     rewrittenByImporter, "Race", settings, "阅读状态", "在看", "2026-07-19",
   );
   assert.deepEqual(rewrittenByImporter, {
-    文件名: "Race",
     来源链接: "[[可靠来源]]",
     作者: "采集器作者",
     类型: "知识笔记",
     主题: ["采集主题"],
     阅读状态: "待读",
-    状态: "待整理",
+    状态: "待处理",
     创建时间: "2026-07-19",
-    领域: [],
   });
   assert.equal(new Set(Object.keys(rewrittenByImporter)).size, Object.keys(rewrittenByImporter).length);
 });
@@ -510,29 +572,30 @@ test("creation date is derived from the TFile ctime in local calendar time", () 
   assert.equal(localDateFromTimestamp(timestamp), "2026-07-19");
 });
 
-test("creation date compliance applies only to input material", () => {
+test("creation date compliance applies to every ordinary note", () => {
   const settings = system();
   const audit = auditPropertySnapshots([
     {
       path: "Home/Input without date.md",
       basename: "Input without date",
-      frontmatter: { 文件名: "Input without date", 类型: "输入资料", 状态: "待整理", 领域: [], 主题: [] },
+      frontmatter: { 类型: "输入资料", 状态: "待处理" },
     },
     {
       path: "Home/Knowledge without date.md",
       basename: "Knowledge without date",
-      frontmatter: { 文件名: "Knowledge without date", 类型: "知识笔记", 状态: "常青", 领域: [], 主题: [] },
+      frontmatter: { 类型: "知识笔记", 状态: "已完成" },
     },
   ], settings);
-  assert.deepEqual(audit.compliantPaths, ["Home/Knowledge without date.md"]);
-  assert.deepEqual(audit.nonCompliantPaths, ["Home/Input without date.md"]);
+  assert.deepEqual(audit.compliantPaths, []);
+  assert.deepEqual(audit.nonCompliantPaths, ["Home/Input without date.md", "Home/Knowledge without date.md"]);
   assert.ok(audit.issues.some((item) => item.property === "创建时间" && item.path.endsWith("Input without date.md")));
-  assert.ok(!audit.issues.some((item) => item.property === "创建时间" && item.path.endsWith("Knowledge without date.md")));
+  assert.ok(audit.issues.some((item) => item.property === "创建时间" && item.path.endsWith("Knowledge without date.md")));
 });
 
-test("legacy inferred rules migrate without becoming global requirements", () => {
+test("legacy inferred rules collapse into canonical fields without becoming requirements", () => {
+  const defaults = system();
   const dimensions = normalizePropertyDimensions([
-    ...system().dimensions,
+    ...defaults.dimensions,
     {
       id: "legacy-created-at",
       name: "创建时间",
@@ -555,14 +618,73 @@ test("legacy inferred rules migrate without becoming global requirements", () =>
       fillStrategy: "none",
       defaultValue: "",
     },
-  ], "创建时间");
+  ], "创建时间", defaults.dimensions);
   const creation = dimensions.find((dimension) => dimension.name === "创建时间");
   const author = dimensions.find((dimension) => dimension.name === "作者");
-  assert.equal(creation?.required, false);
-  assert.deepEqual(creation?.requiredForTypes, ["输入资料"]);
+  assert.equal(creation?.required, true);
+  assert.deepEqual(creation?.requiredForTypes, []);
   assert.equal(creation?.origin, "system");
   assert.equal(author?.required, false);
-  assert.equal(author?.origin, "inferred");
+  assert.equal(author?.origin, "system");
+  assert.equal(author?.enumMode, "open");
+  assert.deepEqual(author?.allowedValues, []);
+  assert.equal(dimensions.filter((dimension) => dimension.name === "作者").length, 1);
+  assert.deepEqual(
+    dimensions.find((dimension) => dimension.name === "内容类型")?.allowedValues,
+    ["网页文章", "研究报告", "视频", "音频", "图片", "PDF", "邮件", "文档"],
+  );
+});
+
+test("schema migration removes retired and inferred dimensions while preserving explicit user fields", () => {
+  const defaults = system();
+  const dimensions = normalizePropertyDimensions([
+    {
+      id: "file-name",
+      name: "文件名",
+      description: "旧重复标题",
+      aliases: ["title"],
+      valueType: "text",
+      required: true,
+      origin: "system",
+      allowedValues: [],
+      fillStrategy: "file-name",
+      defaultValue: "",
+    },
+    {
+      ...defaults.dimensions.find((dimension) => dimension.name === "作者")!,
+      enumMode: "closed",
+      allowedValues: ["一次性作者 A", "一次性作者 B"],
+    },
+    {
+      id: "generated-purpose",
+      name: "用途",
+      description: "扫描发现：覆盖 100 篇笔记",
+      aliases: [],
+      valueType: "single",
+      required: false,
+      origin: "inferred",
+      allowedValues: ["一次性值"],
+      fillStrategy: "none",
+      defaultValue: "",
+    },
+    {
+      id: "project-code",
+      name: "项目代号",
+      description: "用户维护的业务字段",
+      aliases: [],
+      valueType: "text",
+      required: false,
+      origin: "user",
+      allowedValues: [],
+      fillStrategy: "none",
+      defaultValue: "",
+    },
+  ], "创建时间", defaults.dimensions);
+  assert.equal(dimensions.some((dimension) => dimension.name === "文件名"), false);
+  assert.equal(dimensions.some((dimension) => dimension.name === "用途"), false);
+  assert.equal(dimensions.some((dimension) => dimension.name === "项目代号"), true);
+  assert.deepEqual(dimensions.find((dimension) => dimension.name === "作者")?.allowedValues, []);
+  assert.equal(dimensions.find((dimension) => dimension.name === "作者")?.enumMode, "open");
 });
 
 test("conditional required dimensions apply only to matching note types", () => {
@@ -584,12 +706,12 @@ test("conditional required dimensions apply only to matching note types", () => 
     {
       path: "Home/Project.md",
       basename: "Project",
-      frontmatter: { 文件名: "Project", 类型: "项目笔记", 状态: "进行中", 领域: [], 主题: [] },
+      frontmatter: { 类型: "项目笔记", 状态: "进行中", 创建时间: "2026-07-19", 领域: ["职业与工作"], 主题: ["项目管理"] },
     },
     {
       path: "Home/Input.md",
       basename: "Input",
-      frontmatter: { 文件名: "Input", 类型: "输入资料", 状态: "待整理", 创建时间: "2026-07-19", 领域: [], 主题: [] },
+      frontmatter: { 类型: "输入资料", 状态: "待处理", 创建时间: "2026-07-19", 领域: ["职业与工作"], 主题: ["项目管理"] },
     },
   ], settings);
   assert.deepEqual(audit.nonCompliantPaths, ["Home/Project.md"]);
@@ -597,13 +719,13 @@ test("conditional required dimensions apply only to matching note types", () => 
   assert.ok(!audit.issues.some((issue) => issue.path === "Home/Input.md" && issue.property === "交付物"));
 });
 
-test("generated governance views use the audited document lists", () => {
+test("generated governance views remain formula-driven instead of embedding document paths", () => {
   const settings = system();
   const audit = auditPropertySnapshots([
     {
       path: "Home/Compliant.md",
       basename: "Compliant",
-      frontmatter: { 文件名: "Compliant", 类型: "知识笔记", 状态: "常青", 领域: [], 主题: [] },
+      frontmatter: { 类型: "知识笔记", 状态: "已完成", 创建时间: "2026-08-30" },
     },
     {
       path: "Home/Needs review.md",
@@ -612,16 +734,13 @@ test("generated governance views use the audited document lists", () => {
     },
   ], settings);
   const base = buildPropertyBase(settings, audit);
-  const compliantView = base.slice(base.indexOf('name: "✅ 已符合规范"'), base.indexOf('name: "⚠️ 待规范"'));
-  const nonCompliantView = base.slice(base.indexOf('name: "⚠️ 待规范"'), base.indexOf('name: "📥 输入队列"'));
-  assert.match(compliantView, /file\.path == "Home\/Compliant\.md"/);
-  assert.doesNotMatch(compliantView, /Needs review/);
-  assert.match(nonCompliantView, /file\.path == "Home\/Needs review\.md"/);
-  assert.doesNotMatch(nonCompliantView, /Compliant\.md/);
-  assert.match(base, /property_compliance: 'if\(!\(file\.path == "Home\/Needs review\.md"\), "已规范", "待规范"\)'/);
+  assert.match(base, /name: "⚠️ 属性待确认"/);
+  assert.match(base, /formula\.property_compliance == "待规范"/);
+  assert.doesNotMatch(base, /Home\/Compliant\.md|Home\/Needs review\.md/);
+  assert.ok(base.length < 12_000);
 });
 
-test("generated Base combines property audit and lifecycle workflow views", () => {
+test("generated Base exposes one review queue and the unified lifecycle views", () => {
   const settings = system();
   settings.scopeFolder = "Home";
   settings.excludedFolders = ["Home/Skills"];
@@ -631,31 +750,25 @@ test("generated Base combines property audit and lifecycle workflow views", () =
   assert.match(base, /file\.basename != "AGENTS"/);
   assert.match(base, /file\.basename != "DESIGN"/);
   assert.match(base, /file\.basename != "SKILL"/);
-  assert.match(base, /file\.hasProperty\("文件名"\)/);
+  assert.match(base, /!file\.hasProperty\("文件名"\)/);
   for (const name of [
-    "✅ 已符合规范",
-    "⚠️ 待规范",
-    "📥 输入队列",
-    "🌱 知识生长",
-    "🚧 项目推进",
-    "✅ 行动推进",
-    "✍️ 内容输出",
+    "⚠️ 属性待确认",
+    "待处理",
+    "进行中",
+    "已完成",
+    "已归档",
   ]) assert.match(base, new RegExp(`name: "${name}"`));
-  for (const removed of ["📖 正在阅读", "🕒 最近更新", "🗂️ 全部工作面"]) {
+  for (const removed of ["✅ 已符合规范", "📥 输入队列", "🌱 知识生长", "🚧 项目推进", "✅ 行动推进", "✍️ 内容输出"]) {
     assert.doesNotMatch(base, new RegExp(`name: "${removed}"`));
   }
   assert.match(base, /formula\.property_compliance/);
   assert.match(base, /knowgrove_managed:/);
-  assert.equal(base.match(/    sort:/g)?.length, 7);
-  assert.equal(base.match(/      - property: file\.mtime\n        direction: DESC/g)?.length, 7);
-  const inputView = base.slice(base.indexOf('name: "📥 输入队列"'), base.indexOf('name: "🌱 知识生长"'));
-  assert.match(inputView, /类型 == "输入资料"/);
-  for (const status of ["待整理", "待归类", "待沉淀", "处理失败"]) assert.match(inputView, new RegExp(`状态 == "${status}"`));
-  assert.doesNotMatch(inputView, /阅读状态 ==/);
-  const knowledgeView = base.slice(base.indexOf('name: "🌱 知识生长"'), base.indexOf('name: "🚧 项目推进"'));
-  assert.match(knowledgeView, /类型 == "随手笔记"/);
-  assert.match(knowledgeView, /类型 == "知识笔记"/);
-  assert.match(knowledgeView, /类型 == "复盘"/);
+  assert.equal(base.match(/    sort:/g)?.length, 5);
+  assert.equal(base.match(/      - property: file\.mtime\n        direction: DESC/g)?.length, 5);
+  for (const status of ["待处理", "进行中", "已完成", "已归档"]) {
+    assert.match(base, new RegExp(`状态 == "${status}"`));
+  }
+  for (const retired of ["待整理", "待归类", "待沉淀", "处理失败"]) assert.doesNotMatch(base, new RegExp(`状态 == "${retired}"`));
 });
 
 test("managed Base detection survives Obsidian stripping YAML comments", () => {
@@ -685,20 +798,22 @@ test("managed Base detection survives Obsidian stripping YAML comments", () => {
   ].join("\n")), true);
 });
 
-test("generated Base keeps input-only creation date compliance and all default exclusions", () => {
+test("generated Base requires creation time for all ordinary notes and keeps exclusions", () => {
   const base = buildPropertyBase(system());
   const compliance = base.split("\n").find((line) => line.startsWith("  property_compliance:")) ?? "";
-  assert.match(compliance, /\(类型 != "输入资料" \|\| file\.hasProperty\("创建时间"\)\)/);
+  assert.match(compliance, /file\.hasProperty\("创建时间"\)/);
   assert.equal(compliance.match(/file\.hasProperty\("创建时间"\)/g)?.length, 1);
+  assert.match(compliance, /\["待处理","进行中","已完成","已归档"\]\.contains\(note\["状态"\]\)/);
+  assert.match(compliance, /note\["主题"\]\.length <= 3/);
+  assert.match(compliance, /!file\.hasProperty\("title"\)/);
+  assert.match(compliance, /!file\.hasProperty\("capture_id"\)/);
   for (const folder of [
     "_KnowGrove",
     "Home/🕹️skills",
     "Home/🐘项目/亚马逊经营助手/知识库",
     "Home/🐘项目/亚马逊经营助手/amazon-seller-analyst",
   ]) assert.match(base, new RegExp(`!file\\.inFolder\\("${folder}"\\)`));
-  for (const type of ["输入资料", "随手笔记", "知识笔记", "项目笔记", "行动", "复盘", "内容输出"]) {
-    assert.match(base, new RegExp(`类型 == "${type}"`));
-  }
+  for (const status of ["待处理", "进行中", "已完成", "已归档"]) assert.match(base, new RegExp(`状态 == "${status}"`));
 });
 
 test("generated Base formulas support conditional required dimensions", () => {
@@ -718,5 +833,5 @@ test("generated Base formulas support conditional required dimensions", () => {
   });
   const base = buildPropertyBase(settings);
   const compliance = base.split("\n").find((line) => line.startsWith("  property_compliance:")) ?? "";
-  assert.match(compliance, /\(\(类型 != "项目笔记"\) \|\| file\.hasProperty\("交付物"\)\)/);
+  assert.match(compliance, /\(\(类型 != "项目笔记"\) \|\| \(file\.hasProperty\("交付物"\)/);
 });

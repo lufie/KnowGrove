@@ -81,7 +81,7 @@ export function buildPropertyMatrix(
   dimensions: PropertyDimensionConfig[],
   frontmatterByPath: ReadonlyMap<string, Record<string, unknown>>,
 ): PropertyMatrixModel {
-  const visibleIssues = audit.issues.filter((issue) => issue.property !== "文件名");
+  const visibleIssues = audit.issues;
   const issueProperties = new Set(visibleIssues.map((issue) => issue.property));
   const configuredOrder = dimensions
     .map((dimension) => dimension.name)

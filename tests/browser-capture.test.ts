@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildCaptureFailureNote,
+  buildCapturePlaceholderNote,
   articleCaptureTitle,
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
@@ -769,6 +770,29 @@ test("KeepRec sparse capture template remains eligible for automatic organizatio
   });
 });
 
+test("canonical sparse capture notes remain eligible until their lifecycle is completed", () => {
+  const pending = [
+    "---",
+    '类型: "输入资料"',
+    '状态: "待处理"',
+    '创建时间: "2026-08-30"',
+    '内容类型: "网页文章"',
+    '来源链接: "https://example.com/story"',
+    "---",
+    "",
+    "<!-- knowgrove:capture-note v=1 -->",
+    "",
+    "# 待处理文章",
+    "",
+    "https://example.com/story",
+  ].join("\n");
+  assert.deepEqual(detectLinkNoteCandidate(pending, "待处理文章"), {
+    url: "https://example.com/story",
+    title: "待处理文章",
+  });
+  assert.equal(detectLinkNoteCandidate(pending.replace('状态: "待处理"', '状态: "已完成"')), null);
+});
+
 test("capture body comparison ignores concurrent property-only changes", () => {
   const original = [
     "---",
@@ -961,7 +985,7 @@ test("Bilibili JSON subtitles and Whisper fragments become readable paragraphs",
   assert.ok(punctuationFreeTranscript.split("\n\n").every((paragraph) => paragraph.length <= 280));
 });
 
-test("browser capture builds a completed note while retaining source", () => {
+test("browser capture keeps document lifecycle pending while retaining source", () => {
   const raw = buildRawCaptureNote({
     pageType: "article",
     title: "测试文章",
@@ -977,10 +1001,40 @@ test("browser capture builds a completed note while retaining source", () => {
     mode: "article",
     bodyMarkdown: "### 正文\n\n整理内容",
   });
-  assert.match(completed, /KnowGrove采集状态: "已完成"/);
+  assert.match(completed, /^状态: "待处理"$/m);
+  assert.match(completed, /<!-- knowgrove:capture-note v=1 -->/);
+  assert.doesNotMatch(completed, /KnowGrove采集状态:/);
+  assert.doesNotMatch(completed, /^#\s+/m);
   assert.match(completed, /## 原文\n\n原始正文/);
   assert.match(completed, /## 内容摘要\n\n内容摘要/);
   assert.equal(safeCaptureFileName("a/b:c"), "a b c");
+});
+
+test("enhancing a user target preserves its existing lifecycle status", () => {
+  const generated = buildRawCaptureNote({
+    pageType: "article",
+    title: "已有笔记",
+    url: "https://example.com/existing",
+    source: "原始正文",
+    capturedAt: "2026-08-30T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  const result = {
+    summary: "摘要",
+    keyPoints: ["要点"],
+    mode: "article" as const,
+    bodyMarkdown: "整理正文",
+  };
+  const canonical = generated.replace('状态: "待处理"', '状态: "已归档"');
+  const canonicalCompleted = buildEnhancedCaptureNote(canonical, "article", result, "zh-CN", false);
+  assert.match(canonicalCompleted, /^状态: "已归档"$/m);
+  assert.doesNotMatch(canonicalCompleted, /^状态: "已完成"$/m);
+
+  const legacy = generated.replace('状态: "待处理"', 'status: "archived"');
+  const legacyCompleted = buildEnhancedCaptureNote(legacy, "article", result, "zh-CN", false);
+  assert.match(legacyCompleted, /^status: "archived"$/m);
+  assert.doesNotMatch(legacyCompleted, /^状态:/m);
 });
 
 test("capture file names stay below the cross-platform UTF-8 byte limit", () => {
@@ -1040,7 +1094,7 @@ test("article image placeholders survive AI rewriting and missing tokens are rec
   assert.doesNotMatch(restored, /KNOWGROVE_IMAGE/);
 });
 
-test("raw capture synchronizes the file name property with the article title", () => {
+test("raw capture uses the file title without duplicating a body H1", () => {
   const raw = buildRawCaptureNote({
     pageType: "article",
     title: "文章标题",
@@ -1051,12 +1105,73 @@ test("raw capture synchronizes the file name property with the article title", (
     statusProperty: "阅读状态",
     readingStatus: "在看",
   });
-  assert.match(raw, /^文件名: "文章标题"$/m);
-  assert.match(raw, /^# 文章标题$/m);
+  assert.match(raw, /^类型: "输入资料"$/m);
+  assert.match(raw, /^状态: "待处理"$/m);
+  assert.match(raw, /^创建时间: "2026-07-28"$/m);
+  assert.match(raw, /^内容类型: "网页文章"$/m);
+  assert.match(raw, /^来源链接: "https:\/\/example\.com"$/m);
+  assert.doesNotMatch(raw, /文件名:|标题:|采集时间:|KnowGrove采集状态:|阅读状态:/);
+  assert.doesNotMatch(raw, /^#\s+/m);
+  assert.match(raw, /<!-- knowgrove:capture-note v=1 -->\n\n## 原文\n\n正文/);
+});
+
+test("queued placeholders expose metadata and status without duplicating the file title", () => {
+  const placeholder = buildCapturePlaceholderNote({
+    pageType: "article",
+    url: "https://example.com/queued",
+    capturedAt: "2026-08-30T00:00:00.000Z",
+  });
+  assert.match(placeholder, /^来源链接: "https:\/\/example\.com\/queued"$/m);
+  assert.match(placeholder, /<!-- knowgrove:capture-note v=1 -->/);
+  assert.match(placeholder, /> KnowGrove 正在提取和整理这条内容。/);
+  assert.doesNotMatch(placeholder, /^#\s+/m);
+});
+
+test("capture writes an author only for articles with a nonempty extracted author", () => {
+  const article = buildRawCaptureNote({
+    pageType: "article",
+    title: "文章",
+    url: "https://example.com/article",
+    source: "正文",
+    author: "  可靠作者  ",
+    capturedAt: "2026-08-30T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  const video = buildRawCaptureNote({
+    pageType: "video",
+    title: "视频",
+    url: "https://example.com/video",
+    source: "转录",
+    author: "频道名称",
+    capturedAt: "2026-08-30T00:00:00.000Z",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  assert.match(article, /^作者: "可靠作者"$/m);
+  assert.doesNotMatch(video, /^作者:/m);
+});
+
+test("capture keeps reliable publication metadata and omits platform placeholder authors", () => {
+  const note = buildRawCaptureNote({
+    pageType: "article",
+    title: "来源文章",
+    url: "https://example.com/source",
+    source: "正文",
+    author: "AI / TrustMRR",
+    publishedAt: "2026-08-29T12:00:00+08:00",
+    capturedAt: "2026-08-30T00:00:00+08:00",
+    statusProperty: "阅读状态",
+    readingStatus: "在看",
+  });
+  assert.match(note, /^发布时间: "2026-08-29"$/m);
+  assert.doesNotMatch(note, /^作者:/m);
 });
 
 test("article titles use a sortable local date prefix without duplicating an existing prefix", () => {
   assert.equal(captureDatePrefix("2026/7/8"), "2026-07-08");
+  assert.equal(captureDatePrefix("2026-08-29T00:30:00+08:00"), "2026-08-29");
+  assert.equal(captureDatePrefix("2026-08-29T23:30:00-07:00"), "2026-08-29");
   assert.equal(
     datedArticleTitle("文章标题", "2026-07-28"),
     "2026-07-28-文章标题",
@@ -1165,10 +1280,32 @@ test("browser capture failure note leaves a final retryable state", () => {
     capturedAt: "2026-07-27T00:00:00.000Z",
     error: "net::ERR_CONNECTION_CLOSED",
   });
-  assert.match(failed, /KnowGrove采集状态: "部分完成"/);
+  assert.match(failed, /^状态: "待处理"$/m);
+  assert.match(failed, /^来源链接: "https:\/\/example\.com\/dashboard"$/m);
+  assert.match(failed, /<!-- knowgrove:capture-note v=1 -->/);
+  assert.doesNotMatch(failed, /KnowGrove采集状态:|标题:|采集时间:/);
+  assert.doesNotMatch(failed, /^#\s+/m);
   assert.match(failed, /重新打开来源页面后，可以再次点击言续重试/);
   assert.match(failed, /net::ERR_CONNECTION_CLOSED/);
   assert.doesNotMatch(failed, /KnowGrove 正在提取/);
+});
+
+test("interrupted canonical capture recovers its title from the file name when no H1 exists", () => {
+  const interrupted = detectInterruptedCapture([
+    "---",
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    "内容类型: \"网页文章\"",
+    "来源链接: \"https://example.com/story\"",
+    "---",
+    "",
+    "<!-- knowgrove:capture-note v=1 -->",
+    "",
+    "## 原文",
+    "",
+    "这是已经安全写入本地的原文内容。".repeat(12),
+  ].join("\n"), "2026-08-30-文件名标题");
+  assert.equal(interrupted?.title, "2026-08-30-文件名标题");
 });
 
 test("detectLocalMediaNoteCandidate matches mixed short and full media paths", () => {
@@ -1251,7 +1388,8 @@ test("AI-enhanced capture notes preserve the original marker protocol block", ()
   }, "zh-CN");
   assert.ok(enhanced.includes(markerBlock));
   assert.equal(enhanced.split(markerBlock).length - 1, 1);
-  assert.match(enhanced, /KnowGrove采集状态: "已完成"/);
+  assert.doesNotMatch(enhanced, /^状态: "已完成"$/m);
+  assert.doesNotMatch(enhanced, /KnowGrove采集状态:/);
 });
 
 test("whisperLanguageFromLocale maps locale to correct whisper language code", () => {

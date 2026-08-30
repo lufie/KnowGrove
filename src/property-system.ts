@@ -11,14 +11,58 @@ import type {
   PropertySystemSettings,
   PropertyValueType,
 } from "./types";
+import { normalizeNoteLifecycleStatus } from "./note-lifecycle";
 
 const INTERNAL_FRONTMATTER_KEYS = new Set(["position"]);
 const SPECIAL_PROPERTY_KEYS = new Set(["aliases", "cssclasses", "tags"]);
+const RETIRED_PROPERTY_KEYS = new Set(["文件名", "标题", "title", "capture_id", "KnowGrove采集状态"]);
 const SYSTEM_FILE_NAMES = new Set(["AGENTS.md", "DESIGN.md", "SKILL.md"]);
 const SYSTEM_PATH_SEGMENTS = new Set([".git", "node_modules"]);
-const SYSTEM_DIMENSION_IDS = new Set(["file-name", "type", "status", "domain", "topic"]);
+const SYSTEM_DIMENSION_IDS = new Set([
+  "type",
+  "status",
+  "creation-date",
+  "content-type",
+  "reading-status",
+  "domain",
+  "topic",
+  "source-url",
+  "author",
+  "published-date",
+  "project",
+  "source-note",
+  "related-notes",
+  "destination",
+]);
 export const PROPERTY_BASE_MANAGED_MARKER = "# KnowGrove managed property Base";
-export const PROPERTY_RULE_SCHEMA_VERSION = 8;
+export const PROPERTY_RULE_SCHEMA_VERSION = 11;
+
+export function needsPendingPropertyReviewStorageMigration(value: unknown): boolean {
+  return value === null || typeof value !== "object" || Array.isArray(value);
+}
+
+export const CANONICAL_PROPERTY_ORDER = [
+  "类型", "状态", "领域", "主题", "创建时间", "内容类型", "发布时间", "来源链接", "作者", "阅读状态",
+  "所属项目", "来源笔记", "关联笔记", "沉淀去向",
+] as const;
+
+const LEGACY_CONTENT_TYPE_VALUES = new Map([
+  ["公众号文章", "网页文章"],
+  ["邮件简报", "邮件"],
+  ["语音", "音频"],
+]);
+
+const LEGACY_DOMAIN_VALUES = new Map([
+  ["工作", "职业与工作"],
+  ["职业发展", "职业与工作/职业发展"],
+  ["个人成长", "个人成长与生活"],
+  ["生活", "个人成长与生活"],
+  ["个人成长/生活", "个人成长与生活"],
+  ["🎲投资", "投资"],
+  ["职业与工作/求职与面试", "职业与工作/职业发展"],
+  ["AI产品/智能体", "AI产品/AI应用与智能体"],
+  ["AI产品/大模型应用", "AI产品/AI应用与智能体"],
+]);
 
 interface PropertyFlowRule {
   viewName: string;
@@ -38,7 +82,7 @@ export const PROPERTY_FLOW_RULES = {
   input: {
     viewName: "📥 输入队列",
     types: ["输入资料"],
-    statuses: ["待整理", "待归类", "待沉淀", "处理失败"],
+    statuses: ["待处理", "进行中"],
   },
   knowledge: {
     viewName: "🌱 知识生长",
@@ -47,17 +91,17 @@ export const PROPERTY_FLOW_RULES = {
   project: {
     viewName: "🚧 项目推进",
     types: ["项目笔记"],
-    statuses: ["构思中", "进行中", "等待中"],
+    statuses: ["待处理", "进行中"],
   },
   action: {
     viewName: "✅ 行动推进",
     types: ["行动"],
-    statuses: ["待办", "进行中", "等待中"],
+    statuses: ["待处理", "进行中"],
   },
   output: {
     viewName: "✍️ 内容输出",
     types: ["内容输出"],
-    statuses: ["选题", "提纲", "草稿", "待发布", "已发布", "已复盘"],
+    statuses: ["待处理", "进行中"],
   },
 } as const satisfies Record<keyof PropertyFlowCounts, PropertyFlowRule>;
 
@@ -73,9 +117,10 @@ function cloneValue<T>(value: T): T {
 export function normalizePropertyDimensions(
   dimensions: PropertyDimensionConfig[],
   creationDateProperty: string,
+  canonicalDimensions?: PropertyDimensionConfig[],
 ): PropertyDimensionConfig[] {
   const creationProperty = creationDateProperty.trim() || "创建时间";
-  return dimensions.map((dimension) => {
+  const normalizedDimensions = dimensions.map((dimension) => {
     const inferredOrigin = dimension.origin
       ?? (SYSTEM_DIMENSION_IDS.has(dimension.id)
         ? "system"
@@ -96,15 +141,49 @@ export function normalizePropertyDimensions(
     if (normalized.aiManaged && normalized.fillStrategy === "empty-list") normalized.fillStrategy = "none";
     if (normalized.name === creationProperty) {
       normalized.origin = "system";
-      normalized.required = false;
-      normalized.requiredForTypes = ["输入资料"];
+      normalized.required = true;
+      normalized.requiredForTypes = [];
       normalized.valueType = "date";
       normalized.aiManaged = false;
       normalized.enumMode = "open";
-      normalized.description = "输入资料进入知识库的日期；只对输入资料必填。";
+      normalized.description = "普通笔记首次进入知识库的日期，格式为 YYYY-MM-DD。";
     }
     return normalized;
   });
+  if (!canonicalDimensions) return normalizedDimensions;
+
+  const retiredNames = new Set(["文件名", "标题"]);
+  const retiredIds = new Set(["file-name"]);
+  const retained = normalizedDimensions.filter((dimension) => (
+    !retiredIds.has(dimension.id)
+    && !retiredNames.has(dimension.name)
+    && dimension.origin !== "inferred"
+  ));
+  const claimed = new Set<PropertyDimensionConfig>();
+  const canonical = canonicalDimensions.map((template) => {
+    const saved = retained.find((dimension) => (
+      dimension.id === template.id
+      || dimension.name === template.name
+      || template.aliases.includes(dimension.name)
+      || dimension.aliases.includes(template.name)
+    ));
+    if (saved) claimed.add(saved);
+    const preserveAllowedValues = ![
+      "author", "source-url", "creation-date", "published-date", "status", "content-type", "domain",
+      "project", "source-note", "related-notes", "destination",
+    ].includes(template.id);
+    const allowedValues = preserveAllowedValues
+      ? Array.from(new Set([...(template.allowedValues ?? []), ...(saved?.allowedValues ?? [])]))
+      : [...template.allowedValues];
+    return {
+      ...cloneValue(saved ?? {}),
+      ...cloneValue(template),
+      allowedValues,
+      requiredForTypes: [...(template.requiredForTypes ?? [])],
+    };
+  });
+  const userDimensions = retained.filter((dimension) => !claimed.has(dimension) && dimension.origin === "user");
+  return [...canonical, ...userDimensions];
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -244,7 +323,7 @@ export function analyzePropertyInventory(
   for (const property of inventory) {
     if (suggestedDimensions.length >= settings.dimensions.length + 8) break;
     if (property.files < threshold || represented.has(property.name.toLocaleLowerCase())) continue;
-    if (SPECIAL_PROPERTY_KEYS.has(property.name)) continue;
+    if (SPECIAL_PROPERTY_KEYS.has(property.name) || RETIRED_PROPERTY_KEYS.has(property.name)) continue;
     suggestedDimensions.push({
       id: makeDimensionId(property.name, ids),
       name: property.name,
@@ -367,6 +446,25 @@ function auditReadingStatus(
       ? finishedValue
       : "";
   if (current && aliasTarget && current !== aliasTarget) {
+    if (current === "未读") {
+      return {
+        issues: [issue(
+          snapshot,
+          dimension,
+          "invalid-value",
+          "未读状态将改为缺省属性，避免为每篇笔记写入冗余值",
+          true,
+          current,
+          undefined,
+        )],
+        operations: [{
+          kind: "delete",
+          property: propertyName,
+          before: current,
+          reason: "未读由阅读状态缺省表示",
+        }],
+      };
+    }
     return {
       issues: [issue(
         snapshot,
@@ -408,6 +506,16 @@ function auditPresentValue(
   const issues: PropertyAuditIssue[] = [];
   const operations: PropertyChangeOperation[] = [];
   let normalizedValue = value;
+  const mergeSetOperation = (after: unknown, reason: string): void => {
+    const existing = [...operations].reverse()
+      .find((operation) => operation.kind === "set" && operation.property === dimension.name);
+    if (existing) {
+      existing.after = cloneValue(after);
+      existing.reason = `${existing.reason}；${reason}`;
+      return;
+    }
+    operations.push({ kind: "set", property: dimension.name, before: cloneValue(value), after: cloneValue(after), reason });
+  };
 
   if (dimension.valueType === "multi" && !Array.isArray(value)) {
     const scalar = scalarText(value);
@@ -425,6 +533,70 @@ function auditPresentValue(
       operations.push({ kind: "set", property: dimension.name, before: cloneValue(value), after: normalizedValue, reason: "统一为单值" });
     } else {
       issues.push(issue(snapshot, dimension, "wrong-type", "应为单值，但当前包含多个值", false, value));
+    }
+  }
+
+  if (dimension.name === "状态" && typeof normalizedValue === "string") {
+    const lifecycleStatus = normalizeNoteLifecycleStatus(normalizedValue);
+    if (lifecycleStatus && lifecycleStatus !== normalizedValue.trim()) {
+      issues.push(issue(
+        snapshot,
+        dimension,
+        "invalid-value",
+        `历史状态“${normalizedValue}”将统一为“${lifecycleStatus}”`,
+        true,
+        normalizedValue,
+        lifecycleStatus,
+      ));
+      const existingTypeRepair = [...operations].reverse()
+        .find((operation) => operation.kind === "set" && operation.property === dimension.name);
+      if (existingTypeRepair) {
+        existingTypeRepair.after = lifecycleStatus;
+        existingTypeRepair.reason = "统一为单值并迁移四态生命周期";
+      } else {
+        operations.push({
+          kind: "set",
+          property: dimension.name,
+          before: cloneValue(value),
+          after: lifecycleStatus,
+          reason: "统一为四态生命周期",
+        });
+      }
+      normalizedValue = lifecycleStatus;
+    }
+  }
+
+  if (dimension.name === "内容类型" && typeof normalizedValue === "string") {
+    const replacement = LEGACY_CONTENT_TYPE_VALUES.get(normalizedValue.trim());
+    if (replacement) {
+      issues.push(issue(snapshot, dimension, "invalid-value", `历史内容类型“${normalizedValue}”将统一为“${replacement}”`, true, normalizedValue, replacement));
+      mergeSetOperation(replacement, "统一内容类型别名");
+      normalizedValue = replacement;
+    }
+  }
+
+  if (dimension.name === "领域" && Array.isArray(normalizedValue)) {
+    const mapped = Array.from(new Set((normalizedValue as unknown[]).map((item) => (
+      typeof item === "string" ? LEGACY_DOMAIN_VALUES.get(item.trim()) ?? item.trim() : item
+    ))));
+    if (!valuesEqual(mapped, normalizedValue)) {
+      issues.push(issue(snapshot, dimension, "invalid-value", "历史领域已映射到当前领域树", true, normalizedValue, mapped));
+      mergeSetOperation(mapped, "迁移历史领域路径");
+      normalizedValue = mapped;
+    }
+  }
+
+  if (dimension.name === "主题" && Array.isArray(normalizedValue)) {
+    const plain = Array.from(new Set((normalizedValue as unknown[]).map((item) => (
+      typeof item === "string" ? item.trim().replace(/^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$/, "$1") : item
+    ))));
+    if (!valuesEqual(plain, normalizedValue)) {
+      issues.push(issue(snapshot, dimension, "invalid-value", "主题使用纯文本概念，不使用 Wikilink 包装", true, normalizedValue, plain));
+      mergeSetOperation(plain, "统一主题为纯文本");
+      normalizedValue = plain;
+    }
+    if (plain.length > 3) {
+      issues.push(issue(snapshot, dimension, "invalid-value", "主题最多保留 3 个，需要结合正文人工确认主概念", false, plain));
     }
   }
 
@@ -528,6 +700,11 @@ function auditDimension(
   }
 
   const value = frontmatter[dimension.name];
+  if (!required && (value === null || value === "" || (Array.isArray(value) && value.length === 0))) {
+    issues.push(issue(snapshot, dimension, "invalid-value", "可选属性没有有效值，应省略该字段", true, value, undefined));
+    operations.push({ kind: "delete", property: dimension.name, before: cloneValue(value), reason: "删除空的可选属性" });
+    return { issues, operations };
+  }
   if (aliases.length) {
     issues.push(issue(snapshot, dimension, "alias-conflict", `规范属性与旧属性同时存在：${aliases.join("、")}`, false, value));
   }
@@ -594,6 +771,34 @@ export function auditPropertySnapshots(
     const operations: PropertyChangeOperation[] = [];
     const frontmatter = snapshot.frontmatter ?? {};
     const noteType = scalarText(frontmatter.类型);
+    for (const property of RETIRED_PROPERTY_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(frontmatter, property)) continue;
+      const dimension: PropertyDimensionConfig = {
+        id: `retired-${property}`,
+        name: property,
+        description: "普通笔记已停用的重复或机器属性。",
+        aliases: [],
+        valueType: "text",
+        required: false,
+        allowedValues: [],
+        fillStrategy: "none",
+        defaultValue: "",
+      };
+      fileIssues.push(issue(
+        snapshot,
+        dimension,
+        "retired-property",
+        `“${property}”已停用，确认后将从 Frontmatter 删除`,
+        true,
+        frontmatter[property],
+      ));
+      operations.push({
+        kind: "delete",
+        property,
+        before: cloneValue(frontmatter[property]),
+        reason: "删除普通笔记的已停用属性",
+      });
+    }
     for (const dimension of settings.dimensions) {
       const required = dimension.required
         || (noteType !== null && (dimension.requiredForTypes ?? []).includes(noteType));
@@ -670,6 +875,10 @@ export function auditPropertySnapshots(
 }
 
 export function operationStillApplies(frontmatter: Record<string, unknown>, operation: PropertyChangeOperation): boolean {
+  if (operation.kind === "delete") {
+    return Object.prototype.hasOwnProperty.call(frontmatter, operation.property)
+      && valuesEqual(frontmatter[operation.property], operation.before);
+  }
   if (operation.kind === "rename") {
     return operation.alias !== undefined
       && !Object.prototype.hasOwnProperty.call(frontmatter, operation.property)
@@ -680,35 +889,44 @@ export function operationStillApplies(frontmatter: Record<string, unknown>, oper
 }
 
 export function applyOperation(frontmatter: Record<string, unknown>, operation: PropertyChangeOperation): void {
+  if (operation.kind === "delete") {
+    delete frontmatter[operation.property];
+    return;
+  }
   frontmatter[operation.property] = cloneValue(operation.after);
   if (operation.kind === "rename" && operation.alias) delete frontmatter[operation.alias];
 }
 
+export function reorderCanonicalFrontmatter(frontmatter: Record<string, unknown>): void {
+  const snapshot = Object.entries(frontmatter);
+  const canonical = new Set<string>(CANONICAL_PROPERTY_ORDER);
+  for (const key of Object.keys(frontmatter)) delete frontmatter[key];
+  for (const key of CANONICAL_PROPERTY_ORDER) {
+    const item = snapshot.find(([name]) => name === key);
+    if (item) frontmatter[item[0]] = item[1];
+  }
+  for (const [key, value] of snapshot) {
+    if (!canonical.has(key)) frontmatter[key] = value;
+  }
+}
+
 export function initializeTrackedNoteFrontmatter(
   frontmatter: Record<string, unknown>,
-  basename: string,
+  _basename: string,
   settings: PropertySystemSettings,
-  readingProperty: string,
-  readingValue: string,
+  _readingProperty: string,
+  _readingValue: string,
   createdDate: string,
   deferredProperties: ReadonlySet<string> = new Set<string>(),
 ): boolean {
   const hasOwn = (property: string) => Object.prototype.hasOwnProperty.call(frontmatter, property);
-  if (!settings.initializeTrackedNotes) {
-    if (hasOwn(readingProperty)) return false;
-    frontmatter[readingProperty] = readingValue;
-    return true;
-  }
+  if (!settings.initializeTrackedNotes) return false;
 
   const creationDateProperty = settings.creationDateProperty.trim() || "创建时间";
   const requiredValues: Array<[string, unknown]> = [
-    ["文件名", basename],
     ["类型", settings.trackedNoteType],
     ["状态", settings.trackedNoteStatus],
     [creationDateProperty, createdDate],
-    [readingProperty, readingValue],
-    ["领域", []],
-    ["主题", []],
   ];
   const additions = new Map<string, unknown>();
   for (const [property, value] of requiredValues) {
@@ -716,18 +934,7 @@ export function initializeTrackedNoteFrontmatter(
     if (!hasOwn(property) && !additions.has(property)) additions.set(property, cloneValue(value));
   }
 
-  const originalEntries = Object.entries(frontmatter);
-  const fileNameWasFirst = originalEntries[0]?.[0] === "文件名";
-  const changed = additions.size > 0 || !fileNameWasFirst;
-  if (!changed) return false;
-
-  const fileNameValue = hasOwn("文件名") ? frontmatter.文件名 : additions.get("文件名");
-  for (const key of Object.keys(frontmatter)) delete frontmatter[key];
-  frontmatter.文件名 = cloneValue(fileNameValue);
-  additions.delete("文件名");
-  for (const [property, value] of originalEntries) {
-    if (property !== "文件名") frontmatter[property] = value;
-  }
+  if (!additions.size) return false;
   for (const [property, value] of additions) frontmatter[property] = value;
   return true;
 }
@@ -764,43 +971,38 @@ function quotedFilter(expression: string): string {
   return yamlSingleQuoted(expression);
 }
 
-function typeFilterLines(types: readonly string[]): string[] {
-  if (types.length === 1) return [quotedFilter(`类型 == "${formulaString(types[0] ?? "")}"`)];
-  return [
-    "or:",
-    ...types.map((type) => `  - ${quotedFilter(`类型 == "${formulaString(type)}"`)}`),
-  ];
+function baseNoteProperty(name: string): string {
+  return `note[${JSON.stringify(name)}]`;
 }
 
-function filePathFilterLines(paths: string[]): string[] {
-  if (!paths.length) return [quotedFilter("false")];
-  if (paths.length === 1) return [quotedFilter(`file.path == "${formulaString(paths[0] ?? "")}"`)];
-  return [
-    "or:",
-    ...paths.map((path) => `  - ${quotedFilter(`file.path == "${formulaString(path)}"`)}`),
-  ];
+function baseList(values: readonly string[]): string {
+  return JSON.stringify(values);
 }
 
-function lifecycleFilterLines(types: readonly string[], statuses?: readonly string[], extra?: string): string[] {
-  const typeLines = typeFilterLines(types);
-  const clauses: string[][] = [];
-  clauses.push(typeLines.length === 1 ? typeLines : ["or:", ...typeLines.slice(1)]);
-  if (statuses?.length) {
-    clauses.push(statuses.length === 1
-      ? [quotedFilter(`状态 == "${formulaString(statuses[0] ?? "")}"`)]
-      : [
-          "or:",
-          ...statuses.map((status) => `  - ${quotedFilter(`状态 == "${formulaString(status)}"`)}`),
-        ]);
+function baseDimensionValidation(dimension: PropertyDimensionConfig): string {
+  const property = baseNoteProperty(dimension.name);
+  const checks: string[] = [];
+  if (dimension.valueType === "multi") checks.push(`${property}.isType("list")`);
+  else checks.push(`!${property}.isType("list")`);
+  if (dimension.valueType === "checkbox") checks.push(`${property}.isType("boolean")`);
+  if (dimension.valueType === "date") {
+    checks.push(`(${property}.isType("date") || (${property}.isType("string") && /^\\d{4}-\\d{2}-\\d{2}(?:[T ].*)?$/.matches(${property})))`);
   }
-  if (extra) clauses.push([quotedFilter(extra)]);
-  if (clauses.length === 1) return clauses[0] ?? [];
-  return [
-    "and:",
-    ...clauses.flatMap((clause) => clause.length === 1
-      ? [`  - ${clause[0]}`]
-      : [`  - ${clause[0]}`, ...clause.slice(1).map((line) => `  ${line}`)]),
-  ];
+  if (dimension.enumMode === "closed" && dimension.allowedValues.length) {
+    const allowed = baseList(dimension.allowedValues);
+    checks.push(dimension.valueType === "multi"
+      ? `${property}.filter(!${allowed}.contains(value)).isEmpty()`
+      : `${allowed}.contains(${property})`);
+  }
+  if (dimension.name === "领域") checks.push(`${property}.length >= 1`, `${property}.length <= 2`);
+  if (dimension.name === "主题") {
+    checks.push(
+      `${property}.length >= 1`,
+      `${property}.length <= 3`,
+      `${property}.filter(/^\\[\\[.*\\]\\]$/.matches(value.toString())).isEmpty()`,
+    );
+  }
+  return checks.length ? checks.join(" && ") : "true";
 }
 
 function appendPropertyBaseView(lines: string[], view: PropertyBaseViewDefinition): void {
@@ -824,7 +1026,7 @@ function appendPropertyBaseView(lines: string[], view: PropertyBaseViewDefinitio
   if (view.limit !== undefined) lines.push(`    limit: ${view.limit}`);
 }
 
-export function buildPropertyBase(settings: PropertySystemSettings, audit?: PropertyAudit): string {
+export function buildPropertyBase(settings: PropertySystemSettings, _audit?: PropertyAudit): string {
   const filters = ['file.ext == "md"'];
   const scope = normalizePathValue(settings.scopeFolder);
   if (scope) filters.push(`file.inFolder("${formulaString(scope)}")`);
@@ -841,8 +1043,9 @@ export function buildPropertyBase(settings: PropertySystemSettings, audit?: Prop
   const complianceParts: string[] = [];
   for (const dimension of settings.dimensions) {
     const hasProperty = `file.hasProperty("${formulaString(dimension.name)}")`;
+    const validProperty = baseDimensionValidation(dimension);
     if (dimension.required) {
-      complianceParts.push(hasProperty);
+      complianceParts.push(`(${hasProperty} && ${validProperty})`);
       continue;
     }
     const requiredForTypes = Array.from(new Set(dimension.requiredForTypes ?? []));
@@ -850,22 +1053,24 @@ export function buildPropertyBase(settings: PropertySystemSettings, audit?: Prop
       const doesNotApply = requiredForTypes
         .map((type) => `类型 != "${formulaString(type)}"`)
         .join(" && ");
-      complianceParts.push(`((${doesNotApply}) || ${hasProperty})`);
+      complianceParts.push(`((${doesNotApply}) || (${hasProperty} && ${validProperty}))`);
+      continue;
     }
+    complianceParts.push(`(!${hasProperty} || (${validProperty}))`);
   }
   if (!settings.dimensions.some((dimension) => dimension.name === creationDateProperty)) {
-    complianceParts.push(
-      `(类型 != "输入资料" || file.hasProperty("${formulaString(creationDateProperty)}"))`,
-    );
+    complianceParts.push(`file.hasProperty("${formulaString(creationDateProperty)}")`);
+  }
+  for (const dimension of settings.dimensions) {
+    for (const alias of dimension.aliases) {
+      complianceParts.push(`!file.hasProperty("${formulaString(alias)}")`);
+    }
+  }
+  for (const property of RETIRED_PROPERTY_KEYS) {
+    complianceParts.push(`!file.hasProperty("${formulaString(property)}")`);
   }
   const ruleComplianceTest = complianceParts.length ? complianceParts.join(" && ") : "true";
-  const complianceTest = audit
-    ? audit.nonCompliantPaths.length
-      ? `!(${audit.nonCompliantPaths
-        .map((path) => `file.path == "${formulaString(path)}"`)
-        .join(" || ")})`
-      : "true"
-    : ruleComplianceTest;
+  const complianceTest = ruleComplianceTest;
 
   const auditProperties = Array.from(new Set(settings.dimensions.map((dimension) => dimension.name)));
   const auditOrder = [
@@ -878,7 +1083,6 @@ export function buildPropertyBase(settings: PropertySystemSettings, audit?: Prop
   const propertyDisplayNames = new Map<string, string>();
   for (const dimension of settings.dimensions) propertyDisplayNames.set(dimension.name, dimension.name);
   for (const [property, displayName] of Object.entries({
-    文件名: "文件名属性",
     类型: "类型",
     状态: "状态",
     阅读状态: "阅读",
@@ -927,52 +1131,22 @@ export function buildPropertyBase(settings: PropertySystemSettings, audit?: Prop
     "views:",
   );
 
+  const standardOrder = [
+    "file.name", "类型", "状态", "领域", "主题", creationDateProperty, "内容类型", "发布时间", "来源链接",
+    "作者", "阅读状态", "所属项目", "来源笔记", "关联笔记", "沉淀去向", "formula.更新日期",
+  ];
   const views: PropertyBaseViewDefinition[] = [
     {
-      name: "✅ 已符合规范",
-      filterLines: audit
-        ? filePathFilterLines(audit.compliantPaths)
-        : [quotedFilter('formula.property_compliance == "已规范"')],
+      name: "⚠️ 属性待确认",
+      filterLines: [quotedFilter('formula.property_compliance == "待规范"')],
+      order: auditOrder,
+    },
+    ...["待处理", "进行中", "已完成", "已归档"].map((status): PropertyBaseViewDefinition => ({
+      name: status,
+      filterLines: [quotedFilter(`状态 == "${status}"`)],
       groupBy: "类型",
-      order: auditOrder,
-    },
-    {
-      name: "⚠️ 待规范",
-      filterLines: audit
-        ? filePathFilterLines(audit.nonCompliantPaths)
-        : [quotedFilter('formula.property_compliance == "待规范"')],
-      order: auditOrder,
-    },
-    {
-      name: PROPERTY_FLOW_RULES.input.viewName,
-      filterLines: lifecycleFilterLines(PROPERTY_FLOW_RULES.input.types, PROPERTY_FLOW_RULES.input.statuses),
-      groupBy: "状态",
-      order: ["file.name", "阅读状态", "状态", "内容类型", "领域", "主题", creationDateProperty, "沉淀去向", "formula.更新日期"],
-    },
-    {
-      name: PROPERTY_FLOW_RULES.knowledge.viewName,
-      filterLines: lifecycleFilterLines(PROPERTY_FLOW_RULES.knowledge.types),
-      groupBy: "状态",
-      order: ["file.name", "类型", "状态", "领域", "主题", "来源笔记", "关联笔记", "formula.更新日期", "formula.距今天数"],
-    },
-    {
-      name: PROPERTY_FLOW_RULES.project.viewName,
-      filterLines: lifecycleFilterLines(PROPERTY_FLOW_RULES.project.types, PROPERTY_FLOW_RULES.project.statuses),
-      groupBy: "状态",
-      order: ["file.name", "状态", "所属项目", "截止日期", "交付物", "领域", "关联笔记", "formula.更新日期"],
-    },
-    {
-      name: PROPERTY_FLOW_RULES.action.viewName,
-      filterLines: lifecycleFilterLines(PROPERTY_FLOW_RULES.action.types, PROPERTY_FLOW_RULES.action.statuses),
-      groupBy: "状态",
-      order: ["file.name", "状态", "优先级", "截止日期", "所属项目", "领域", "formula.更新日期"],
-    },
-    {
-      name: PROPERTY_FLOW_RULES.output.viewName,
-      filterLines: lifecycleFilterLines(PROPERTY_FLOW_RULES.output.types, PROPERTY_FLOW_RULES.output.statuses),
-      groupBy: "状态",
-      order: ["file.name", "状态", "所属项目", "发布渠道", "发布日期", "来源笔记", "领域", "主题", "formula.更新日期"],
-    },
+      order: standardOrder,
+    })),
   ];
   for (const view of views) appendPropertyBaseView(lines, view);
   return `${lines.join("\n")}\n`;

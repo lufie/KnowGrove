@@ -4,7 +4,7 @@
 
 KnowGrove ist ein lokaler Wissensworkflow für alle, die schneller sammeln als ordnen. Originalmaterial bleibt im Obsidian-Vault, wird strukturiert, mit Themen und Belegen verknüpft und in wiederverwendbare Ergebnisse verwandelt.
 
-Aktuelle Quellcodeversion: `2.8.30`
+Aktuelle Quellcodeversion: `2.8.31`
 
 ## Ein Workflow von der Quelle zum Ergebnis
 
@@ -23,7 +23,7 @@ Der Vault bleibt die maßgebliche Datenquelle. KnowGrove erfasst keine Client-Te
 - **Word-ähnliche Live-Vorschau:** Überschriften, Listen, Aufgaben, Bilder, Codeblöcke und Tabellen bleiben formatiert editierbar. Beim Entfernen leerer Auswahlzeilen werden GFM-Tabellengrenzen erhalten oder repariert, damit Tabellen in Live-Vorschau und Leseansicht weiter gerendert werden.
 - **Schnelle, wiederherstellbare Erfassung:** Vor der zeitaufwendigen Warteschlange wird eine sofort öffnbare minimale Markdown-Datei erstellt und zurückgelesen; KI- und Medienverarbeitung laufen im Hintergrund weiter.
 - **Navigation in langen Dokumenten:** Anfang und Ende der Überschriftenliste bleiben erreichbar, die Dateiposition bleibt sichtbar und das Scrollen im Dokument wird nicht übernommen.
-- **Eigenschaftsverwaltung:** Vorgeschlagene Änderungen vorab prüfen und bestätigt stapelweise anwenden, ohne unbekannte Felder zu überschreiben.
+- **Eigenschaftsverwaltung:** Notizen folgen einem kompakten Standard aus Typ, Lebenszyklusstatus, Bereich, Thema und nachvollziehbaren Quelldaten; Migrationen werden geprüft, in der Vorschau bestätigt und überschreiben weder unbekannte Felder noch Benutzerinhalte.
 - **Themen und Recherche:** Alle Themen und zugehörigen Quellen durchsuchen sowie Bereiche, Themen und Forschungsfragen strukturieren.
 - **Kommentare und Blockverweise:** Markierten Text kommentieren und mit nativen Obsidian-Blockeinbettungen wiederverwenden.
 - **Belegbasiertes Schreiben:** Aus ausgewählten Quellen Gliederungen, Berichte, Langtexte und kanalspezifische Fassungen erstellen.

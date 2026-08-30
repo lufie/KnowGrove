@@ -27,10 +27,12 @@ import {
   whisperLanguageFromLocale,
   buildWhisperPcmConversionArgs,
   buildCaptureFailureNote,
+  buildCapturePlaceholderNote,
   buildEnhancedCaptureNote,
   buildRawCaptureNote,
   articleCaptureTitle,
   captureDatePrefix,
+  captureOptionalDate,
   classifyBrowserCaptureResource,
   classifyBrowserCaptureUrl,
   detectInterruptedCapture,
@@ -789,7 +791,7 @@ export class BrowserCaptureServer {
     if (file.extension !== "md") throw new Error("只能解析 Markdown 链接笔记");
     const content = await this.host.app.vault.read(file);
     const candidate = detectLinkNoteCandidate(content, file.basename);
-    const interrupted = candidate ? null : detectInterruptedCapture(content);
+    const interrupted = candidate ? null : detectInterruptedCapture(content, file.basename);
     if (!candidate && !interrupted) {
       throw new Error("当前笔记不是待解析的轻量链接笔记，也没有可恢复的原文或逐字稿");
     }
@@ -1019,7 +1021,7 @@ export class BrowserCaptureServer {
         }
         const existingContent = await this.host.app.vault.cachedRead(candidateFile);
         const candidate = detectLinkNoteCandidate(existingContent, candidateFile.basename);
-        const interrupted = candidate ? null : detectInterruptedCapture(existingContent);
+        const interrupted = candidate ? null : detectInterruptedCapture(existingContent, candidateFile.basename);
         const existingUrl = candidate?.url ?? interrupted?.url;
         if (!existingUrl || !sameCaptureResourceUrl(existingUrl, url)) {
           sendJson(response, 409, { error: "目标笔记中的来源链接与当前页面不一致，已停止覆盖" }, origin);
@@ -1260,7 +1262,6 @@ export class BrowserCaptureServer {
       job.status === "completed"
       && result
       && !result.storageVerified
-      && /KnowGrove采集状态:\s*["']?已完成["']?/i.test(stored)
     ) {
       return this.updateJob(job.id, {
         result: {
@@ -1343,7 +1344,7 @@ export class BrowserCaptureServer {
         const current = await this.host.app.vault.read(noteFile);
         this.originalTargetContents.set(id, { path: noteFile.path, content: current });
         if (job.resumeFromRaw) {
-          interrupted = detectInterruptedCapture(current);
+          interrupted = detectInterruptedCapture(current, noteFile.basename);
           if (!interrupted || interrupted.url !== job.url) {
             throw new Error("可恢复的原文或逐字稿已经变化，已停止自动覆盖");
           }
@@ -1454,21 +1455,25 @@ export class BrowserCaptureServer {
         );
         if (job.targetPath) {
           await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter: Record<string, unknown>) => {
-            frontmatter["文件名"] = noteFile!.basename;
-            frontmatter["标题"] = extracted!.title;
-            if (
-              job.url
-              && !Object.prototype.hasOwnProperty.call(frontmatter, "来源")
-            ) {
-              frontmatter["来源"] = job.url;
+            const hasOwn = (property: string) => Object.prototype.hasOwnProperty.call(frontmatter, property);
+            if (!hasOwn("类型") && !hasOwn("type")) frontmatter["类型"] = "输入资料";
+            if (!hasOwn("状态") && !hasOwn("status")) {
+              frontmatter["状态"] = "待处理";
+            }
+            if (!hasOwn("创建时间") && !hasOwn("created") && !hasOwn("采集时间")) {
+              frontmatter["创建时间"] = captureDatePrefix(new Date().toISOString(), noteFile!.stat.ctime);
             }
             if (!Object.prototype.hasOwnProperty.call(frontmatter, "内容类型")) frontmatter["内容类型"] = captureContentType(job.pageType);
-            if (!Object.prototype.hasOwnProperty.call(frontmatter, "采集时间")) frontmatter["采集时间"] = new Date().toISOString();
-            const statusProperty = this.host.getSettings().statusProperty;
-            if (statusProperty && !Object.prototype.hasOwnProperty.call(frontmatter, statusProperty)) {
-              frontmatter[statusProperty] = this.host.getSettings().readingStatus;
+            const publishedDate = captureOptionalDate(extracted!.publishedAt);
+            if (publishedDate && !hasOwn("发布时间") && !hasOwn("published_at") && !hasOwn("publishedAt") && !hasOwn("发布日期")) {
+              frontmatter["发布时间"] = publishedDate;
             }
-            frontmatter["KnowGrove采集状态"] = "处理中";
+            if (job.url && !hasOwn("来源链接") && !hasOwn("来源") && !hasOwn("source_url")) {
+              frontmatter["来源链接"] = job.url;
+            }
+            if (job.pageType === "article" && extracted!.author?.trim() && !hasOwn("作者") && !hasOwn("author")) {
+              frontmatter["作者"] = extracted!.author.trim();
+            }
           });
           const current = await this.host.app.vault.read(noteFile);
           lastWrittenContent = replaceGeneratedFrontmatter(rawNote, current);
@@ -1510,14 +1515,20 @@ export class BrowserCaptureServer {
       ) {
         throw new Error("处理期间笔记正文被手动修改；原始内容已保留，AI 结果未覆盖");
       }
-      const enhanced = buildEnhancedCaptureNote(lastWrittenContent, job.pageType, ai, outputLocale);
+      const enhanced = buildEnhancedCaptureNote(
+        lastWrittenContent,
+        job.pageType,
+        ai,
+        outputLocale,
+        false,
+      );
       const completedContent = latestContent === lastWrittenContent
         ? enhanced
         : replaceGeneratedFrontmatter(enhanced, latestContent);
       await this.host.app.vault.modify(noteFile, completedContent);
       if (latestContent !== lastWrittenContent) {
         await this.host.app.fileManager.processFrontMatter(noteFile, (frontmatter: Record<string, unknown>) => {
-          frontmatter["KnowGrove采集状态"] = "已完成";
+          delete frontmatter["KnowGrove采集状态"];
         });
       }
       await this.updateJob(id, {
@@ -1554,6 +1565,11 @@ export class BrowserCaptureServer {
             capturedAt: new Date().toISOString(),
             error: message,
           }));
+        } else if (!job.targetPath) {
+          await this.host.app.fileManager.processFrontMatter(liveNoteFile, (frontmatter: Record<string, unknown>) => {
+            frontmatter["状态"] = "待处理";
+            delete frontmatter["KnowGrove采集状态"];
+          });
         }
         await this.updateJob(id, {
           status: "partial",
@@ -1653,19 +1669,11 @@ export class BrowserCaptureServer {
       this.reservedPlaceholderPaths,
     );
     const path = normalizePath(reservation.path);
-    const placeholder = [
-      "---",
-      `来源: ${JSON.stringify(job.url)}`,
-      `内容类型: ${JSON.stringify(captureContentType(job.pageType))}`,
-      `采集时间: ${JSON.stringify(new Date().toISOString())}`,
-      "KnowGrove采集状态: \"处理中\"",
-      "---",
-      "",
-      `# ${job.title || baseName}`,
-      "",
-      "> KnowGrove 正在提取和整理这条内容。",
-      "",
-    ].join("\n");
+    const placeholder = buildCapturePlaceholderNote({
+      pageType: job.pageType,
+      url: job.url,
+      capturedAt: new Date().toISOString(),
+    });
     try {
       const file = await this.host.app.vault.create(path, placeholder);
       this.host.suppressNewNoteInitialization(path);

@@ -25,25 +25,21 @@ export const PDSA_STAGES = [
     code: "P",
     title: "捕获与计划",
     description: "刚进入系统，先确认内容角色和下一步。",
-    statuses: ["待整理", "待归类", "种子", "构思中", "待办", "选题"],
   },
   {
     code: "D",
     title: "加工与执行",
     description: "正在阅读、提炼、推进或形成草稿。",
-    statuses: ["待沉淀", "生长中", "进行中", "提纲", "草稿"],
   },
   {
     code: "S",
     title: "研究与复盘",
     description: "比较证据、提炼命题、识别冲突并形成判断。",
-    statuses: ["待复核", "等待中", "待发布", "已复盘"],
   },
   {
     code: "A",
     title: "沉淀与交付",
     description: "已经形成可复用知识、完成行动或正式发布。",
-    statuses: ["已沉淀", "常青", "已完成", "已发布"],
   },
 ] as const;
 
@@ -96,7 +92,8 @@ export function normalizePropertyTaxonomy(
   fallbackDomains: string[],
 ): PropertyTaxonomySettings {
   const fallback = parseDomainPaths(fallbackDomains.join("\n"));
-  const domains = normalizeNodes(saved?.domains, fallback);
+  const preservesExplicitTree = saved?.source === "ai" || saved?.source === "custom";
+  const domains = preservesExplicitTree ? normalizeNodes(saved?.domains, fallback) : fallback;
   const proposalSource = saved?.proposal;
   const proposalDomains = normalizeNodes(proposalSource?.domains);
   const proposal = proposalDomains.length && proposalSource
@@ -143,7 +140,8 @@ export function applyTaxonomyToDimensions(
     }
     const existing = result[index];
     if (!existing) continue;
-    if (["类型", "状态", "领域", "主题"].includes(template.name)) existing.aiManaged = true;
+    if (["领域", "主题"].includes(template.name)) existing.aiManaged = true;
+    if (["类型", "状态"].includes(template.name)) existing.aiManaged = false;
     if (template.name === "类型" || template.name === "状态") existing.allowedValues = [...template.allowedValues];
     if (template.name === "领域") existing.allowedValues = domainPaths(taxonomy.domains);
   }

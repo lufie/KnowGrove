@@ -280,8 +280,10 @@ import {
   isManagedPropertyBaseContent,
   isPropertyGovernedPath,
   localDateFromTimestamp,
+  needsPendingPropertyReviewStorageMigration,
   normalizePropertyDimensions,
   operationStillApplies,
+  reorderCanonicalFrontmatter,
   PROPERTY_BASE_MANAGED_MARKER,
   PROPERTY_RULE_SCHEMA_VERSION,
   shouldInitializeTrackedNote,
@@ -294,6 +296,7 @@ import {
   parseAITaxonomyResponse,
   parseDomainPaths,
 } from "./property-taxonomy";
+import { normalizeNoteLifecycleStatus } from "./note-lifecycle";
 import {
   PROPERTY_WORKBENCH_VIEW_TYPE,
   PropertyWorkbenchView,
@@ -311,8 +314,8 @@ import {
   type KnowledgeWorkspaceType,
   type KnowledgeThemeSummary,
   type PropertyAudit,
-  type PropertyAuditChange,
   type PropertyCaptureStatus,
+  type PendingPropertyReview,
   type PropertyDimensionConfig,
   type PropertyNoteSnapshot,
   type PropertyAIRepairPreview,
@@ -391,6 +394,8 @@ interface AIEnrichmentResult {
   frontmatter: Record<string, unknown>;
   confidence?: number;
   reason?: string;
+  requiresReview?: boolean;
+  reviewReasons?: string[];
 }
 
 interface AIBatchContext extends AIBatchPromptItem {
@@ -421,6 +426,7 @@ export default class KnowGrovePlugin extends Plugin {
     settings: createDefaultSettings(),
     references: {},
     attachmentUsage: {},
+    pendingPropertyReviews: {},
   };
   settings: KnowGroveSettings = createDefaultSettings();
   private tooltipEl?: HTMLElement;
@@ -1849,12 +1855,22 @@ export default class KnowGrovePlugin extends Plugin {
       : defaults.propertySystem.dimensions;
     const creationDateProperty = savedPropertySystem?.creationDateProperty
       ?? defaults.propertySystem.creationDateProperty;
-    const dimensions = normalizePropertyDimensions(savedDimensions, creationDateProperty);
+    const dimensions = normalizePropertyDimensions(
+      savedDimensions,
+      creationDateProperty,
+      defaults.propertySystem.dimensions,
+    );
     const savedDomainValues = dimensions.find((dimension) => dimension.name === "领域")?.allowedValues
       ?? defaults.propertySystem.taxonomy.domains.map((node) => node.name);
     const taxonomy = normalizePropertyTaxonomy(savedPropertySystem?.taxonomy, savedDomainValues);
     const needsRuleMigration = saved.schemaVersion !== PROPERTY_RULE_SCHEMA_VERSION
       || JSON.stringify(savedDimensions) !== JSON.stringify(dimensions);
+    const needsPendingReviewStorageMigration = needsPendingPropertyReviewStorageMigration(
+      saved.pendingPropertyReviews,
+    );
+    const needsReadingSettingsMigration = savedSettings.statusProperty !== defaults.statusProperty
+      || savedSettings.readingStatus !== defaults.readingStatus
+      || savedSettings.finishedStatus !== defaults.finishedStatus;
     const needsAutoProcessMigration = savedAIProperties?.autoEnrichNewNotes !== autoProcessNewNotes
       || savedBrowserCapture?.autoProcessLinkNotes !== autoProcessNewNotes
       || savedPropertySystem?.initializeTrackedNotes !== autoProcessNewNotes;
@@ -1898,6 +1914,9 @@ export default class KnowGrovePlugin extends Plugin {
       settings: {
         ...defaults,
         ...(savedSettings ?? {}),
+        statusProperty: defaults.statusProperty,
+        readingStatus: defaults.readingStatus,
+        finishedStatus: defaults.finishedStatus,
         autoMarkNewNotes: autoProcessNewNotes,
         defaultTargetFolder: "",
         defaultTargetHeading: "评论",
@@ -1954,6 +1973,8 @@ export default class KnowGrovePlugin extends Plugin {
           ...defaults.propertySystem,
           ...(savedPropertySystem ?? {}),
           initializeTrackedNotes: autoProcessNewNotes,
+          trackedNoteStatus: normalizeNoteLifecycleStatus(savedPropertySystem?.trackedNoteStatus)
+            ?? defaults.propertySystem.trackedNoteStatus,
           excludedFolders: Array.isArray(savedPropertySystem?.excludedFolders)
             ? [...savedPropertySystem.excludedFolders]
             : [...defaults.propertySystem.excludedFolders],
@@ -1992,6 +2013,24 @@ export default class KnowGrovePlugin extends Plugin {
             : [],
         }]];
       })),
+      pendingPropertyReviews: Object.fromEntries(Object.entries(saved.pendingPropertyReviews ?? {}).flatMap(([path, raw]) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+        const record = raw as Partial<PendingPropertyReview>;
+        if (!record.properties || typeof record.properties !== "object" || Array.isArray(record.properties)) return [];
+        const normalizedPath = normalizePath(path);
+        return [[normalizedPath, {
+          path: normalizedPath,
+          basename: typeof record.basename === "string" ? record.basename : normalizedPath.replace(/^.*\//, "").replace(/\.md$/i, ""),
+          properties: record.properties,
+          expected: record.expected && typeof record.expected === "object" && !Array.isArray(record.expected) ? record.expected : {},
+          confidence: typeof record.confidence === "number" ? record.confidence : undefined,
+          reason: typeof record.reason === "string" ? record.reason : undefined,
+          reviewReasons: Array.isArray(record.reviewReasons)
+            ? record.reviewReasons.filter((item): item is string => typeof item === "string")
+            : [],
+          createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+        } satisfies PendingPropertyReview]];
+      })),
     };
     this.settings = this.data.settings;
     if (
@@ -2003,6 +2042,8 @@ export default class KnowGrovePlugin extends Plugin {
       || needsExternalMarkdownSettingsMigration
       || needsAIProviderMigration
       || needsFocusSettingsRemoval
+      || needsReadingSettingsMigration
+      || needsPendingReviewStorageMigration
     ) {
       await this.savePluginData();
     }
@@ -3092,6 +3133,22 @@ export default class KnowGrovePlugin extends Plugin {
     );
   }
 
+  private existingTopicCatalog(): string[] {
+    const topics = new Set<string>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!isPropertyGovernedPath(file.path, this.settings.propertySystem)) continue;
+      const cache = this.app.metadataCache.getFileCache(file);
+      const raw: unknown = cache?.frontmatter?.["主题"];
+      const values = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+      for (const value of values) {
+        if (typeof value !== "string") continue;
+        const normalized = value.trim().replace(/^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$/, "$1");
+        if (normalized) topics.add(normalized);
+      }
+    }
+    return Array.from(topics).sort((left, right) => left.localeCompare(right, "zh-CN")).slice(0, 2_000);
+  }
+
   private async generateAIPropertyForFile(
     file: TFile,
     overwrite: boolean,
@@ -3130,9 +3187,12 @@ export default class KnowGrovePlugin extends Plugin {
         selected?.configuredModel,
       ),
       taxonomy: this.settings.propertySystem.taxonomy,
+      existingTopics: this.existingTopicCatalog(),
     });
     const raw = await runAIProvider(settings, prompt, availability, this.getAISecret(settings.provider));
-    const result = parseAIPropertyResponse(raw, dimensions, context.frontmatter);
+    const result = parseAIPropertyResponse(raw, dimensions, context.frontmatter, {
+      existingTopics: this.existingTopicCatalog(),
+    });
     return { context, dimensions, result };
   }
 
@@ -3142,7 +3202,17 @@ export default class KnowGrovePlugin extends Plugin {
     dimensions: PropertyDimensionConfig[],
     generated: AIPropertyGeneration,
     overwrite: boolean,
+    allowReviewRequired = false,
   ): Promise<AIEnrichmentResult> {
+    const blocksAllAutomaticWrites = generated.reviewReasons?.includes("AI 置信度不足") === true;
+    const propertiesToApply = generated.requiresReview && !allowReviewRequired
+      ? blocksAllAutomaticWrites
+        ? {}
+        : Object.fromEntries(Object.entries(generated.properties).filter(([property]) => property !== "主题"))
+      : generated.properties;
+    const withheldProperties = Object.fromEntries(
+      Object.entries(generated.properties).filter(([property]) => !Object.prototype.hasOwnProperty.call(propertiesToApply, property)),
+    );
     const before = new Map(dimensions.map((dimension) => [
       dimension.name,
       JSON.stringify(context.frontmatter[dimension.name]),
@@ -3150,19 +3220,38 @@ export default class KnowGrovePlugin extends Plugin {
     let applied = 0;
     let updatedFrontmatter = context.frontmatter;
     await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-      for (const [property, value] of Object.entries(generated.properties)) {
+      for (const [property, value] of Object.entries(propertiesToApply)) {
         if (JSON.stringify(frontmatter[property]) !== before.get(property)) continue;
         if (!overwrite && !isEmptyPropertyValue(frontmatter[property])) continue;
         frontmatter[property] = value;
         applied += 1;
       }
+      if (applied) reorderCanonicalFrontmatter(frontmatter);
       updatedFrontmatter = JSON.parse(JSON.stringify(frontmatter)) as Record<string, unknown>;
     });
+    if (!allowReviewRequired && generated.requiresReview && Object.keys(withheldProperties).length) {
+      this.data.pendingPropertyReviews[file.path] = {
+        path: file.path,
+        basename: file.basename,
+        properties: withheldProperties,
+        expected: Object.fromEntries(Object.keys(withheldProperties).map((property) => [property, context.frontmatter[property]])),
+        confidence: generated.confidence,
+        reason: generated.reason,
+        reviewReasons: [...(generated.reviewReasons ?? [])],
+        createdAt: new Date().toISOString(),
+      };
+      await this.savePluginData();
+    } else if (this.data.pendingPropertyReviews[file.path]) {
+      delete this.data.pendingPropertyReviews[file.path];
+      await this.savePluginData();
+    }
     return {
       applied,
       frontmatter: updatedFrontmatter,
       confidence: generated.confidence,
       reason: generated.reason,
+      requiresReview: generated.requiresReview,
+      reviewReasons: generated.reviewReasons,
     };
   }
 
@@ -3345,6 +3434,7 @@ export default class KnowGrovePlugin extends Plugin {
           promptItems,
           this.settings.propertySystem.taxonomy,
           AI_BATCH_BODY_CHARACTERS,
+          this.existingTopicCatalog(),
         );
         const raw = await runAIProvider(
           this.settings.aiProperties,
@@ -3352,7 +3442,7 @@ export default class KnowGrovePlugin extends Plugin {
           availability,
           this.getAISecret(this.settings.aiProperties.provider),
         );
-        generated = parseAIBatchPropertyResponse(raw, promptItems);
+        generated = parseAIBatchPropertyResponse(raw, promptItems, { existingTopics: this.existingTopicCatalog() });
         if (!generated.size) throw new Error("模型没有返回可用的批量属性结果");
         break;
       } catch (error) {
@@ -3819,6 +3909,44 @@ export default class KnowGrovePlugin extends Plugin {
     return this.latestPropertyCapture ? { ...this.latestPropertyCapture } : undefined;
   }
 
+  getPendingPropertyReviews(): PendingPropertyReview[] {
+    return Object.values(this.data.pendingPropertyReviews)
+      .map((record) => ({
+        ...record,
+        properties: JSON.parse(JSON.stringify(record.properties)) as Record<string, unknown>,
+        expected: JSON.parse(JSON.stringify(record.expected)) as Record<string, unknown>,
+        reviewReasons: [...record.reviewReasons],
+      }))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  async applyPendingPropertyReview(path: string): Promise<void> {
+    const review = this.data.pendingPropertyReviews[path];
+    if (!review) throw new Error("这条 AI 建议已处理或不存在");
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      delete this.data.pendingPropertyReviews[path];
+      await this.savePluginData();
+      throw new Error("对应笔记已不存在");
+    }
+    const context = await this.readAIPropertyContext(file);
+    for (const [property, expected] of Object.entries(review.expected)) {
+      if (JSON.stringify(context.frontmatter[property]) !== JSON.stringify(expected)) {
+        throw new Error(`“${property}”在建议生成后已变化，请重新检查属性`);
+      }
+    }
+    const requested = new Set(Object.keys(review.properties));
+    const dimensions = this.settings.propertySystem.dimensions.filter((dimension) => requested.has(dimension.name));
+    await this.applyAIPropertyGeneration(file, context, dimensions, {
+      properties: review.properties,
+      confidence: review.confidence,
+      reason: review.reason,
+      requiresReview: true,
+      reviewReasons: review.reviewReasons,
+    }, true, true);
+    await this.scanPropertyWorkspace(new Set([path]));
+  }
+
   private updatePropertyCapture(status: PropertyCaptureStatus): void {
     this.latestPropertyCapture = status;
     this.refreshPropertyWorkbenches();
@@ -3836,6 +3964,7 @@ export default class KnowGrovePlugin extends Plugin {
     this.settings.propertySystem.dimensions = normalizePropertyDimensions(
       dimensions,
       this.settings.propertySystem.creationDateProperty,
+      createDefaultSettings().propertySystem.dimensions,
     ).map((dimension) => ({
       ...dimension,
       aliases: [...dimension.aliases],
@@ -3941,48 +4070,11 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   private async preparePropertyAuditPreview(audit: PropertyAudit): Promise<void> {
-    const changes = audit.changes.flatMap((change) => {
-      const operations = change.operations.filter((operation) => operation.property === "文件名");
-      return operations.length ? [{ ...change, operations }] : [];
-    });
-    if (changes.length) {
-      await this.synchronizeFileNameProperties(changes);
-      const refreshed = await this.scanPropertyWorkspace(new Set(changes.map((change) => change.path)));
-      this.refreshPropertyWorkbenches(refreshed);
-      audit = refreshed.audit;
-    }
-    const visibleIssues = audit.issues.filter((issue) => issue.property !== "文件名");
-    if (!visibleIssues.length) {
-      new Notice(changes.length ? "文件名属性已自动与文章标题同步，当前没有其他待修正属性" : "当前没有待修正属性");
+    if (!audit.issues.length) {
+      new Notice("当前没有待修正属性");
       return;
     }
     new PropertyAuditModal(this, audit).open();
-  }
-
-  private async synchronizeFileNameProperties(changes: PropertyAuditChange[]): Promise<void> {
-    const failures: string[] = [];
-    for (const change of changes) {
-      const file = this.app.vault.getAbstractFileByPath(change.path);
-      if (!(file instanceof TFile)) {
-        failures.push(change.path);
-        continue;
-      }
-      try {
-        await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-          for (const operation of change.operations) {
-            if (operation.property === "文件名" && frontmatter[operation.property] !== file.basename) {
-              frontmatter[operation.property] = file.basename;
-            }
-          }
-        });
-      } catch (error) {
-        failures.push(change.path);
-        console.error(`KnowGrove: failed to synchronize file name property: ${change.path}`, error);
-      }
-    }
-    if (failures.length) {
-      new Notice(`有 ${failures.length} 篇文章的文件名属性暂未同步，请稍后重新检查`, 8000);
-    }
   }
 
   openPropertyIssueDetail(audit: PropertyAudit, path: string): void {
@@ -4045,6 +4137,7 @@ export default class KnowGrovePlugin extends Plugin {
             promptItems,
             this.settings.propertySystem.taxonomy,
             AI_BATCH_BODY_CHARACTERS,
+            this.existingTopicCatalog(),
           );
           const raw = await runAIProvider(
             this.settings.aiProperties,
@@ -4052,7 +4145,7 @@ export default class KnowGrovePlugin extends Plugin {
             availability,
             this.getAISecret(this.settings.aiProperties.provider),
           );
-          generated = parseAIBatchPropertyResponse(raw, promptItems);
+          generated = parseAIBatchPropertyResponse(raw, promptItems, { existingTopics: this.existingTopicCatalog() });
           if (!generated.size) throw new Error("模型没有返回可用的批量属性结果");
           break;
         } catch (error) {
@@ -4100,7 +4193,7 @@ export default class KnowGrovePlugin extends Plugin {
         throw new Error(`“${dimension.name}”在预览后已变化，请重新生成 AI 建议`);
       }
     }
-    return this.applyAIPropertyGeneration(abstract, context, dimensions, generated, true);
+    return this.applyAIPropertyGeneration(abstract, context, dimensions, generated, true, true);
   }
 
   async executePropertyAudit(audit: PropertyAudit, options: { silent?: boolean } = {}): Promise<boolean> {
@@ -4121,6 +4214,7 @@ export default class KnowGrovePlugin extends Plugin {
             }
           }
           for (const operation of change.operations) applyOperation(frontmatter, operation);
+          reorderCanonicalFrontmatter(frontmatter);
         });
         const modified = await this.app.vault.read(abstract);
         applied.push({ file: abstract, original, modified });
@@ -5795,7 +5889,7 @@ export default class KnowGrovePlugin extends Plugin {
             name: draft.name,
             type: draft.type,
             objective: draft.objective,
-            status: draft.type === "项目" ? "构思中" : "进行中",
+            status: draft.type === "项目" ? "待处理" : "进行中",
             domains: draft.domains,
             themes: draft.themes,
             parentName: draft.parentName,
@@ -6833,10 +6927,12 @@ export default class KnowGrovePlugin extends Plugin {
           localDateFromTimestamp(file.stat.ctime),
           deferredProperties,
         );
+        reorderCanonicalFrontmatter(frontmatter);
         initializedFrontmatter = JSON.parse(JSON.stringify(frontmatter)) as Record<string, unknown>;
       });
       this.refreshReadingViews();
       let aiError: string | undefined;
+      let aiReviewReasons: string[] = [];
       if (deferredProperties.size) {
         this.updatePropertyCapture({
           path: file.path,
@@ -6851,6 +6947,7 @@ export default class KnowGrovePlugin extends Plugin {
         try {
           const result = await this.enrichFileWithAI(file, false);
           initializedFrontmatter = result.frontmatter;
+          aiReviewReasons = result.reviewReasons ?? [];
         } catch (error) {
           aiError = error instanceof Error ? error.message : String(error);
           console.error(`KnowGrove: AI property enrichment failed for ${file.path}`, error);
@@ -6861,7 +6958,7 @@ export default class KnowGrovePlugin extends Plugin {
         basename: file.basename,
         frontmatter: initializedFrontmatter,
       }], this.settings.propertySystem);
-      const needsReview = audit.nonCompliantFiles > 0 || Boolean(aiError);
+      const needsReview = audit.nonCompliantFiles > 0 || Boolean(aiError) || aiReviewReasons.length > 0;
       this.updatePropertyCapture({
         path: file.path,
         basename: file.basename,
@@ -6869,7 +6966,9 @@ export default class KnowGrovePlugin extends Plugin {
         message: aiError
           ? `基础属性已保存；AI 处理失败：${aiError}`
           : needsReview
-            ? "AI 已完成处理，仍有属性未通过当前规则。"
+            ? aiReviewReasons.length
+              ? `AI 已完成可安全写入的属性；${aiReviewReasons.join("；")}。`
+              : "AI 已完成处理，仍有属性未通过当前规则。"
             : "基础属性和 AI 语义属性已完成，已进入“输入队列”。",
         updatedAt: new Date().toISOString(),
       });
@@ -7186,11 +7285,6 @@ export default class KnowGrovePlugin extends Plugin {
     if (changed) {
       await this.savePluginData();
       for (const record of sourceChanged) await this.syncManagedReference(record);
-    }
-    if (isPropertyGovernedPath(file.path, this.settings.propertySystem)) {
-      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-        if (frontmatter.文件名 !== file.basename) frontmatter.文件名 = file.basename;
-      });
     }
     this.refreshReadingViews();
   }

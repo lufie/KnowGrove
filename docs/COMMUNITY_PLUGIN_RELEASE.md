@@ -4,7 +4,9 @@
 
 ## 1. 当前结论
 
-`2.8.29` 已完成公开 GitHub Release、三项标准资产摘要回读和当前 Vault 升级回读；社区公开目录仍显示 `2.8.28`，因此该缓存刷新尚未冒充完成。`2.8.30` 是本轮 README 与市场简介对齐版本：不改变运行逻辑、Vault 数据、设置或桥接协议，只更新英文与九种本地化 README 的首屏价值、Capture / Process / Organize / Create 工作流、数据边界、版本信息，以及社区清单的简洁英文简介。只有私有实现合并、公开白名单导出、精确标签和非草稿 GitHub Release、三资产摘要回读、当前 Vault 升级回读与社区目录版本核对完成后，才分别更新 GitHub 发布与市场刷新状态。
+`2.8.31` 正在承接完整属性规范 V2 的公开发布：私有 Platform 发布基线与插件实现已经合入，治理范围内 1,375 篇普通笔记已经按备份、预览、原子写入和回读流程迁移完成；公开白名单导出、精确标签、GitHub Release、公开地址双 Vault 回装及社区目录刷新仍按独立门禁执行。在这些门禁逐项完成前，状态必须表述为“私有实现与存量迁移已完成 / 公开发布对齐中”。
+
+`2.8.30` 已完成 README 与市场简介对齐：不改变运行逻辑、Vault 数据、设置或桥接协议，只更新英文与九种本地化 README 的首屏价值、Capture / Process / Organize / Create 工作流、数据边界、版本信息，以及社区清单的简洁英文简介。私有 Platform PR `#89`、Obsidian PR `#90` 与公开白名单 PR `lufie/KnowGrove#30` 均已合并；精确标签和非草稿 GitHub Release `https://github.com/lufie/KnowGrove/releases/tag/2.8.30` 已发布，三项标准资产具有 GitHub attestation、与生产构建逐字节一致，并已回装重载到当前 Documents Vault，原设置、任务队列与附件历史保持不变。社区公开目录截至 2026-08-29 仍显示 `2.8.28` 和旧简介，因此该历史版本状态为“GitHub 已发布 / 市场刷新待确认”；当次未重复执行全新空白 Vault 安装。
 
 KnowGrove 源代码仓库已经公开。社区自动审核对 `2.6.1` 给出失败结果；修复版本 `2.7.3` 消除了原来的 3 个阻断 Error。`2.8.4` 后续因一处 `obsidianmd/no-static-styles-assignment` 阻断 Error 未通过自动审核，`2.8.8` 已修复并于 2026-08-14 完成重新扫描。`2.8.9` 报告中的 6 类 TypeScript 类型安全源码 Warning 和 2 条 CSS 兼容性 Warning 已由 `2.8.10` 与 `2.8.11` 逐项清理；`2.8.11` 已同步到社区目录，正式扫描状态为 `Completed`，源码 Warning 0、CSS Warning 0、Error 0，发布资产、网络请求、依赖和可复现构建均通过。仍有 2 条必要桌面行为 Warning 与 2 条能力 Recommendation，属于准确能力披露，不是源码质量错误。当前社区条目仍明确标记为“尚未由 Obsidian 员工人工审核”，不能描述为已经通过人工审核。
 

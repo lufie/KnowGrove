@@ -194,7 +194,7 @@ export function isManagedKnowledgeWorkspaceBase(content: string): boolean {
 }
 
 function workspaceStatus(type: KnowledgeWorkspaceType): string {
-  return type === "项目" ? "构思中" : "进行中";
+  return type === "项目" ? "待处理" : "进行中";
 }
 
 export function buildKnowledgeWorkspaceNote(workspace: KnowledgeWorkspaceSummary, now = new Date()): string {

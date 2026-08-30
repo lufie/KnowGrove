@@ -53,6 +53,17 @@ export interface DesktopRecordingSnapshot {
   notePath?: string;
 }
 
+const CAPTURE_NOTE_MARKER = "<!-- knowgrove:capture-note v=1 -->";
+
+function localCalendarDate(date: Date): string {
+  const valid = Number.isNaN(date.getTime()) ? new Date() : date;
+  return [
+    valid.getFullYear(),
+    String(valid.getMonth() + 1).padStart(2, "0"),
+    String(valid.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 export type LocalMediaImportType = "audio" | "video";
 
 export interface LocalMediaImportProgress {
@@ -115,18 +126,16 @@ export function buildLocalMediaImportNote(
   mediaType: LocalMediaImportType,
   importedAt: Date,
 ): string {
-  const mediaProperty = mediaType === "video" ? "video" : "audio";
-  const contentType = mediaType === "video" ? "视频" : "语音";
+  const contentType = mediaType === "video" ? "视频" : "音频";
   return [
     "---",
-    `文件名: ${JSON.stringify(title)}`,
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${JSON.stringify(localCalendarDate(importedAt))}`,
     `内容类型: ${JSON.stringify(contentType)}`,
-    `${mediaProperty}: ${JSON.stringify(`[[${mediaPath}]]`)}`,
-    `采集时间: ${JSON.stringify(importedAt.toISOString())}`,
-    "KnowGrove采集状态: \"待处理\"",
     "---",
     "",
-    `# ${title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     `![[${mediaPath}]]`,
     "",
@@ -224,12 +233,14 @@ export function formatRecordingDuration(milliseconds: number): string {
 export function buildBatchLinkNote(url: string, title: string, capturedAt: Date): string {
   return [
     "---",
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${JSON.stringify(localCalendarDate(capturedAt))}`,
+    "内容类型: \"网页文章\"",
     `来源链接: ${JSON.stringify(url)}`,
-    `采集时间: ${JSON.stringify(capturedAt.toISOString())}`,
-    "KnowGrove采集状态: \"待处理\"",
     "---",
     "",
-    `# ${title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     url,
     "",
@@ -252,18 +263,13 @@ export function buildDesktopRecordingNote(
     : ["- 无"];
   return [
     "---",
-    `文件名: ${JSON.stringify(manifest.title)}`,
-    "type: voice-session",
-    `audio: ${JSON.stringify(`[[${audioPath}]]`)}`,
-    "tags: [voice-note]",
-    `recording_session_id: ${JSON.stringify(manifest.id)}`,
-    `recording_started_at: ${JSON.stringify(manifest.createdAt)}`,
-    `recording_ended_at: ${JSON.stringify(manifest.endedAt ?? new Date().toISOString())}`,
-    `recording_interruptions: ${manifest.interruptions.length}`,
-    "KnowGrove采集状态: \"待处理\"",
+    "类型: \"输入资料\"",
+    "状态: \"待处理\"",
+    `创建时间: ${JSON.stringify(localCalendarDate(new Date(manifest.createdAt)))}`,
+    "内容类型: \"音频\"",
     "---",
     "",
-    `# ${manifest.title}`,
+    CAPTURE_NOTE_MARKER,
     "",
     `![[${audioPath}]]`,
     "",

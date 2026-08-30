@@ -18,6 +18,7 @@ function issueKindLabel(issue: PropertyAuditIssue): string {
   if (issue.kind === "invalid-value") return "值不在当前规范";
   if (issue.kind === "wrong-type") return "格式不符合规范";
   if (issue.kind === "legacy-alias") return "旧属性名";
+  if (issue.kind === "retired-property") return "已停用属性";
   return "需要确认";
 }
 

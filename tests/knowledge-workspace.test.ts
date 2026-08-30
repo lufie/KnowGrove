@@ -82,7 +82,7 @@ test("project and life workspace notes expose workflow-specific sections and nat
     name: "项目B",
     type: "项目",
     objective: "完成公众号选题与交付",
-    status: "构思中",
+    status: "待处理",
     domains: ["AI产品"],
     themes: ["WorkBuddy"],
     parentName: "项目A",
