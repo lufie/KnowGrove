@@ -6192,3 +6192,12 @@ body.knowgrove-reorder-dragging * {
 .knowgrove-scroll-anchor-lock {
   overflow-anchor: none;
 }
+.knowgrove-markdown-opener-notice-message {
+  margin-bottom: var(--size-4-2);
+}
+
+.knowgrove-markdown-opener-notice-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-end;
+}

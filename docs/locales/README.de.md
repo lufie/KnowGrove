@@ -4,7 +4,7 @@
 
 KnowGrove ist ein lokaler Wissensworkflow für alle, die schneller sammeln als ordnen. Originalmaterial bleibt im Obsidian-Vault, wird strukturiert, mit Themen und Belegen verknüpft und in wiederverwendbare Ergebnisse verwandelt.
 
-Aktuelle Quellcodeversion: `2.8.32`
+Aktuelle Quellcodeversion: `2.8.33`
 
 ## Ein Workflow von der Quelle zum Ergebnis
 
@@ -18,6 +18,7 @@ Der Vault bleibt die maßgebliche Datenquelle. KnowGrove erfasst keine Client-Te
 
 - **Später lesen:** Gemeinsamer Eingang, Filter für ungelesen/gelesen und optionales Markieren am Dokumentende.
 - **Browser- und Mobil-Erfassung:** Artikel, Videos, Links und kurze Sprachnotizen im Vault speichern.
+- **Markdown per Doppelklick auf dem Mac:** Beim ersten Aktivieren installiert KnowGrove den Öffner im Hintergrund, versucht `.md` und `.markdown` mit Obsidian zu verknüpfen und prüft das Systemergebnis. Nur wenn macOS die Änderung ablehnt, erscheint eine einmalige Bestätigung; eine spätere Benutzerwahl wird nie still überschrieben.
 - **Inhaltsverarbeitung:** Artikelbilder bleiben erhalten; bei Videos werden Untertitel bevorzugt und nur ohne Untertitel lokal transkribiert.
 - **KI-Bild zu Text:** Einzelne Bilder oder alle Bilder einer Notiz werden umgewandelt; Tabellen und strukturierter Text erscheinen unter dem Originalbild. Der Hintergrundprozess zeigt echte Phasen, lässt sich sicher abbrechen und führt direkt zum Ergebnis.
 - **Word-ähnliche Live-Vorschau:** Überschriften, Listen, Aufgaben, Bilder, Codeblöcke und Tabellen bleiben formatiert editierbar. Beim Entfernen leerer Auswahlzeilen werden GFM-Tabellengrenzen erhalten oder repariert, damit Tabellen in Live-Vorschau und Leseansicht weiter gerendert werden.
