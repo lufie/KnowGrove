@@ -194,6 +194,10 @@ export interface DesktopCaptureSettings {
   recordingFolder: string;
   /** 是否启用 macOS Markdown 默认打开器。 */
   externalMarkdownOpenerEnabled: boolean;
+  /** 是否已经完成过首次自动安装尝试，避免每次启动重复修改系统默认应用。 */
+  externalMarkdownOpenerSetupAttempted: boolean;
+  /** 最近一次系统回读是否确认 KnowGrove 是默认应用，用于只修复一次意外丢失的关联。 */
+  externalMarkdownOpenerWasDefault: boolean;
   /** 导入验证成功后，是否把 Vault 外源文件移到系统废纸篓。 */
   externalMarkdownDeleteSourceAfterImport: boolean;
   /** 留空时沿用阅读列表/收集箱路径。 */
@@ -517,6 +521,8 @@ export const DEFAULT_SETTINGS: KnowGroveSettings = {
     linkFolder: "",
     recordingFolder: "",
     externalMarkdownOpenerEnabled: true,
+    externalMarkdownOpenerSetupAttempted: false,
+    externalMarkdownOpenerWasDefault: false,
     externalMarkdownDeleteSourceAfterImport: true,
     externalMarkdownFolder: "",
   },

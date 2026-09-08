@@ -4,6 +4,8 @@
 
 ## 1. 当前结论
 
+`2.8.33` 是 macOS 外部 Markdown 打开体验改进版：用户首次在桌面端启用插件后，KnowGrove 会在不阻塞 Obsidian 启动的前提下异步检查 Markdown 打开器；缺少辅助打开器时自动安装并尝试将 `.md` 关联到 KnowGrove，系统回读确认成功后保持静默。若 macOS 拒绝修改或仍需 Finder 确认，插件只显示一次可操作提示。插件不会在每次启动时抢回用户后来主动选择的默认应用，只会在首次启用、用户手动恢复，或曾由 KnowGrove 成功管理的关联意外丢失时尝试修复。该版本还补齐英文与九种本地化 README 的功能说明。私有产品契约与实现 PR 已合并，公开白名单候选通过类型检查、零警告 lint、376 项测试、审核合规检查和生产构建；GitHub Release、公开资产回读、全新 Vault 安装和社区目录版本刷新必须在本候选合入后逐项完成，未完成前不描述为已经发布。
+
 `2.8.32` 是社区清单合规修复版：完整属性规范 V2、治理范围内 1,375 篇普通笔记迁移、2.8.31 GitHub Release 与当前 Documents Vault 升级均已完成；社区后台识别到 2.8.31 后，因 Manifest 简介冗余包含 “Obsidian” 而阻断正式扫描。2.8.32 只移除该冗余词并增加自动门禁，不改变运行逻辑、Vault 数据、设置、桥接协议或权限。私有 PR `#108`、公开白名单 PR `lufie/KnowGrove#32`、精确标签和非草稿 GitHub Release 已完成；公开三资产具有 attestation、与生产构建逐字节一致，并已回装当前 Documents Vault，设置与任务队列保持不变。社区后台对精确提交 `fb43e85e1ab6905ded208ea875f8f8fe700fe094` 的正式扫描为 `Completed`，Manifest Error 0、网络/依赖/可复现构建通过，公开目录已显示 `Current version 2.8.32`。2026-08-30 又在全新空白 Vault `/Users/liyijie/Desktop/test` 中仅用公开三资产完成首次安装、启用、独立默认数据生成、Force Reload、设置页版本回读和本机桥接健康检查，之后恢复 Documents Vault 并再次回读正常。两条 Warning 与两条 Recommendation 继续作为核心本地能力披露；2.8.32 的桌面 clean Vault 首次安装门禁已经关闭。
 
 `2.8.31` 已完成公开白名单导出、精确标签、非草稿 GitHub Release、三项资产逐字节回读和当前 Documents Vault 公开资产升级；社区后台正式扫描的清单简介错误由 2.8.32 承接，因此 2.8.31 的最终状态是“GitHub 已分发 / 当前 Vault 已验证 / 市场未通过”。

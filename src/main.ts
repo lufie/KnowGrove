@@ -84,6 +84,7 @@ import {
 import { recordingMarkerOffsetFromHref } from "./recording-markers";
 import { DesktopRecorderController } from "./desktop-recorder";
 import {
+  externalMarkdownOpenerStartupAction,
   inspectExternalMarkdownOpener,
   installExternalMarkdownOpener,
   restorePreviousMarkdownHandler,
@@ -478,6 +479,8 @@ export default class KnowGrovePlugin extends Plugin {
   private runtimeInstallPromise?: Promise<void>;
   private runtimeBootstrapPromise?: Promise<void>;
   private startupRuntimeBootstrapTimer?: number;
+  private startupMarkdownOpenerTimer?: number;
+  private markdownOpenerSetupNoticeShown = false;
   private latestRuntimeInstallProgress?: RuntimeInstallProgress;
   private readonly runtimeInstallProgressListeners = new Set<(progress: RuntimeInstallProgress) => void>();
   private linkNoteScanPromise?: Promise<number>;
@@ -495,11 +498,6 @@ export default class KnowGrovePlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadPluginData();
-    if (Platform.isDesktopApp) {
-      await this.syncExternalMarkdownOpenerConfiguration().catch((error) => {
-        console.error("KnowGrove: failed to refresh Markdown opener configuration", error);
-      });
-    }
     setKnowGroveLanguage(getLanguage());
     this.disposeLocalization = installKnowGroveLocalization(this.app.workspace.containerEl.ownerDocument);
     this.register(() => this.disposeLocalization?.());
@@ -971,6 +969,13 @@ export default class KnowGrovePlugin extends Plugin {
           .onClick(() => void this.openCommentSidebarForRecord(reference)));
       }
     }));
+    if (Platform.isDesktopApp) {
+      this.startupMarkdownOpenerTimer = window.setTimeout(
+        () => void this.bootstrapExternalMarkdownOpener(),
+        350,
+      );
+      this.register(() => window.clearTimeout(this.startupMarkdownOpenerTimer));
+    }
   }
 
   onunload(): void {
@@ -1879,6 +1884,8 @@ export default class KnowGrovePlugin extends Plugin {
     const legacyDesktopCapture = savedDesktopCapture as unknown as Record<string, unknown> | undefined;
     const needsExternalMarkdownSettingsMigration = !legacyDesktopCapture
       || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownOpenerEnabled")
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownOpenerSetupAttempted")
+      || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownOpenerWasDefault")
       || !Object.prototype.hasOwnProperty.call(legacyDesktopCapture, "externalMarkdownDeleteSourceAfterImport");
     const savedAIProvider = (savedAIProperties as { provider?: unknown } | undefined)?.provider;
     const normalizedAIProvider = normalizeAIProviderId(savedAIProvider, defaults.aiProperties.provider);
@@ -2390,7 +2397,94 @@ export default class KnowGrovePlugin extends Plugin {
   }
 
   async installExternalMarkdownOpener(): Promise<ExternalMarkdownOpenerStatus> {
-    return await installExternalMarkdownOpener(this.externalMarkdownOpenerOptions());
+    try {
+      const status = await installExternalMarkdownOpener(this.externalMarkdownOpenerOptions());
+      this.settings.desktopCapture.externalMarkdownOpenerWasDefault = status.isDefault;
+      return status;
+    } catch (error) {
+      this.settings.desktopCapture.externalMarkdownOpenerWasDefault = false;
+      throw error;
+    } finally {
+      this.settings.desktopCapture.externalMarkdownOpenerSetupAttempted = true;
+      await this.savePluginData();
+    }
+  }
+
+  private async bootstrapExternalMarkdownOpener(): Promise<void> {
+    if (process.platform !== "darwin") return;
+    const desktopCapture = this.settings.desktopCapture;
+    if (!desktopCapture.externalMarkdownOpenerEnabled) return;
+    try {
+      let status = await inspectExternalMarkdownOpener();
+      const action = externalMarkdownOpenerStartupAction({
+        enabled: desktopCapture.externalMarkdownOpenerEnabled,
+        setupAttempted: desktopCapture.externalMarkdownOpenerSetupAttempted,
+        wasDefault: desktopCapture.externalMarkdownOpenerWasDefault,
+        status,
+      });
+      if (status.installed) await this.syncExternalMarkdownOpenerConfiguration();
+      if (status.isDefault) {
+        if (!desktopCapture.externalMarkdownOpenerSetupAttempted
+          || !desktopCapture.externalMarkdownOpenerWasDefault) {
+          desktopCapture.externalMarkdownOpenerSetupAttempted = true;
+          desktopCapture.externalMarkdownOpenerWasDefault = true;
+          await this.savePluginData();
+        }
+        return;
+      }
+      if (action === "install") {
+        try {
+          status = await installExternalMarkdownOpener(
+            this.externalMarkdownOpenerOptions(),
+            { revealSetupOnFailure: false },
+          );
+        } finally {
+          desktopCapture.externalMarkdownOpenerSetupAttempted = true;
+          desktopCapture.externalMarkdownOpenerWasDefault = status.isDefault;
+          await this.savePluginData();
+        }
+        if (status.isDefault) return;
+      }
+      if (action === "prompt") {
+        desktopCapture.externalMarkdownOpenerSetupAttempted = true;
+        desktopCapture.externalMarkdownOpenerWasDefault = false;
+        await this.savePluginData();
+      }
+      if (action !== "none") this.showExternalMarkdownOpenerSetupNotice();
+    } catch (error) {
+      console.error("KnowGrove: failed to configure the Markdown opener on startup", error);
+      this.showExternalMarkdownOpenerSetupNotice();
+    }
+  }
+
+  private showExternalMarkdownOpenerSetupNotice(): void {
+    if (this.markdownOpenerSetupNoticeShown) return;
+    this.markdownOpenerSetupNoticeShown = true;
+    const notice = new Notice("", 0);
+    notice.messageEl.empty();
+    notice.messageEl.createDiv({
+      text: translateKnowGroveText("Markdown 默认打开尚未完成。"),
+      cls: "knowgrove-markdown-opener-notice-message",
+    });
+    const actions = notice.messageEl.createDiv({ cls: "knowgrove-markdown-opener-notice-actions" });
+    const setupButton = actions.createEl("button", {
+      text: translateKnowGroveText("完成设置"),
+      cls: "mod-cta",
+    });
+    const laterButton = actions.createEl("button", { text: translateKnowGroveText("稍后") });
+    setupButton.addEventListener("click", () => {
+      setupButton.disabled = true;
+      void this.installExternalMarkdownOpener().then((status) => {
+        notice.hide();
+        new Notice(translateKnowGroveText(status.isDefault
+          ? "已设为默认。现在双击 Markdown 会导入当前 Vault 并用 Obsidian 打开。"
+          : "打开器已安装。请在已打开的 Finder 中按 Command-I，选择 KnowGrove Markdown Opener，再点“全部更改”。"), 9000);
+      }).catch((error) => {
+        setupButton.disabled = false;
+        new Notice(`${translateKnowGroveText("Mac 打开器安装失败：")}${error instanceof Error ? error.message : String(error)}`, 9000);
+      });
+    });
+    laterButton.addEventListener("click", () => notice.hide());
   }
 
   async syncExternalMarkdownOpenerConfiguration(): Promise<void> {

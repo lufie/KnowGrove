@@ -5,6 +5,7 @@ import {
   buildExternalMarkdownAppleScript,
   buildExternalMarkdownOpenerConfig,
   buildExternalMarkdownProcessorScript,
+  externalMarkdownOpenerStartupAction,
   normalizeExternalMarkdownFolder,
 } from "../src/external-markdown-opener";
 import { createDefaultSettings } from "../src/types";
@@ -51,6 +52,66 @@ test("generated Mac opener verifies imports before optionally moving the source 
 test("external Markdown import follows the inbox until configured", () => {
   const settings = createDefaultSettings().desktopCapture;
   assert.equal(settings.externalMarkdownOpenerEnabled, true);
+  assert.equal(settings.externalMarkdownOpenerSetupAttempted, false);
+  assert.equal(settings.externalMarkdownOpenerWasDefault, false);
   assert.equal(settings.externalMarkdownDeleteSourceAfterImport, true);
   assert.equal(settings.externalMarkdownFolder, "");
+});
+
+test("first enable installs a missing Markdown opener exactly once", () => {
+  const missing = { supported: true, installed: false, isDefault: false };
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: false,
+    wasDefault: false,
+    status: missing,
+  }), "install");
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: true,
+    wasDefault: false,
+    status: missing,
+  }), "none");
+});
+
+test("startup never reclaims a user-selected default application", () => {
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: true,
+    wasDefault: false,
+    status: { supported: true, installed: true, isDefault: false },
+  }), "none");
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: true,
+    wasDefault: true,
+    status: { supported: true, installed: true, isDefault: true },
+  }), "none");
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: false,
+    setupAttempted: false,
+    wasDefault: false,
+    status: { supported: true, installed: false, isDefault: false },
+  }), "none");
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: false,
+    wasDefault: false,
+    status: { supported: false, installed: false, isDefault: false },
+  }), "none");
+});
+
+test("a previously verified association is repaired only once after it is lost", () => {
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: true,
+    wasDefault: true,
+    status: { supported: true, installed: true, isDefault: false },
+  }), "install");
+  assert.equal(externalMarkdownOpenerStartupAction({
+    enabled: true,
+    setupAttempted: true,
+    wasDefault: false,
+    status: { supported: true, installed: true, isDefault: false },
+  }), "none");
 });

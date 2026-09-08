@@ -254,11 +254,12 @@ export class KnowGroveSettingTab extends PluginSettingTab {
     );
     new Setting(containerEl)
       .setName("默认用 Obsidian 打开 Markdown")
-      .setDesc("默认开启。开启后由 KnowGrove Mac 打开器接管 .md 和 .markdown；库外文件会先导入下方 Vault 路径，再在 Obsidian 打开。首次启用仍需在 Finder 确认“全部更改”。")
+      .setDesc("默认开启。首次启用会在后台安装 KnowGrove Mac 打开器并尝试设为 .md 与 .markdown 的默认应用；只有 macOS 拒绝自动变更时，才提示你完成一次系统确认。")
       .addToggle((toggle) => toggle
         .setValue(desktopCapture.externalMarkdownOpenerEnabled)
         .onChange(async (value) => {
           desktopCapture.externalMarkdownOpenerEnabled = value;
+          if (value) desktopCapture.externalMarkdownOpenerSetupAttempted = true;
           await this.plugin.savePluginData();
           if (process.platform !== "darwin") {
             new Notice("该默认打开能力当前仅支持 macOS；设置已保存，但不会修改系统文件关联。", 7000);

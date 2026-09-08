@@ -4,7 +4,7 @@
 
 O KnowGrove é um fluxo de conhecimento local para quem coleta mais rápido do que consegue organizar. Ele mantém as fontes no vault do Obsidian, extrai sua estrutura, conecta tópicos e evidências e transforma tudo em resultados reutilizáveis.
 
-Versão atual do código-fonte: `2.8.32`
+Versão atual do código-fonte: `2.8.33`
 
 ## Um fluxo da fonte ao resultado
 
@@ -18,6 +18,7 @@ O vault continua sendo a fonte da verdade. O KnowGrove não coleta telemetria do
 
 - **Ler mais tarde:** uma caixa de entrada, filtros de não lido/lido e marcação opcional ao chegar ao fim da nota.
 - **Captura pelo navegador e celular:** salve artigos, vídeos, links e notas de voz curtas no vault.
+- **Markdown com duplo clique no Mac:** na primeira ativação, o KnowGrove instala o abridor em segundo plano, tenta associar `.md` e `.markdown` ao Obsidian e verifica o resultado do sistema. Só pede uma confirmação se o macOS recusar a alteração e nunca retoma silenciosamente uma associação que o usuário mudou depois.
 - **Processamento de conteúdo:** preserva imagens dos artigos, prioriza legendas e usa transcrição local apenas quando não há legendas.
 - **Imagem em texto com IA:** converta uma imagem ou todas as imagens da nota e grave tabelas e texto estruturado abaixo da imagem original. O processamento em segundo plano mostra etapas reais, permite cancelamento seguro e localiza o resultado.
 - **Edição na visualização ao estilo Word:** mantém a formatação de títulos, listas, tarefas, imagens, blocos de código e tabelas. Ao remover linhas em branco da seleção, preserva ou repara os limites das tabelas GFM para que continuem renderizadas na visualização e no modo de leitura.

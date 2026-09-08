@@ -36,6 +36,23 @@ export interface ExternalMarkdownOpenerInstallOptions {
   deleteSourceAfterImport: boolean;
 }
 
+export interface ExternalMarkdownOpenerInstallBehavior {
+  revealSetupOnFailure?: boolean;
+}
+
+export type ExternalMarkdownOpenerStartupAction = "none" | "install" | "prompt";
+
+export function externalMarkdownOpenerStartupAction(options: {
+  enabled: boolean;
+  setupAttempted: boolean;
+  wasDefault: boolean;
+  status: Pick<ExternalMarkdownOpenerStatus, "supported" | "installed" | "isDefault">;
+}): ExternalMarkdownOpenerStartupAction {
+  if (!options.enabled || !options.status.supported || options.status.isDefault) return "none";
+  if (!options.setupAttempted) return options.status.installed ? "prompt" : "install";
+  return options.wasDefault ? "install" : "none";
+}
+
 interface OpenerPaths {
   supportRoot: string;
   appRoot: string;
@@ -457,6 +474,7 @@ export async function inspectExternalMarkdownOpener(): Promise<ExternalMarkdownO
 
 export async function installExternalMarkdownOpener(
   options: ExternalMarkdownOpenerInstallOptions,
+  behavior: ExternalMarkdownOpenerInstallBehavior = {},
 ): Promise<ExternalMarkdownOpenerStatus> {
   if (process.platform !== "darwin") throw new Error("双击导入 Markdown 当前仅支持 macOS");
   const paths = openerPaths();
@@ -474,7 +492,7 @@ export async function installExternalMarkdownOpener(
 
   await deployOpenerApp(paths);
   await setDefaultMarkdownApp(paths.appPath).catch(async () => {
-    await revealMarkdownSetupFile(paths);
+    if (behavior.revealSetupOnFailure !== false) await revealMarkdownSetupFile(paths);
   });
   return await inspectExternalMarkdownOpener();
 }

@@ -4,7 +4,7 @@
 
 KnowGrove est un flux de connaissances local pour celles et ceux qui collectent plus vite qu’ils n’organisent. Les sources restent dans le coffre Obsidian, sont structurées, reliées aux sujets et aux preuves, puis transformées en résultats réutilisables.
 
-Version actuelle du code source : `2.8.32`
+Version actuelle du code source : `2.8.33`
 
 ## Un seul flux, de la source au résultat
 
@@ -18,6 +18,7 @@ Le coffre reste la source de vérité. KnowGrove ne collecte aucune télémétri
 
 - **À lire plus tard :** une seule boîte de réception, filtres non lu/lu et marquage facultatif à la fin de la note.
 - **Capture navigateur et mobile :** enregistrez articles, vidéos, liens et courtes notes vocales dans le coffre.
+- **Double-clic Markdown sur Mac :** à la première activation, KnowGrove installe l’ouvreur en arrière-plan, tente d’associer `.md` et `.markdown` à Obsidian, puis vérifie le résultat système. Une confirmation n’est demandée que si macOS refuse la modification, et un choix ultérieur de l’utilisateur n’est jamais repris silencieusement.
 - **Traitement du contenu :** conserve les images des articles, privilégie les sous-titres vidéo et utilise la transcription locale seulement si nécessaire.
 - **Image vers texte par IA :** convertissez une image ou toutes les images d’une note ; les tableaux et le texte structuré sont ajoutés sous l’image d’origine. Le traitement en arrière-plan affiche les étapes réelles, peut être annulé en toute sécurité et permet de localiser le résultat.
 - **Édition en aperçu instantané comme dans Word :** conservez la mise en forme des titres, listes, tâches, images, blocs de code et tableaux. La suppression des lignes vides sélectionnées préserve ou répare les limites des tableaux GFM afin qu’ils restent rendus dans l’aperçu instantané et le mode lecture.
