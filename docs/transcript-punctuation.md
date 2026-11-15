@@ -17,6 +17,23 @@ The desktop command `Repair current transcript punctuation` processes only the u
 
 Manual repair is all-or-nothing. It preserves the rest of the note, backs up the full original note in the plugin configuration directory, then performs a Vault.process compare-and-swap. Concurrent edits, moves, cancellation, failed fidelity checks and provider errors cannot silently overwrite the note. Closing the repair modal cancels pending work. Already-readable or short text is a no-op, not an AI-success report.
 
+## Plugin-wide integration
+
+All new audio/video processing uses `prepareCaptureReadability` after safe raw writeback and before summary/body generation. This is automatic, not a separate opt-in or something users must remember to run.
+
+| Entry | Existing route to shared processing |
+| --- | --- |
+| Browser/mobile lightweight capture, standalone media links and batches | Capture request / enqueueLinkNote -> processJob |
+| Desktop recording | finalizeDesktopRecording -> processDesktopRecordingInBackground -> enqueueLinkNote -> processJob |
+| Imported local audio/video | importLocalMediaFiles -> enqueueLinkNote -> processJob |
+| Saved raw-note resume | detectInterruptedCapture -> processJob; reuse saved transcript without media download/ASR |
+| Web-page embedded audio/video | appendEmbeddedMediaTranscripts -> raw article save -> same readability pipeline, embedded ranges only |
+| Existing full / managed embedded transcript | Same restoration/validation and final atomic manual repair |
+
+Embedded transcripts have collector-created UUID/hash start/end bounds. The immutable prose fingerprint is verified against the raw text or its verified original backup. Ordinary article headings/URLs and old unmarked embedded articles are not used to guess ownership. Protected examples are ignored; malformed, mismatched or duplicate bounds stop processing. Text outside the owned bounds, including subsequent H1/H4 user notes, is not sent for punctuation or changed. Legacy unmarked embedded items require recapture to establish safe ownership; there is no automatic bulk rewrite of old notes.
+
+The task UI has a distinct punctuation phase, aggregated monotonic progress and truthful partial state. A successfully stored partial punctuation result offers a repair action; it is not labelled completed. Settings describe the automatic shared behavior. There are no new provider defaults or paid services. Explicit one-off repair execution may select an available provider with a fresh in-memory configuration, without changing the persisted default, endpoint, model or executable configuration.
+
 ## Verification
 
 Local regression coverage includes insertion-only Unicode fidelity, repeated speech, foreign scripts, numeric subtitle content, technical terms, provider errors, safe chunk limits, nested/protected headings, structural-injection rejection, escaped verified backups, cancellation, concurrency, full-length media retention and manual write/readback. Local tests are not a claim of hosted CI, successful provider authentication, marketplace distribution or user-device acceptance.

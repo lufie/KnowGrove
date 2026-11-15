@@ -185,14 +185,14 @@ export const BROWSER_CAPTURE_SKILLS: BrowserCaptureSkill[] = [
     label: "视频转写入库",
     contentTypes: ["video"],
     description: "优先读取公开视频字幕，必要时下载音频并使用 Whisper 转录。",
-    stages: ["字幕或音频", "转录", "原文备份", "AI 整理"],
+    stages: ["字幕或音频", "转录", "原文备份", "标点与分段", "AI 整理"],
   },
   {
     id: "audio-to-obsidian",
     label: "语音转写入库",
     contentTypes: ["audio"],
     description: "保存公开音频，使用本机 Whisper 转录，再由 AI 生成摘要和结构化笔记。",
-    stages: ["保存音频", "转录", "逐字稿备份", "AI 总结"],
+    stages: ["保存音频", "转录", "逐字稿备份", "标点与分段", "AI 总结"],
   },
 ];
 
@@ -2073,6 +2073,7 @@ export function buildEnhancedCaptureNote(
   outputLocale: KnowGroveLocale = "zh-CN",
   transitionLifecycleStatus = false,
   transcriptReadability?: TranscriptReadability,
+  articleReadableSource?: string,
 ): string {
   const labels = captureOutputLabels(outputLocale);
   const frontmatter = rawNote.match(/^---\n[\s\S]*?\n---\n?/)?.[0]?.trim() ?? "";
@@ -2089,7 +2090,7 @@ export function buildEnhancedCaptureNote(
   const sourceHeading = pageType === "article" ? labels.originalText : labels.fullTranscript;
   const sourceMatch = rawNote.match(new RegExp(`^##\\s+${sourceHeading}\\s*$([\\s\\S]*)`, "m"));
   const source = pageType === "article"
-    ? sourceMatch?.[1]?.trim() ?? ""
+    ? articleReadableSource ?? sourceMatch?.[1]?.trim() ?? ""
     : transcriptReadability
       ? renderReadableTranscript(transcriptReadability, outputLocale)
       : findTranscriptSection(rawNote)?.source ?? sourceMatch?.[1]?.trim() ?? "";
@@ -2134,5 +2135,5 @@ export function buildEnhancedCaptureNote(
     "",
     ...(markerBlock && !source.includes(markerBlock) ? [markerBlock, ""] : []),
   ].join("\n");
-  return transcriptReadability ? `${generated.trim()}\n` : normalizeGeneratedMarkdownPreservingMarkers(generated);
+  return transcriptReadability || articleReadableSource !== undefined ? `${generated.trim()}\n` : normalizeGeneratedMarkdownPreservingMarkers(generated);
 }

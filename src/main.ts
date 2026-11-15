@@ -814,7 +814,7 @@ export default class KnowGrovePlugin extends Plugin {
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!Platform.isDesktopApp || !file || file.extension !== "md") return false;
-        if (!checking) new TranscriptRepairModal(this.app, file, (signal, progress) => this.repairTranscriptPunctuation(file, signal, progress)).open();
+        if (!checking) this.openTranscriptPunctuationRepair(file.path);
         return true;
       },
     });
@@ -3088,13 +3088,21 @@ export default class KnowGrovePlugin extends Plugin {
     }
   }
 
-  async repairTranscriptPunctuation(file: TFile, signal?: AbortSignal, progress?: (processed: number, total: number) => Promise<void>): Promise<TranscriptReadability> {
+  openTranscriptPunctuationRepair(path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile) || file.extension !== "md") { new Notice(translateKnowGroveText("请先打开一篇 Markdown 笔记")); return; }
+    new TranscriptRepairModal(this.app, file, (signal, progress) => this.repairTranscriptPunctuation(file, signal, progress)).open();
+  }
+
+  async repairTranscriptPunctuation(file: TFile, signal?: AbortSignal, progress?: (processed: number, total: number) => Promise<void>, oneOffProvider?: AIProviderId): Promise<TranscriptReadability> {
     if (this.transcriptRepairControllers.has(file.path)) throw new Error("这篇逐字稿正在修复中");
     const controller = new AbortController();
     const fromParent = (): void => controller.abort();
     signal?.addEventListener("abort", fromParent, { once: true });
     if (signal?.aborted) controller.abort();
     const originalPath = file.path;
+    // Explicit one-off execution never persists or temporarily replaces defaults.
+    const oneOffConfiguration = oneOffProvider ? { ...this.settings.aiProperties, provider: oneOffProvider, model: "", executablePath: "", endpoint: "" } : undefined;
     this.transcriptRepairControllers.set(originalPath, controller);
     try {
       return await repairTranscriptNote({
@@ -3111,7 +3119,12 @@ export default class KnowGrovePlugin extends Plugin {
             return updated;
           });
         },
-        run: async (prompt, currentSignal) => (await this.runBrowserCaptureProvider(this.settings.aiProperties.provider, prompt, currentSignal)).output,
+        run: async (prompt, currentSignal) => {
+          if (!oneOffConfiguration) return (await this.runBrowserCaptureProvider(this.settings.aiProperties.provider, prompt, currentSignal)).output;
+          const availability = await this.getAIProviders();
+          if (!availability.find(provider => provider.id === oneOffConfiguration.provider)?.available) throw new Error("本次指定的 AI 引擎不可用，原笔记未修改");
+          return runAIProvider(oneOffConfiguration, prompt, availability, this.getAISecret(oneOffConfiguration.provider), currentSignal, { isolatedCodex: oneOffConfiguration.provider === "codex-cli" });
+        },
       }, getLanguage() || "en", controller.signal, progress);
     } finally {
       signal?.removeEventListener("abort", fromParent);

@@ -238,7 +238,11 @@ export function findTranscriptSection(markdown: string): { start: number; end: n
     }
     offset += region.text.length;
   }
-  let source = markdown.slice(start, end).trim();
+  return { start, end, ...decodeTranscriptBody(markdown.slice(start, end)) };
+}
+
+export function decodeTranscriptBody(body: string): { source: string; originalProse?: string } {
+  let source = body.trim();
   const backupStart = source.indexOf(BACKUP_START);
   const backupEnd = source.indexOf(BACKUP_END);
   let originalProse: string | undefined;
@@ -252,5 +256,5 @@ export function findTranscriptSection(markdown: string): { start: number; end: n
     source = source.slice(0, backupStart) + source.slice(backupEnd + BACKUP_END.length);
   }
   source = source.replace(TRANSCRIPT_READABILITY_MARKER, "").replace(/^> (?:标点和分段经 AI|仍有 \d+ 段|AI-assisted punctuation|\d+ section\(s\))[^\n]*\n?/m, "").trim();
-  return { start, end, source, originalProse };
+  return { source, originalProse };
 }
