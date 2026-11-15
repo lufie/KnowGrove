@@ -18,6 +18,7 @@ import * as https from "node:https";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { runLocalCommand } from "./ai-provider";
+import { probeLocalTool } from "./tool-probe";
 import {
   compareRuntimeVersions,
   KNOWGROVE_RUNTIME_PUBLIC_KEY,
@@ -137,8 +138,8 @@ async function isFile(path: string): Promise<boolean> {
 async function probeCommand(id: KnowGroveRuntimeArtifactId, candidate: string): Promise<boolean> {
   const args = id === "ffmpeg" || id === "ffprobe" ? ["-version"] : id === "whisper" ? ["--help"] : ["--version"];
   try {
-    const result = await runLocalCommand(candidate, args, "", 8);
-    return result.exitCode === 0;
+    await probeLocalTool(runLocalCommand, candidate, args);
+    return true;
   } catch {
     return false;
   }
