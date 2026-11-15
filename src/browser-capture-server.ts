@@ -13,6 +13,7 @@ import type {
   KnowGroveSettings,
 } from "./types";
 import { runLocalCommand } from "./ai-provider";
+import { resolveProbedTool } from "./tool-probe";
 import { normalizeKnowGroveLocale, type KnowGroveLocale } from "./i18n";
 import {
   BROWSER_CAPTURE_SKILLS,
@@ -517,7 +518,7 @@ function captureBodyForConflictCheck(content: string): string {
   );
 }
 
-async function resolveWhisperExecutable(configuredPath: string): Promise<string> {
+async function resolveWhisperExecutable(configuredPath: string, signal?: AbortSignal): Promise<string> {
   const configured = configuredPath.trim();
   const candidates = configured
     ? [configured]
@@ -529,24 +530,14 @@ async function resolveWhisperExecutable(configuredPath: string): Promise<string>
       "whisper",
       "whisper-cli",
     ];
-  for (const candidate of candidates) {
-    try {
-      const result = await runLocalCommand(candidate, ["--help"], "", 8);
-      if (result.exitCode === 0) return candidate;
-    } catch {
-      // Try the next supported Whisper implementation.
-    }
-  }
-  if (configured) {
-    throw new Error(`Whisper 路径不可用：${configured}。请清空后自动检测，或填写 whisper / whisper-cli 的完整路径`);
-  }
-  throw new Error("未检测到 Whisper。请安装 openai-whisper 或 whisper.cpp，或在 KnowGrove 设置中填写完整路径");
+  return resolveProbedTool(runLocalCommand, candidates, "Whisper", ["--help"], signal);
 }
 
 async function resolveCaptureTool(
   configuredPath: string,
   executableName: string,
   label: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const configured = configuredPath.trim();
   const candidates = configured
@@ -558,21 +549,10 @@ async function resolveCaptureTool(
       ...(executableName === "yt-dlp" ? [`${homedir()}/.pyenv/shims/yt-dlp`] : []),
       executableName,
     ];
-  for (const candidate of candidates) {
-    try {
-      const result = await runLocalCommand(
-        candidate,
-        executableName === "ffmpeg" ? ["-version"] : ["--version"],
-        "",
-        8,
-      );
-      if (result.exitCode === 0) return candidate;
-    } catch {
-      // Try the next explicit path without invoking a shell.
-    }
-  }
-  if (configured) throw new Error(`${label} 路径不可用：${configured}`);
-  throw new Error(`未检测到 ${label}。请安装后重试，或在 KnowGrove 设置中填写完整路径`);
+  return resolveProbedTool(
+    runLocalCommand, candidates, label,
+    executableName === "ffmpeg" ? ["-version"] : ["--version"], signal,
+  );
 }
 
 async function resolveWhisperCppModel(modelSetting: string): Promise<string> {
@@ -2066,6 +2046,7 @@ export class BrowserCaptureServer {
         this.host.getSettings().browserCapture.defuddlePath,
         "defuddle",
         "Defuddle",
+        signal,
       );
       const result = await runLocalCommand(executable, ["parse", captureUrl, "--md"], "", 5 * 60, signal);
       if (result.exitCode !== 0 || result.stdout.trim().length < 80) {
@@ -2157,7 +2138,7 @@ export class BrowserCaptureServer {
     throwIfCaptureAborted(signal);
     const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
-    const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
+    const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp", signal);
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-video-"));
     try {
       const sessionArgs = await this.ytDlpSessionArgs(job, directory, captureUrl);
@@ -2227,7 +2208,7 @@ export class BrowserCaptureServer {
               || (hls?.default_cdn && hls.cdns?.[hls.default_cdn]?.url)
               || Object.values(hls?.cdns ?? {})[0]?.url;
             if (streamUrl) {
-              const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg");
+              const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg", signal);
               const audioPath = join(directory, "audio.mp3");
               const ffmpegRes = await runLocalCommand(
                 ffmpeg,
@@ -2259,7 +2240,7 @@ export class BrowserCaptureServer {
           }
           const mediaUrl = tiktokData?.audioUrl || tiktokData?.playUrl;
           if (mediaUrl) {
-            const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg");
+            const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "ffmpeg", signal);
             const audioPath = join(directory, "audio.mp3");
             const ffmpegRes = await runLocalCommand(
               ffmpeg,
@@ -2384,7 +2365,7 @@ export class BrowserCaptureServer {
         progress: 38,
         message: "正在检测本机 Whisper 转写工具",
       });
-      const whisper = await resolveWhisperExecutable(settings.whisperPath);
+      const whisper = await resolveWhisperExecutable(settings.whisperPath, signal);
       const implementation = detectWhisperImplementation(whisper);
       const model = settings.whisperModel.trim() || "small";
       const cppModelPath = implementation === "whisper-cpp"
@@ -2492,7 +2473,7 @@ export class BrowserCaptureServer {
         progress: 30,
         message: "已读取本地媒体，正在检测本机 Whisper",
       });
-      const whisper = await resolveWhisperExecutable(settings.whisperPath);
+      const whisper = await resolveWhisperExecutable(settings.whisperPath, signal);
       const implementation = detectWhisperImplementation(whisper);
       const model = settings.whisperModel.trim() || "small";
       const cppModelPath = implementation === "whisper-cpp"
@@ -2500,7 +2481,7 @@ export class BrowserCaptureServer {
         : undefined;
       let whisperAudioPath = audioPath;
       if (whisperNeedsPcmConversion(implementation, audioPath)) {
-        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg", signal);
         whisperAudioPath = join(directory, "whisper-input.wav");
         await this.updateJob(job.id, {
           progress: 34,
@@ -2563,7 +2544,7 @@ export class BrowserCaptureServer {
     throwIfCaptureAborted(signal);
     const captureUrl = urlOverride || job.resolvedUrl || job.url;
     const settings = this.host.getSettings().browserCapture;
-    const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp");
+    const downloader = await resolveCaptureTool(settings.videoDownloaderPath, "yt-dlp", "yt-dlp", signal);
     const directory = await mkdtemp(join(tmpdir(), "knowgrove-audio-"));
     try {
       const appleEpisode = await this.resolveApplePodcastEpisode(captureUrl, signal);
@@ -2655,7 +2636,7 @@ export class BrowserCaptureServer {
         progress: 34,
         message: "音频已经保存，正在检测本机 Whisper",
       });
-      const whisper = await resolveWhisperExecutable(settings.whisperPath);
+      const whisper = await resolveWhisperExecutable(settings.whisperPath, signal);
       const implementation = detectWhisperImplementation(whisper);
       const model = settings.whisperModel.trim() || "small";
       const cppModelPath = implementation === "whisper-cpp"
@@ -2663,7 +2644,7 @@ export class BrowserCaptureServer {
         : undefined;
       let whisperAudioPath = audioPath;
       if (whisperNeedsPcmConversion(implementation, audioPath)) {
-        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg");
+        const ffmpeg = await resolveCaptureTool(settings.ffmpegPath, "ffmpeg", "FFmpeg", signal);
         whisperAudioPath = join(directory, "whisper-input.wav");
         await this.updateJob(job.id, {
           progress: 36,
