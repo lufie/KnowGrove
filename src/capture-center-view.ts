@@ -1,6 +1,7 @@
 import { ItemView, Modal, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type KnowGrovePlugin from "./main";
 import type { BrowserCaptureJob } from "./browser-capture-server";
+import { translateKnowGroveText } from "./i18n";
 import {
   extractBatchCaptureUrls,
   formatRecordingDuration,
@@ -198,14 +199,15 @@ export class LinkCaptureModal extends Modal {
     // 3. Finished jobs (in this open session)
     for (const job of finishedJobs) {
       const isFailed = job.status === "failed";
+      const isPartial = job.status === "partial";
       const item = list.createDiv(`knowgrove-queue-item is-${job.status}`);
       const main = item.createDiv("knowgrove-queue-item-main");
       const left = main.createDiv("knowgrove-queue-item-left");
 
-      const tag = left.createSpan({ cls: `knowgrove-queue-tag ${isFailed ? "tag-failed" : "tag-completed"}` });
+      const tag = left.createSpan({ cls: `knowgrove-queue-tag ${isFailed || isPartial ? "tag-failed" : "tag-completed"}` });
       const tagIcon = tag.createSpan();
-      setIcon(tagIcon, isFailed ? "alert-circle" : "check");
-      tag.createSpan({ text: isFailed ? " 失败" : " 已完成" });
+      setIcon(tagIcon, isFailed || isPartial ? "alert-circle" : "check");
+      tag.createSpan({ text: isFailed ? " 失败" : isPartial ? " 部分完成" : " 已完成" });
 
       const displayTitle = job.result?.title || job.title || job.url;
       left.createSpan({ cls: "knowgrove-queue-item-title", text: displayTitle });
@@ -221,9 +223,13 @@ export class LinkCaptureModal extends Modal {
         });
       }
 
-      if (isFailed && job.error) {
+      if (filePath && isPartial && job.result?.storageVerified) {
+        const repairBtn = right.createEl("button", { cls: "knowgrove-queue-action-btn", text: translateKnowGroveText("修复逐字稿") });
+        repairBtn.addEventListener("click", () => this.plugin.openTranscriptPunctuationRepair(filePath));
+      }
+      if ((isFailed || isPartial) && (job.error || job.message)) {
         const statusEl = item.createDiv("knowgrove-queue-item-status");
-        statusEl.createSpan({ text: `错误：${job.error}` });
+        statusEl.createSpan({ text: job.error ? `错误：${job.error}` : job.message });
       }
     }
   }

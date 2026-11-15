@@ -963,7 +963,7 @@ test("browser capture splits long material and removes VTT metadata", () => {
     "00:00:02.000 --> 00:00:04.000",
     "第一句。",
     "第二句。",
-  ].join("\n")), "第一句。第二句。");
+  ].join("\n")), "第一句。第一句。第二句。");
 });
 
 test("Bilibili JSON subtitles and Whisper fragments become readable paragraphs", () => {
@@ -1454,11 +1454,11 @@ test("buildWhisperInvocation configures explicit language and non-speech suppres
   assert.equal(pythonInvocation.transcriptFormat, "srt");
 });
 
-test("formatTranscriptParagraphs strips non-speech noise characters and subtitle noise", () => {
+test("formatTranscriptParagraphs retains source characters instead of guessing what is noise", () => {
   const rawWithNoise = "වවවවවවවව MING PAO CANADA | MING PAO TORONTO\n你好，请做一个简单的自我介绍。\n好的，稍等一分钟。";
   const formatted = formatTranscriptParagraphs(rawWithNoise);
-  assert.doesNotMatch(formatted, /වවව/);
-  assert.doesNotMatch(formatted, /MING PAO/);
+  assert.match(formatted, /වවව/);
+  assert.match(formatted, /MING PAO/);
   assert.match(formatted, /你好，请做一个简单的自我介绍/);
   assert.match(formatted, /好的，稍等一分钟/);
 });

@@ -139,3 +139,11 @@ export function buildAntigravityArguments(model: string, prompt: string): string
   args.push("--print", prompt);
   return args;
 }
+
+export function buildCodexTextArguments(model: string, isolated = false): string[] {
+  const args = ["exec", "--ephemeral", "--skip-git-repo-check", "--ignore-rules", "--sandbox", "read-only", "--color", "never", "--json"];
+  if (isolated) args.push("--ignore-user-config");
+  if (model.trim()) args.push("--model", model.trim());
+  args.push("-");
+  return args;
+}

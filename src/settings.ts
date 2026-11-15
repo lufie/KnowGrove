@@ -334,6 +334,9 @@ export class KnowGroveSettingTab extends PluginSettingTab {
           await this.setAutoProcessNewNotes(value);
         }));
 
+    new Setting(containerEl)
+      .setName("逐字稿可读性")
+      .setDesc("音视频转录统一先保存原稿，再补标点与自然段；录音、本地导入、链接和网页内嵌媒体共用此流程，无需单独开启。旧稿可运行“修复当前逐字稿标点”。");
     this.renderRuntimeEnvironment(containerEl);
 
     new Setting(containerEl)

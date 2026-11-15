@@ -8,6 +8,7 @@ import type { AIPropertySettings, AIProviderAvailability, AIProviderId } from ".
 import {
   FALLBACK_PROVIDER_MODELS,
   buildAntigravityArguments,
+  buildCodexTextArguments,
   formatCLIProviderError,
   parseCodexModelCache,
   parseCodeBuddyModels,
@@ -573,21 +574,9 @@ function extractCodexMessage(stdout: string): string {
   return messages[messages.length - 1] ?? stdout;
 }
 
-async function runCodex(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal): Promise<string> {
+async function runCodex(settings: AIPropertySettings, prompt: string, executablePath?: string, signal?: AbortSignal, isolated = false): Promise<string> {
   const executable = settings.executablePath.trim() || executablePath || "codex";
-  const args = [
-    "exec",
-    "--ephemeral",
-    "--skip-git-repo-check",
-    "--ignore-rules",
-    "--sandbox",
-    "read-only",
-    "--color",
-    "never",
-    "--json",
-  ];
-  if (configuredModel(settings)) args.push("--model", configuredModel(settings));
-  args.push("-");
+  const args = buildCodexTextArguments(configuredModel(settings), isolated);
   const result = await runLocalCommand(executable, args, prompt, settings.timeoutSeconds, signal);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Codex CLI 退出码 ${result.exitCode}`);
   return extractCodexMessage(result.stdout);
@@ -857,9 +846,10 @@ export async function runAIProvider(
   availability: AIProviderAvailability[],
   apiKey?: string,
   signal?: AbortSignal,
+  execution?: { isolatedCodex?: boolean },
 ): Promise<string> {
   const detected = availability.find((provider) => provider.id === settings.provider);
-  if (settings.provider === "codex-cli") return runCodex(settings, prompt, detected?.executablePath, signal);
+  if (settings.provider === "codex-cli") return runCodex(settings, prompt, detected?.executablePath, signal, execution?.isolatedCodex);
   if (settings.provider === "claude-cli") return runClaude(settings, prompt, detected?.executablePath, signal);
   if (settings.provider === "antigravity-cli") return runAntigravity(settings, prompt, detected?.executablePath, signal);
   if (settings.provider === "qoder-cli") return runQoder(settings, prompt, detected?.executablePath, signal);

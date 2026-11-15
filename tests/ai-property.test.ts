@@ -20,6 +20,7 @@ import {
 import {
   automaticAIContentCharacterLimit,
   buildAntigravityArguments,
+  buildCodexTextArguments,
   formatCLIProviderError,
   parseCodexModelCache,
   parseCodeBuddyModels,
@@ -27,6 +28,20 @@ import {
   parseQoderModels,
   providerModelOptions,
 } from "../src/ai-provider-utils";
+
+test("one-off isolated Codex text calls do not load user MCP/model configuration", () => {
+  const args = buildCodexTextArguments("", true);
+  assert.ok(args.includes("--ignore-user-config"));
+  assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
+  assert.ok(args.includes("--ephemeral") && !args.includes("--model"));
+  assert.equal(args.at(-1), "-");
+});
+
+test("normal Codex calls retain existing configuration and explicit model selection", () => {
+  const args = buildCodexTextArguments("chosen-model");
+  assert.ok(!args.includes("--ignore-user-config"));
+  assert.equal(args[args.indexOf("--model") + 1], "chosen-model");
+});
 import {
   buildExecutableCandidates,
   buildExecutableSearchDirectories,

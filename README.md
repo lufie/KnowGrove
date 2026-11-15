@@ -6,7 +6,7 @@
 
 KnowGrove (言续 in Chinese) is a local-first knowledge workflow for people who collect more than they can organize. It keeps the original material in your Obsidian vault, helps extract useful structure, connects it to topics and evidence, and turns it into work you can reuse.
 
-Current source version: `2.8.34`. Obsidian community updates follow the matching GitHub release.
+Current source version: `2.8.35`. Obsidian community updates follow the matching GitHub release.
 
 ## One workflow from source to output
 
@@ -23,6 +23,8 @@ Your vault remains the source of truth. KnowGrove has no client telemetry; AI wo
 - **Mac link capture and recording:** use separate ribbon actions to save one or many links as individual notes, record audio into crash-recoverable local segments, or drop existing local audio and video files into the recorder workspace for background transcription and processing; every saved result includes a direct note shortcut.
 - **Open external Markdown on Mac:** enabled by default with a configurable vault import folder. On first enable, KnowGrove installs its Mac opener in the background, attempts the `.md` and `.markdown` association, and verifies the result without delaying plugin startup. If macOS requires confirmation, one localized action opens the exact Finder flow. Later user-selected defaults are never silently reclaimed. External sources move to Trash only after the vault copy is verified; vault files are never removed by this setting.
 - **Content processing:** preserve article images, prefer video subtitles, and fall back to local audio transcription when subtitles are unavailable. Audio and video transcripts keep the language actually spoken, while generated summaries and analysis follow the local system language.
+- **Readable full transcripts:** restore missing punctuation and natural paragraphs with strict original-word verification and a folded original-text backup. Use **Repair current transcript punctuation** for an existing note; other sections and concurrent edits remain protected. A working selected AI provider is required.
+- Recording, local audio/video imports, standalone media links, saved-raw retries and newly collected web-page embedded media share the same automatic readability stage. Ordinary article prose is not rewritten; legacy unmarked embedded items require recapture rather than guessed editing.
 - **AI image to text:** convert one image or every image in a note through a confirmed multimodal provider, keep tables and document structure as Markdown below the source image, continue with truthful background progress, cancel safely, and locate the current or completed result.
 - **Word-like Live Preview:** edit headings, lists, tasks, media, code blocks, and tables without exposing avoidable Markdown markers. Removing selected blank lines preserves or repairs the structural spacing around GFM tables, including image-to-text blocks, so tables keep rendering in Live Preview and Reading View.
 - **Fast, recoverable capture:** browser captures create and read back an openable minimal Markdown note before entering the processing queue; long AI or media work continues in the background without delaying the initial handoff.
@@ -112,7 +114,7 @@ The production build creates `main.js` in the repository root. Release tags must
 
 ## Release status
 
-The source code is public. Version `2.8.34` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
+The source code is public. Version `2.8.35` is distributed only through its matching reviewed export and [GitHub Release](https://github.com/lufie/KnowGrove/releases); the Obsidian community directory then discovers that exact version. Current verification status is tracked in [docs/COMMUNITY_PLUGIN_RELEASE.md](https://github.com/lufie/KnowGrove/blob/main/docs/COMMUNITY_PLUGIN_RELEASE.md).
 
 ## License
 

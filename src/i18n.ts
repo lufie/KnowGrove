@@ -24,6 +24,11 @@ export const SUPPORTED_LOCALES: readonly KnowGroveLocale[] = [
 ] as const;
 
 const ENGLISH: Record<string, string> = {
+  "修复当前逐字稿标点": "Repair current transcript punctuation",
+  "逐字稿可读性": "Transcript readability",
+  "音视频转录统一先保存原稿，再补标点与自然段；录音、本地导入、链接和网页内嵌媒体共用此流程，无需单独开启。旧稿可运行“修复当前逐字稿标点”。": "All audio/video transcripts are saved before punctuation and paragraph restoration. Recording, local imports, links and embedded web media share this automatic workflow. Use Repair current transcript punctuation for older notes.",
+  " 部分完成": " Partially completed",
+  "修复逐字稿": "Repair transcript",
   "言续": "KnowGrove",
   "言续设置": "KnowGrove settings",
   "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。": "Set up each area once, then let capture, property management, and knowledge creation flow through your vault.",
