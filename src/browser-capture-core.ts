@@ -1,4 +1,5 @@
 import type { AIProviderId } from "./types";
+import { findTranscriptSection, renderReadableTranscript, type TranscriptReadability } from "./transcript-readability";
 
 import type { KnowGroveLocale } from "./i18n";
 import {
@@ -1114,9 +1115,10 @@ export function detectInterruptedCapture(
       ? "audio"
       : classifyBrowserCaptureUrl(url);
   const sourceHeadings = outputLabels.map((labels) => pageType === "article" ? labels.originalText : labels.fullTranscript);
-  const source = sourceHeadings.map((heading) => markdown.match(
+  const legacySource = sourceHeadings.map((heading) => markdown.match(
     new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$\\r?\\n([\\s\\S]+)$`, "m"),
   )?.[1]?.trim() ?? "").find(Boolean) ?? "";
+  const source = pageType === "article" ? legacySource : findTranscriptSection(markdown)?.source ?? legacySource;
   if (source.length < 80) return null;
   const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? fallbackTitle;
   return {
@@ -1759,22 +1761,13 @@ function transcriptJoiner(left: string, right: string): string {
 }
 
 export function formatTranscriptParagraphs(source: string): string {
-  const sanitized = source
-    .replace(/(?:[\p{Script=Sinhala}\p{Script=Telugu}\p{Script=Tamil}\p{Script=Devanagari}\p{Script=Gujarati}\p{Script=Bengali}]\s*){4,}/gu, " ")
-    .replace(/^.*?(?:MING PAO|字幕[製制作组]|未经许可|\(字幕).*?$/gim, " ");
-  const fragments = sanitized
+  const fragments = source
     .replace(/\r\n/g, "\n")
     .split(/\n+/)
     .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => Boolean(line) && !/^(?:MING PAO|字幕[製制作组]|未经许可|\(字幕)/i.test(line));
+    .filter(Boolean);
   const merged: string[] = [];
   for (const fragment of fragments) {
-    const previous = merged[merged.length - 1];
-    if (previous === fragment || previous?.startsWith(fragment)) continue;
-    if (previous && fragment.startsWith(previous)) {
-      merged[merged.length - 1] = fragment;
-      continue;
-    }
     merged.push(fragment);
   }
   const continuous = merged.reduce(
@@ -1785,7 +1778,7 @@ export function formatTranscriptParagraphs(source: string): string {
   ).trim();
   if (!continuous) return "";
 
-  const sentences = continuous.match(/[^。！？!?；;\n]+[。！？!?；;]?/g)
+  const sentences = continuous.match(/[^。！？!?；;\n]*[。！？!?；;]+|[^。！？!?；;\n]+$/g)
     ?.map((sentence) => sentence.trim())
     .filter(Boolean)
     ?? [continuous];
@@ -1795,7 +1788,13 @@ export function formatTranscriptParagraphs(source: string): string {
     let remaining = sentence;
     while (remaining.length > 280) {
       const whitespace = remaining.lastIndexOf(" ", 280);
-      const splitAt = whitespace >= 140 ? whitespace : 240;
+      let splitAt = whitespace >= 140 ? whitespace : 240;
+      while (splitAt > 0 && /[A-Za-z0-9_:/@.#%+-]/.test(remaining[splitAt - 1]!) && /[A-Za-z0-9_:/@.#%+-]/.test(remaining[splitAt]!)) splitAt -= 1;
+      if (splitAt === 0) {
+        splitAt = 240;
+        while (splitAt < remaining.length && /[A-Za-z0-9_:/@.#%+-]/.test(remaining[splitAt]!)) splitAt += 1;
+      }
+      if (/[\uD800-\uDBFF]/.test(remaining[splitAt - 1]!)) splitAt -= 1;
       chunks.push(remaining.slice(0, splitAt).trim());
       remaining = remaining.slice(splitAt).trim();
     }
@@ -1841,7 +1840,8 @@ export function parseSubtitleText(subtitle: string, fileName = ""): string {
     }
   }
   const lines: string[] = [];
-  for (const rawLine of subtitle.replace(/\r\n/g, "\n").split("\n")) {
+  const subtitleLines = subtitle.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, rawLine] of subtitleLines.entries()) {
     const line = rawLine
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
@@ -1852,7 +1852,7 @@ export function parseSubtitleText(subtitle: string, fileName = ""): string {
     if (!line
       || /^WEBVTT/.test(line)
       || /-->/.test(line)
-      || /^\d+$/.test(line)
+      || (/^\d+$/.test(line) && /-->/.test(subtitleLines[index + 1] ?? ""))
       || /^NOTE\b/.test(line)
       || /^Kind:|^Language:/i.test(line)) continue;
     lines.push(line);
@@ -2072,6 +2072,7 @@ export function buildEnhancedCaptureNote(
   result: BrowserCaptureAIResult,
   outputLocale: KnowGroveLocale = "zh-CN",
   transitionLifecycleStatus = false,
+  transcriptReadability?: TranscriptReadability,
 ): string {
   const labels = captureOutputLabels(outputLocale);
   const frontmatter = rawNote.match(/^---\n[\s\S]*?\n---\n?/)?.[0]?.trim() ?? "";
@@ -2087,7 +2088,11 @@ export function buildEnhancedCaptureNote(
     : "";
   const sourceHeading = pageType === "article" ? labels.originalText : labels.fullTranscript;
   const sourceMatch = rawNote.match(new RegExp(`^##\\s+${sourceHeading}\\s*$([\\s\\S]*)`, "m"));
-  const source = sourceMatch?.[1]?.trim() ?? "";
+  const source = pageType === "article"
+    ? sourceMatch?.[1]?.trim() ?? ""
+    : transcriptReadability
+      ? renderReadableTranscript(transcriptReadability, outputLocale)
+      : findTranscriptSection(rawNote)?.source ?? sourceMatch?.[1]?.trim() ?? "";
   const bodyHeading = pageType !== "article"
     ? result.mode === "multi-speaker"
       ? labels.dialogue
@@ -2129,5 +2134,5 @@ export function buildEnhancedCaptureNote(
     "",
     ...(markerBlock && !source.includes(markerBlock) ? [markerBlock, ""] : []),
   ].join("\n");
-  return normalizeGeneratedMarkdownPreservingMarkers(generated);
+  return transcriptReadability ? `${generated.trim()}\n` : normalizeGeneratedMarkdownPreservingMarkers(generated);
 }

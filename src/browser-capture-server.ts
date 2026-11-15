@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { runLocalCommand } from "./ai-provider";
 import { resolveProbedTool } from "./tool-probe";
+import { findTranscriptSection, restoreTranscriptReadability, transcriptProse, type TranscriptReadability } from "./transcript-readability";
 import { normalizeKnowGroveLocale, type KnowGroveLocale } from "./i18n";
 import {
   BROWSER_CAPTURE_SKILLS,
@@ -968,7 +969,7 @@ export class BrowserCaptureServer {
         return;
       }
       const browserContent = stringField(body.content).trim().slice(0, MAX_SOURCE_CHARACTERS);
-      const browserTranscript = stringField(body.transcript).trim().slice(0, MAX_SOURCE_CHARACTERS);
+      const browserTranscript = stringField(body.transcript).trim();
       const errorShell = detectCaptureErrorShell({
         title: stringField(body.contentTitle) || stringField(body.title),
         text: browserContent,
@@ -1420,7 +1421,7 @@ export class BrowserCaptureServer {
           title: extracted.title,
           fileName: noteFile.basename,
           url: job.url,
-          source: extracted.source.slice(0, MAX_SOURCE_CHARACTERS),
+          source: job.pageType === "article" ? extracted.source.slice(0, MAX_SOURCE_CHARACTERS) : extracted.source,
           author: extracted.author,
           publishedAt: extracted.publishedAt,
           capturedAt: new Date().toISOString(),
@@ -1471,7 +1472,20 @@ export class BrowserCaptureServer {
         message: "原始内容已经写入 Vault，正在调用 AI 整理",
         result: this.resultFor(job, noteFile, extracted.title, "原始内容已备份"),
       });
-      const ai = await this.runAI(job, extracted.title, extracted.source, outputLocale, signal, async (message, progress) => {
+      let readableTranscript: TranscriptReadability | undefined;
+      if (job.pageType !== "article") {
+        await this.updateJob(id, { phase: "organizing", phaseLabel: "补全逐字稿标点", progress: 52, message: "正在恢复逐字稿标点与自然段，原始转录已备份" });
+        const section = findTranscriptSection(lastWrittenContent);
+        readableTranscript = await restoreTranscriptReadability(section?.source ?? extracted.source, {
+          signal,
+          originalProse: section?.originalProse,
+          run: (prompt, currentSignal) => this.runProviderForJob(job, prompt, currentSignal ?? signal),
+          progress: async (processed, total) => {
+            await this.updateJob(id, { progress: 52 + Math.round(processed / Math.max(1, total) * 15), message: `正在补全逐字稿标点：${processed}/${total}` });
+          },
+        });
+      }
+      const ai = await this.runAI(job, extracted.title, readableTranscript ? transcriptProse(readableTranscript.text) : extracted.source, outputLocale, signal, async (message, progress) => {
         await this.updateJob(id, {
           phase: "organizing",
           phaseLabel: PHASE_LABELS.organizing,
@@ -1501,6 +1515,7 @@ export class BrowserCaptureServer {
         ai,
         outputLocale,
         false,
+        readableTranscript,
       );
       const completedContent = latestContent === lastWrittenContent
         ? enhanced
@@ -1521,11 +1536,11 @@ export class BrowserCaptureServer {
       throwIfCaptureAborted(signal);
       noteFile = await this.verifyCompletedCapture(id, noteFile, completedContent);
       await this.updateJob(id, {
-        status: "completed",
-        phase: "completed",
-        phaseLabel: PHASE_LABELS.completed,
+        status: readableTranscript?.failed ? "partial" : "completed",
+        phase: readableTranscript?.failed ? "partial" : "completed",
+        phaseLabel: readableTranscript?.failed ? PHASE_LABELS.partial : PHASE_LABELS.completed,
         progress: 100,
-        message: "内容已经整理并写入 Obsidian",
+        message: readableTranscript?.failed ? "正文已保存，部分逐字稿未通过标点校验，请使用逐字稿修复入口重试" : "内容已经整理并写入 Obsidian",
         completedAt: new Date().toISOString(),
         result: this.resultFor(job, noteFile, extracted.title, compact(ai.summary), true),
       });

@@ -24,6 +24,7 @@ export const SUPPORTED_LOCALES: readonly KnowGroveLocale[] = [
 ] as const;
 
 const ENGLISH: Record<string, string> = {
+  "修复当前逐字稿标点": "Repair current transcript punctuation",
   "言续": "KnowGrove",
   "言续设置": "KnowGrove settings",
   "按功能完成一次配置，之后让收集、属性整理与知识创作在 Vault 内自动流转。": "Set up each area once, then let capture, property management, and knowledge creation flow through your vault.",

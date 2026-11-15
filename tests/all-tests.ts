@@ -16,6 +16,7 @@ import "./recording-markers.test";
 import "./capture-center.test";
 import "./runtime-core.test";
 import "./tool-probe.test";
+import "./transcript-readability.test";
 import "./reading-menu.test";
 import "./recent-files.test";
 import "./topic-index.test";

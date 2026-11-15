@@ -23,6 +23,8 @@ import {
 import { access, copyFile, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, sep } from "node:path";
 import { AIPropertyBatchModal } from "./ai-property-modal";
+import { TranscriptRepairModal, repairTranscriptNote } from "./transcript-repair";
+import type { TranscriptReadability } from "./transcript-readability";
 import { AttachmentCleanupManager, normalizeAttachmentExtensions, type AttachmentScanProgress } from "./attachment-cleanup";
 import {
   buildAIBatchPropertyPrompt,
@@ -486,6 +488,7 @@ export default class KnowGrovePlugin extends Plugin {
   private linkNoteScanPromise?: Promise<number>;
   private startupLinkNoteScanTimer?: number;
   private readonly automaticLinkNoteTimers = new Map<string, number>();
+  private readonly transcriptRepairControllers = new Map<string, AbortController>();
   private attachmentCleanupManager?: AttachmentCleanupManager;
   private documentAnchorManager?: DocumentAnchorManager;
   private tableResizer?: TableResizer;
@@ -497,6 +500,7 @@ export default class KnowGrovePlugin extends Plugin {
   private readonly normalizedCaptureImageLinkMtime = new Map<string, number>();
 
   async onload(): Promise<void> {
+    this.register(() => { for (const controller of this.transcriptRepairControllers.values()) controller.abort(); });
     await this.loadPluginData();
     setKnowGroveLanguage(getLanguage());
     this.disposeLocalization = installKnowGroveLocalization(this.app.workspace.containerEl.ownerDocument);
@@ -803,6 +807,16 @@ export default class KnowGrovePlugin extends Plugin {
       id: "organize-new-link-notes",
       name: "整理新链接文档",
       callback: () => void this.scanPendingLinkNotes(true),
+    });
+    this.addCommand({
+      id: "repair-transcript-punctuation",
+      name: translateKnowGroveText("修复当前逐字稿标点"),
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!Platform.isDesktopApp || !file || file.extension !== "md") return false;
+        if (!checking) new TranscriptRepairModal(this.app, file, (signal, progress) => this.repairTranscriptPunctuation(file, signal, progress)).open();
+        return true;
+      },
     });
     this.addCommand({
       id: "scan-unreferenced-attachments",
@@ -3071,6 +3085,37 @@ export default class KnowGrovePlugin extends Plugin {
         )
           ?.scrollIntoView({ block: "start", behavior: "smooth" });
       }, 120);
+    }
+  }
+
+  async repairTranscriptPunctuation(file: TFile, signal?: AbortSignal, progress?: (processed: number, total: number) => Promise<void>): Promise<TranscriptReadability> {
+    if (this.transcriptRepairControllers.has(file.path)) throw new Error("这篇逐字稿正在修复中");
+    const controller = new AbortController();
+    const fromParent = (): void => controller.abort();
+    signal?.addEventListener("abort", fromParent, { once: true });
+    if (signal?.aborted) controller.abort();
+    const originalPath = file.path;
+    this.transcriptRepairControllers.set(originalPath, controller);
+    try {
+      return await repairTranscriptNote({
+        read: () => this.app.vault.read(file),
+        backup: async (original) => {
+          const folder = `${this.app.vault.configDir}/plugins/${this.manifest.id}/transcript-backups`;
+          if (!await this.app.vault.adapter.exists(folder)) await this.app.vault.adapter.mkdir(folder);
+          await this.app.vault.adapter.write(`${folder}/${Date.now()}-${window.crypto.randomUUID()}.json`, JSON.stringify({ version: 1, path: originalPath, original }));
+        },
+        commit: async (original, updated) => {
+          await this.app.vault.process(file, current => {
+            if (controller.signal.aborted) throw new Error("任务已取消，原笔记未修改");
+            if (file.path !== originalPath || current !== original) throw new Error("笔记已被编辑或移动，已停止覆盖，请重试");
+            return updated;
+          });
+        },
+        run: async (prompt, currentSignal) => (await this.runBrowserCaptureProvider(this.settings.aiProperties.provider, prompt, currentSignal)).output,
+      }, getLanguage() || "en", controller.signal, progress);
+    } finally {
+      signal?.removeEventListener("abort", fromParent);
+      this.transcriptRepairControllers.delete(originalPath);
     }
   }
 
